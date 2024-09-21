@@ -1,0 +1,1063 @@
+<!doctype html>
+<html id="pageTop">
+    <head>
+        <meta charset="UTF-8">
+        <style>
+            html {
+                scroll-behavior: smooth;
+            }
+
+            .shiny-gold-text {
+                font-size: 3em;
+                font-weight: bold;
+                color: #FFD700; /* Base gold color */
+                text-shadow: 
+                    0 0 5px rgba(255, 215, 0, 0.7),  /* Inner glow */
+                    0 0 10px rgba(255, 215, 0, 0.5), /* Outer glow */
+                    0 0 15px rgba(255, 215, 0, 0.3); /* Soft outer glow */
+                background: linear-gradient(45deg, #FFD700, #FFEA66);
+                -webkit-background-clip: text;
+                -webkit-text-fill-color: transparent;
+            }
+
+            .shiny-silver-text {
+                font-weight: bold;
+                font-size: 14px;
+                background: linear-gradient(
+                    90deg, #ffffff, #f0c6d0, 
+                    #c0c0c0, #f0c6d0, #ffffff
+                );
+                background-size: 200%;
+                -webkit-background-clip: text;
+                background-clip: text;
+                color: transparent;
+                text-shadow: 
+                    1px 1px 3px rgba(0, 0, 0, 0.4),
+                    0 0 8px rgba(255, 255, 255, 0.7);
+                animation: shiny 2s linear infinite;
+                padding: 0 4px;
+                white-space: nowrap;
+            }
+
+            @keyframes shiny {
+                0% {
+                    background-position: 200%;
+                }
+                100% {
+                    background-position: -200%;
+                }
+            }
+
+            h2 {
+                text-align: center;
+                font-family: Helvetica, Arial, sans-serif;
+                color: rgb(105,105,105);
+            }
+            table {
+                margin-left: auto;
+                margin-right: auto;
+                background-color: rgba(220,220,220,0.5);
+            }
+            table, th, td {
+                border: 1px solid black;
+                border-collapse: collapse;
+            }
+            th, td {
+                padding: 5px;
+                text-align: center;
+                font-family: Helvetica, Arial, sans-serif;
+                font-size: 90%;
+            }
+            td {
+                white-space: nowrap;
+            }
+
+            table tbody tr:nth-child(odd) {
+                background-color: rgb(112,128,144,0.3);
+                color: #FFF;
+            }
+            table tbody tr:hover {
+                background-color: #dddddd;
+                color: #000
+            }
+            .wide {
+                width: 90%;
+            }
+            /* ------------------------------------------------- */
+            /*                   sticky column                   */
+            /* (used for metric column of wide hp_perf table)    */
+            /* ------------------------------------------------- */
+            .fixed-column {
+                position: sticky;
+                right: 0;
+                background-color: gold;
+                color: #000;
+            }
+            .fixed-column::after {
+                content: '';
+                position: absolute;
+                top: 0;
+                right: 0;
+                bottom: 0;
+                width: 100%;
+                background: linear-gradient(to right,
+                                            rgba(77, 0, 102, 0.0),
+                                            rgba(77, 0, 102, 0.6));
+                pointer-events: none;
+            }
+            /* ------------------------------------------------- */
+
+            /* ------------------------------------------------- */
+            /*         Container for horizontal scrolling        */
+            /* ------------------------------------------------- */
+            .wide-table-container {
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch; /* Smooth scrolling on touch devices */
+                scrollbar-width: thin; /* For Firefox */
+            }
+
+            /* Scrollbar customization for WebKit-based browsers */
+            /* Webkit browsers (Chrome, Safari) */
+            .wide-table-container::-webkit-scrollbar {
+                height: 12px;
+            }
+            .wide-table-container::-webkit-scrollbar-track {
+                background: #f1f1f1;
+                border: 2px solid #FFFFCC;
+            }
+            .wide-table-container::-webkit-scrollbar-thumb {
+                background-color: #4d0066;
+                border: 2px solid #FFFFCC80;
+            }
+            /* Firefox */
+            .wide-table-container {
+                scrollbar-width: thin;
+                scrollbar-color: #4d0066 #FFFFCC80;
+            }
+            /* ------------------------------------------------- */
+
+            /* ------------------------------------------------- */
+            /*                  wandb hyperlink                  */
+            /* ------------------------------------------------- */
+            .wandb {
+                text-align: left;
+                background-color: rgba(113, 12, 130, 0.8);
+                padding: 2px;
+                border-radius: 10px;
+                box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
+                position: relative;
+                z-index: 1;
+            }
+            .info-container {
+                position: relative;
+                display: inline-block;
+            }
+            .info-icon {
+                cursor: pointer;
+                background-color: #ffd700;
+                color: #8a2be2;
+                width: 10px;
+                height: 10px;
+                border-radius: 50%;
+                display: inline-flex;
+                justify-content: center;
+                align-items: center;
+                vertical-align: super;
+                font-weight: bold;
+                font-style: italic;
+                font-size: 8pt;
+                margin-left: 1px;
+                box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+            }
+            .info-content {
+                position: absolute;
+                top: 100%;
+                left: 50%;
+                transform: translateX(-50%);
+                background-color: #f5deb3;
+                color: #5c0f80;
+                padding: 10px;
+                border-radius: 5px;
+                box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+                width: 230px;
+                opacity: 0;
+                visibility: hidden;
+                transition: opacity 0.3s, visibility 0.3s;
+                background-image: url('data:image/jpeg;base64,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');
+                background-repeat: repeat;
+            }
+            .info-container:hover .info-content {
+                opacity: 1;
+                visibility: visible;
+            }
+            /* ------------------------------------------------- */
+
+            /* ------------------------------------------------- */
+            /*                  paginated gallery                */
+            /* ------------------------------------------------- */
+            .gallery-container {
+                width: 700px;
+                margin: 0 auto;
+            }
+
+            .gallery-page {
+                display: none;
+            }
+            .gallery-page.active {
+                display: block;
+                min-height: 15em;
+                vertical-align: bottom;
+            }
+
+            .pagination {
+                display: flex;
+                justify-content: center;
+                list-style-type: none;
+                padding-left: 0;
+                align-items: center;
+            }
+            .pagination .page-link {
+                max-width: 100px;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                border: none;
+                margin: 1px;
+            }
+            .pagination .page-link.active {
+                font-weight: bold;
+                background-color: #8b02b8;
+                color: white;
+                height: 24px;
+            }
+            .pagination .page-link:not(.active):not(:disabled) {
+                cursor: pointer;
+            }
+            .pagination .page-link:not(.active):not(:disabled):hover {
+                background-color: #340145;
+                color: gold;
+                border-style: solid;
+                border-color: gold;
+                border-width: 1px;
+            }
+            /* ------------------------------------------------- */
+
+            /* ------------------------------------------------- */
+            /*                command to clipboard               */
+            /* ------------------------------------------------- */
+            .command-container {
+                line-height: 1.5;
+                vertical-align: baseline;
+                color: white;
+                display: flex;
+                align-items: flex-start;
+                justify-content: space-between;
+                background-color: black;
+                padding-right: 2px;
+            }
+            .copy-icon {
+                background: none;
+                border: none;
+                cursor: pointer;
+                align-self: flex-start;
+            }
+            .copy-icon svg {
+                stroke-width: 1; /* Default stroke width */
+                transition: stroke-width 0.2s; /* Smooth transition */
+            }
+            .copy-icon:hover svg {
+                stroke-width: 2; /* Stroke width on hover */
+            }
+            /* ------------------------------------------------- */
+
+            a:link {
+                color: #FFB6C1; /* Light Pink for non-visited links */
+                text-decoration: none;
+            }
+
+            a:visited {
+                color: #FFD700; /* Gold for visited links */
+                text-decoration: none;
+            }
+
+            a:hover {
+                color: #FF69B4; /* Hot Pink for hover effect */
+                text-decoration: underline;
+            }
+
+            a:active {
+                color: #FF4500; /* Orange-Red for active links */
+                text-decoration: underline;
+            }
+
+            .footer {
+                position: fixed;
+                left: 4px;
+                bottom: 0px;
+                right: 4px;
+                width: 100%;
+                background: linear-gradient(to top, 
+                                            rgba(77, 0, 102, 1) 0%, 
+                                            rgba(77, 0, 102, 0.6) 50%, 
+                                            rgba(77, 0, 102, 0.6) 50%, 
+                                            rgba(77, 0, 102, 0) 100%);
+            }
+        </style>
+        
+        <!-- @see https://getbootstrap.com/docs/4.0/components/collapse/ -->
+        <!-- a select extract from https://cdn.jsdelivr.net/npm/bootstrap@4.0.0/dist/css/bootstrap.min.css -->
+        <style>
+            .collapse {
+              display: none;
+            }
+
+            .collapse.show {
+              display: block;
+            }
+
+            .collapsing {
+              position: relative;
+              height: 0;
+              overflow: hidden;
+              transition: height 0.35s ease;
+            }
+
+            .btn {
+              display: inline-block;
+              font-weight: 400;
+              text-align: center;
+              white-space: nowrap;
+              vertical-align: middle;
+              -webkit-user-select: none;
+              -moz-user-select: none;
+              -ms-user-select: none;
+              user-select: none;
+              border: 1px solid transparent;
+              padding: 0.375rem 0.75rem;
+              font-size: 1rem;
+              line-height: 1.5;
+              border-radius: 0.25rem;
+              transition: color 0.15s ease-in-out, background-color 0.15s ease-in-out, border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
+              /* apply custom styling from here !> */
+              background-color: transparent;
+              width: 100%;
+              cursor: pointer;
+            }
+
+            .card-header {
+              padding: 0.75rem 1.25rem;
+              margin-bottom: 0;
+              background-color: rgba(0, 0, 0, 0.03);
+              border-bottom: 1px solid rgba(0, 0, 0, 0.125);
+            }
+
+            .btn-sub {
+              font-weight: 200;
+              text-align: left;
+              line-height: 1;
+            }
+
+            .card-sub-header {
+              margin-bottom: 0;
+              background-color: rgba(0, 0, 0, 0.03);
+              border-bottom: 1px solid rgba(0, 0, 0, 0.125);
+            }
+        </style>
+        {% for dependency in bootstrap_js_dependencies %}
+        <script>
+            {% include dependency %}
+        </script>
+        {% endfor %}
+  
+        <script>
+            function commandToClipboard(element_id) {
+                const element = document.getElementById(element_id);
+                let text = element.textContent || element.innerText;
+                // Split text into lines, remove comments and blank lines,
+                // and trim spaces from each line
+                text = text
+                    .split('\n')
+                    .map(line => line.trim())
+                    .filter(line => line && !line.startsWith('#'))
+                    .join('\n');  // Join remaining back into single string
+                navigator.clipboard.writeText(text).then(() => {
+                    console.log('Copied to clipboard!');
+                }).catch(err => {
+                    console.error('Failed to copy text: ', err);
+                });
+            }
+        </script>
+    </head>
+    <body style="background-color:#4d0066;">
+        <!-- copy-icon svg -->
+        <svg style="display: none;">
+            <defs>
+                <symbol id="copy-icon" viewBox="0 0 24 24">
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                </symbol>
+            </defs>
+        </svg>
+        <script language="javascript">
+            // forcing header visibility (via smooth scrolling) on Bootstrap expand
+            document.addEventListener('DOMContentLoaded', function() {
+                var collapses = document.querySelectorAll('.collapse');
+                collapses.forEach(function(collapse) {
+                    var observer = new MutationObserver(function(mutations) {
+                        mutations.forEach(function(mutation) {
+                            if (mutation.type === 'attributes' &&
+                                mutation.attributeName === 'class'
+                            ) {
+                                if (collapse.classList.contains('show')) {
+                                    var cardHeader = collapse.previousElementSibling;
+                                    cardHeader.scrollIntoView(
+                                        { behavior: 'smooth', block: 'start' });
+                                }
+                            }
+                        });
+                    });
+                    observer.observe(collapse, { attributes: true });
+                });
+            });
+        </script>
+        <h1 style="padding-left: 30px;" class="shiny-gold-text">{{title}}</h1>
+        <h2 style="background-color: #FFFFCC40; padding-left: 3px;
+                   text-align: left; color:black;">
+            <font color="#FFEA66">{{subtitle}}</font>
+        </h2>
+        <div style="color:{{blessed_color}}; height:100px; width:100%;
+                    justify-content:center; align-items:center; display:flex;
+                    background:{{blessed_background}};
+                    font-size:xxx-large; Font weight:black;">
+            Model Version {{model_version_blessed}}Blessed&nbsp;!
+        </div>
+        <!-- model version blessing status -->
+        {% if current_blessed_run_id is not none %}
+        <font color="#C0C0C0">Last blessed run&nbsp;:
+            run_id {{current_blessed_run_id}} ({{current_blessed_run_finished}})
+        </font>
+        <a id="blessed_run_link" style="color: orange;" target="_blank"
+           href="{{previsous_blessed_card_href}}">here</a>
+        <script language="javascript">
+            window.onload = function() {
+                var link = document.getElementById("blessed_run_link");
+                if (window.self !== window.top) {
+                    // card displayed as an iframe (prob' in the Metaflow UI)
+                    // [get parent domain & port without hitting CORS]
+                    var referrerUrl = new URL(document.referrer);
+                    var parentDomain = referrerUrl.hostname;
+                    var parentPort = referrerUrl.port;
+                    var newUrl = `http://${parentDomain}${parentPort ? ':' + parentPort : ''}/{{previsous_blessed_card_url}}`;
+                    link.href = newUrl;
+                } else {
+                    // card is not displayed as an iframe
+                    var isLocalFile = window.location.protocol === "file:"
+                    console.log(isLocalFile)
+                    if (isLocalFile) {
+                        // card is prob' displayed
+                        // via a python call to
+                        // "retrain_pipelines.inspectors.browse_local_pipeline_card"
+                        var currentDir = window.location.pathname.substring(
+                                0, window.location.pathname.lastIndexOf('/'));
+                        console.log(currentDir)
+                        var lastSegment = link.href.substring(
+                                link.href.lastIndexOf('/') + 1);
+                        var newHref = `file:///${currentDir}/_html-custom-${lastSegment}.html`;
+                        console.log(newHref)
+                        link.href = newHref;
+                    } else {
+                        // card is prob' hosted by Metaflow-Service [ui-backend]
+                        // => do nothing
+                    }
+                }
+            }
+        </script>
+        <!-- END model version blessing status -->
+        {% endif %}
+{% if local_serve_status is not none %}
+        <!-- infra validation status -->
+        <p></p>
+        <div style="color:{{local_serve_color}}; height:100px; width:100%;
+                    justify-content:center; align-items:center; display:flex;
+                    background: {{local_serve_background}};
+                    font-size:xxx-large; Font weight:black;">
+            Model Version {{local_serve_status}} Infra Validation&nbsp;!
+        </div>
+        <br />
+        <!-- END infra validation status -->
+{% endif %}
+{{local_serve_test_failed}}
+        <br />
+        <div id="accordion">
+            <div class="card">
+                <div class="card-header" id="headingZero">
+                    <h5 class="mb-0">
+                        <button class="btn btn-link" data-toggle="collapse"
+                        data-target="#collapseZero" aria-expanded="true"
+                        aria-controls="collapseZero">
+                            <center>
+                                <h1 style="color: #6082B6;">Exploratory Data Analysis</h1>
+                            </center>
+                        </button>
+                    </h5>
+                </div>
+                <div id="collapseZero" class="collapse show" aria-labelledby="headingZero"
+                 data-parent="#accordion">
+                    <div class="card-body">
+                        <font color="#C0C0C0">
+                            Classes Priors
+                            (a.k.a. class distribution)&nbsp;:&nbsp;{{classes_prior_prob}},
+                            {{records_count}} records&nbsp;:
+                        </font>
+{{features_desc_table}}
+                        <br />
+                        <table style="border: none;
+                                      background: transparent;
+                                      align=center; border=0;">
+                            <tr style="all: initial !important;">
+                                <td style="border: none;" valign="top">
+                                    <img
+                                     src="data:image/jpeg;base64,{{data_distri_curve}}"
+                                     style="padding-right: 10px;" />
+                                </td>
+                                <td style="border: none; white-space: normal;">
+                                    <img
+                                     src="data:image/jpeg;base64,{{data_heatmap_curve}}" />
+                                    <div class="container mt-5">
+                                        <a class="btn btn-primary" data-toggle="collapse"
+                                         href="#collapseDisclainer" role="button" aria-expanded="false"
+                                         aria-controls="collapseDisclainer">
+                                            interpretability disclaimer [...]
+                                        </a>
+                                        <div style="width: 600px; overflow: hidden;">
+                                            <div class="collapse" id="collapseDisclainer"
+                                                 style="height: 100%; overflow-y: auto;">
+                                                <div class="card card-body">
+                                                    <font color="#C0C0C0">
+                                                        This heatmap provides an overview of the 
+                                                        relationships between features in the dataset and
+                                                        with the target variable. It does so by combining
+                                                        three different statistical metrics&nbsp;:
+                                                        <ul>
+                                                            <li style="margin-bottom: 15px;">
+                                                                <span style="font-weight: bold;">Correlation
+                                                                (Pearson's r)&nbsp;:</span> Measures the
+                                                                linear relationship between pairs of
+                                                                numerical features. Values range from -1 to
+                                                                1, where -1 indicates a perfect negative
+                                                                linear relationship, 0 indicates no linear
+                                                                relationship, and 1 indicates a perfect
+                                                                positive linear relationship.
+                                                            </li>
+                                                            <li style="margin-bottom: 15px;">
+                                                                <span style="font-weight: bold;">
+                                                                Cram&eacute;r's V&nbsp;:</span> Measures the
+                                                                strength of association between pairs of
+                                                                categorical features. Values range from 0
+                                                                to 1, where 0 indicates no association and
+                                                                1 indicates a perfect association.
+                                                            </li>
+                                                            <li style="margin-bottom: 15px;">
+                                                                <span style="font-weight: bold;">&eta;&sup2;
+                                                                (Eta Squared)&nbsp;:</span> Measures the
+                                                                proportion of variance in a numerical
+                                                                feature explained by a categorical feature.
+                                                                Values range from 0 to 1, where 0 indicates
+                                                                no explanatory power and 1 indicates
+                                                                perfect explanation.
+                                                            </li>
+                                                        </ul>
+                                                    </font>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </td>
+                            </tr>
+                        </table>
+                        <div style="display: flex;">
+                            <a href="#headingZero" style="color: #6082B6;
+                             margin-left: auto;">section top&nbsp;&uarr;</a>
+                        </div>
+                    </div> <!-- card-body -->
+                </div> <!-- collapseZero -->
+            </div> <!-- card -->
+            <hr />
+            <div class="card">
+                <div class="card-header" id="headingOne">
+                    <h5 class="mb-0">
+                        <button class="btn btn-link" data-toggle="collapse"
+                        data-target="#collapseOne" aria-expanded="false"
+                        aria-controls="collapseOne">
+                            <center>
+                                <h1 style="color: #6082B6;">Training execution</h1>
+                            </center>
+                        </button>
+                    </h5>
+                </div>
+                <div id="collapseOne" class="collapse" aria-labelledby="headingOne"
+                 data-parent="#accordion">
+                    <div class="card-body">
+                        <div id="innerAccordion">
+                            <div class="card">
+                                <div class="card-sub-header" id="innerHeadingOne">
+                                    <button class="btn btn-link" data-toggle="collapse"
+                                            data-target="#innerCollapseOne" aria-expanded="true"
+                                            aria-controls="innerCollapseOne">
+                                        <h2 class="btn-sub" style="color: #6082B6;">
+                                            Overall retraining
+                                        </h2>
+                                    </button>
+                                </div>
+                                <div id="innerCollapseOne" class="collapse show"
+                                     aria-labelledby="innerHeadingOne"
+                                     data-parent="#innerAccordion">
+                                    <div class="card-body">
+                                        <table style="border: none;
+                                                      background: transparent;
+                                                      align=center; border=0;">
+                                            <tr style="all: initial !important;">
+                                                <td style="border: none;">
+                                                    <img
+                                                     src="data:image/jpeg;base64,{{training_curve}}"
+                                                     style="padding-right: 10px;" />
+                                                </td>
+                                                <td style="border: none; vertical-align: bottom;">
+                                                    <div class="gallery-container my-4">
+                                                        <!-- Pages BEGIN -->
+{% for target_class, img_href in target_class_curves.items() %}
+                                                        <div id="page{{loop.index}}"
+                                                             class="row gallery-page{% if loop.index == 1 %} active{% endif %}">
+    {% if img_href is not none %}
+                                                            <img src="data:image/jpeg;base64,{{img_href}}" 
+                                                                 alt="{{target_class}}" class="img-fluid">
+    {% else %}
+                                                            <center><font size="6em" color="#C0C0C0"><b>
+                                                                no true positive in test-set
+                                                                for class `{{target_class}}`
+                                                            </b></font></center>
+    {% endif %}
+                                                        </div>
+                                                        <!-- Pages END -->
+{% endfor %}
+                                                        <!-- Pagination BEGIN -->
+                                                        <nav aria-label="Gallery Pagination">
+                                                            <ul class="pagination">
+                                                                <li class="page-item">
+                                                                    <button id="firstPageBtn"
+                                                                            class="page-link"
+                                                                            onclick="navigatePages('first'); return false;">&lt;&lt;</button>
+                                                                </li>
+                                                                <li class="page-item">
+                                                                    <button id="prevPageBtn"
+                                                                            class="page-link"
+                                                                            onclick="navigatePages('prev'); return false;">&lt;</button>
+                                                                </li>
+{% for target_class in target_class_curves.keys() %}
+                                                                <li class="page-item">
+                                                                    <button class="page-link page-number"
+                                                                            data-page="{{ loop.index }}" onclick="showPage({{ loop.index }}); return false;"
+                                                                            style="width: 100px;">{{ target_class }}</button>
+                                                                </li>
+{% endfor %}
+                                                                <li class="page-item">
+                                                                    <button id="nextPageBtn"
+                                                                            class="page-link"
+                                                                            onclick="navigatePages('next'); return false;">&gt;</button>
+                                                                </li>
+                                                                <li class="page-item">
+                                                                    <button id="lastPageBtn"
+                                                                            class="page-link"
+                                                                            onclick="navigatePages('last'); return false;">&gt;&gt;</button>
+                                                                </li>
+                                                            </ul>
+                                                        </nav>
+                                                        <!-- Pagination END -->
+                                                    </div>
+                                                    <script>
+                                                        let currentPage = 1;
+                                                        const totalPages = {{ target_class_curves|length }};
+
+                                                        function showPage(pageNum) {
+                                                            document.querySelectorAll('.gallery-page').forEach(page => page.classList.remove('active'));
+                                                            document.getElementById(`page${pageNum}`).classList.add('active');
+                                                            currentPage = pageNum;
+                                                            updatePagination();
+                                                        }
+
+                                                        function updatePagination() {
+                                                            const pageButtons = document.querySelectorAll('.page-number');
+                                                            pageButtons.forEach(button => {
+                                                                button.style.display = 'none';
+                                                                button.classList.remove('active');
+                                                            });
+
+                                                            if (currentPage < totalPages) {
+                                                                pageButtons[currentPage - 1].style.display = 'inline-block';
+                                                                pageButtons[currentPage].style.display = 'inline-block';
+                                                            } else {
+                                                                pageButtons[currentPage - 2].style.display = 'inline-block';
+                                                                pageButtons[currentPage - 1].style.display = 'inline-block';
+                                                            }
+
+                                                            // Set active class for current page button
+                                                            const activeButton = document.querySelector(`.page-number[data-page="${currentPage}"]`);
+                                                            if (activeButton) {
+                                                                activeButton.classList.add('active');
+                                                            }
+
+                                                            // Disable/enable navigation buttons
+                                                            document.getElementById('firstPageBtn').disabled = currentPage === 1;
+                                                            document.getElementById('prevPageBtn').disabled = currentPage === 1;
+                                                            document.getElementById('nextPageBtn').disabled = currentPage === totalPages;
+                                                            document.getElementById('lastPageBtn').disabled = currentPage === totalPages;
+                                                        }
+
+                                                        function navigatePages(direction) {
+                                                            switch(direction) {
+                                                                case 'first':
+                                                                    if (currentPage !== 1) showPage(1);
+                                                                    break;
+                                                                case 'prev':
+                                                                    if (currentPage > 1) showPage(currentPage - 1);
+                                                                    break;
+                                                                case 'next':
+                                                                    if (currentPage < totalPages) showPage(currentPage + 1);
+                                                                    break;
+                                                                case 'last':
+                                                                    if (currentPage !== totalPages) showPage(totalPages);
+                                                                    break;
+                                                            }
+                                                        }
+
+                                                        // Initialize pagination,
+                                                        // must be placed after the paginated gallery
+                                                        document.addEventListener('DOMContentLoaded', () => {
+                                                            updatePagination();
+                                                        });
+                                                    </script>
+                                                </td>
+                                            </tr>
+                                        </table>
+                                        <br />
+                                        <h3 style="color:#FFD700;">
+                                            Features bucketization&nbsp;:
+                                        </h3>
+{{buckets_table}}
+                                        <br />
+                                        <h3 style="color:#FFD700;">
+                                            Hyperparameters set&nbsp;:
+                                        </h3>
+                                        <div class="wide-table-container">
+{{hyperparameters_table}}
+                                        </div>
+                                        <br />
+                                        <h3 style="color:#FFD700;">Performance metrics :</h3>
+                                        <h4 style="color:#CCAD00;">Overall</h4>
+{{classes_weighted_metrics_table}}
+{% if styled_sliced_perf_metrics_table is not none %}
+                                        <h4 style="color:#CCAD00;">Per slice of {{slice_feature_name}}</h4>
+{{styled_sliced_perf_metrics_table}}
+{% endif %}
+                                        <br />
+                                        <div style="display: flex;">
+                                            <a href="#innerHeadingOne" style="color: #6082B6;
+                                            margin-left: auto;">sub-section top&nbsp;&uarr;</a>
+                                        </div>
+                                    </div> <!-- card-body -->
+                                </div> <!-- innerCollapseOne -->
+                            </div> <!-- card -->
+                            <hr style="width: 50%; margin: 0 auto; border: none;
+                                       border-top: 1px solid lightgrey;">
+                            <div class="card">
+                                <div class="card-sub-header" id="innerHeadingTwo">
+                                    <button class="btn btn-link" data-toggle="collapse"
+                                            data-target="#innerCollapseTwo"
+                                            aria-expanded="false"
+                                            aria-controls="innerCollapseTwo">
+                                        <h2 class="btn-sub" style="color: #6082B6;">
+                                            Hyperparameters tuning
+                                        </h2>
+                                    </button>
+                                </div>
+                                <div id="innerCollapseTwo" class="collapse"
+                                aria-labelledby="innerHeadingTwo" data-parent="#innerAccordion">
+                                    <div class="card-body">
+                                        <h3 style="color:#FFD700;">Hyperparameters search space :</h3>
+{% if hp_grid_table is not none %}
+                                        <div class="wide-table-container">
+{{hp_grid_table}}
+                                        </div>
+                                        <font color="#C0C0C0">
+                                            {{cv_folds}} cross-validation folds.
+                                        </font>
+{% else %}
+                                        "<center><font color=white><em>None</em></font></center>"
+{% endif %}
+                                        <br />
+                                        <div class="wandb">
+                                            <font color="#C0C0C0">
+{% if wandb_project_ui_url is not none %}
+                                        <!-- wandb -->
+                                                View more logs from these training jobs
+                                                <a href="https://wandb.ai/aurelien-morgan_org/TabNetHpCvWandbFlow/workspace" target="_blank">
+                                                    here on WandB
+                                                </a>
+                                                <span class="info-container">
+                                                    <span class="info-icon">i</span>
+                                                    <span class="info-content">
+                                                        On the Weights&amp;Biases workspace,<br />
+                                                        <ul style="margin-top: 0; margin-bottom: 0;">
+                                                            <li>
+                                                                filter by
+                                                                mf_id&nbsp;=&nbsp;{{wandb_filter_run_id}}
+                                                            </li>
+                                                            <li>
+                                                                group by "mf"
+                                                                (prefix for Metaflow task name).
+                                                            </li>
+                                                        </ul>
+                                                        <center>
+                                                            <img src="data:image/jpeg;base64,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" />
+                                                        </center>
+                                                    </span>
+                                                </span>.
+    {% if "" != wandb_need_sync_dir %}
+                                                <!-- wandb sync command -->
+                                                <em>
+                                                    Note that the herein flow run was not live-synced to WandB.
+                                                    Execute the following WandB CLI command locally to sync it
+                                                    so log-data shows there for this flow run&nbsp;:
+                                                    <div style="background-color:#000; color:#e6e6e6;
+                                                                font-family:'Segoe UI', Roboto;
+                                                                font-size: 10pt;
+                                                                white-space: nowrap !important;
+                                                                padding-left: 5px; margin-left:5px;
+                                                                padding-right: 5px; margin-right:5px;
+                                                                line-height:1.5; vertical-align: baseline;">
+                                                        <p class="command-container">
+                                                            <span id="wandb-sync">
+                                                                wandb sync {{wandb_need_sync_dir}}
+                                                            </span>
+                                                            <button class="copy-icon" onclick="commandToClipboard('wandb-sync')">
+                                                                <svg width="16" height="16" fill="none" stroke="white" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
+                                                                    <use xlink:href="#copy-icon"></use>
+                                                                </svg>
+                                                            </button>
+                                                        </p>
+                                                    </div>
+                                                </em>
+                                                <!-- END wandb sync command -->
+    {% endif %}
+{% else %}
+                                            <em>
+                                                Note that WandB logging was explicitely disabled
+                                                for this flow run.
+                                            </em>
+{% endif %}
+                                            </font>
+                                        </div>
+                                        <!-- END wandb -->
+{% if hp_grid_table is not none %}
+                                        <br />
+                                        <br />
+                                        <center>
+                                            <div style="
+                                                display: inline-block; text-align: center;
+                                                background-color: rgba(255, 255, 255, 0.6);
+                                                padding: 1em; margin: 0 2em 2em 2em;
+                                            ">
+                                                <span style="
+                                                    white-space: nowrap;
+                                                    font-family: 'Roboto', sans-serif;
+                                                    font-size: 14px; margin-bottom: 0.5em;
+                                                    display: block;
+                                                ">
+                                                    Hyperparameter tuning - Parallel Coordinates plot
+                                                </span>
+{{hp_perfs_curve}}
+                                            </div>
+                                        </center>
+                                        <div class="wide-table-container">
+{{hp_perfs_table}}
+                                        </div>
+                                        <br />
+                                        <div style="display: flex;">
+                                            <a href="#innerHeadingTwo" style="color: #6082B6;
+                                            margin-left: auto;">sub-section top&nbsp;&uarr;</a>
+                                        </div>
+{% endif %}
+                                    </div> <!-- card-body -->
+                                </div> <!-- innerCollapseTwo -->
+                            </div> <!-- card -->
+                        </div> <!-- innerAccordion -->
+                        <div style="display: flex;">
+                            <a href="#headingOne" style="color: #6082B6;
+                             margin-left: auto;">section top&nbsp;&uarr;</a>
+                        </div>
+                    </div> <!-- card-body -->
+                </div> <!-- collapseOne -->
+            </div> <!-- card -->
+            <hr />
+            <div class="card">
+                <div class="card-header" id="headingTwo">
+                    <h5 class="mb-0">
+                        <button class="btn btn-link collapsed" data-toggle="collapse"
+                        data-target="#collapseTwo" aria-expanded="false"
+                        aria-controls="collapseTwo">
+                        <center>
+                            <h1 style="color: #6082B6;">Key Artifacts for this flow run</h1>
+                            <h2 style="color: #6082B6;"><em>python client commands</em></h2>
+                        </center>
+                        </button>
+                    </h5>
+                </div>
+                <div id="collapseTwo" class="collapse" aria-labelledby="headingTwo"
+                data-parent="#accordion">
+                    <div class="card-body">
+                        <h3 style="color:#FFD700;">Training dataset :</h3>
+                        <div style="background-color:#000; color:#e6e6e6;
+                        font-family:'Segoe UI', Roboto; font-size: 10pt;
+                        white-space: nowrap !important; padding-left: 10px; margin-left:45px;
+                        margin-right:45px; width:auto;">
+                            <p class="command-container">
+                                <span id="dataset-size">
+                                    <font color="#018f01"># dataset size</font>
+                                    <br />
+                                    {{task_obj_python_cmd}}[<font color="#66bb6a;">'data_file'</font>].size
+                                </span>
+                                <button class="copy-icon" onclick="commandToClipboard('dataset-size')">
+                                    <svg width="16" height="16" fill="none" stroke="white" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
+                                        <use xlink:href="#copy-icon"></use>
+                                    </svg>
+                                </button>
+                            </p>
+                            <p class="command-container">
+                                <span id="dataset-object">
+                                    <font color="#018f01"># dataset object</font>
+                                    <br />
+                                    {{task_obj_python_cmd}}[<font color="#66bb6a;">'data_file'</font>].data
+                                </span>
+                                <button class="copy-icon" onclick="commandToClipboard('dataset-object')">
+                                    <svg width="16" height="16" fill="none" stroke="white" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
+                                        <use xlink:href="#copy-icon"></use>
+                                    </svg>
+                                </button>
+                            </p>
+                        </div>
+                        <br />
+                        <h3 style="color:#FFD700;">Trained ML Model version :</h3>
+                        <div style="background-color:#000; color:#e6e6e6;
+                        font-family:'Segoe UI', Roboto; font-size: 10pt;
+                        white-space: nowrap !important; padding-left: 10px; margin-left:45px;
+                        margin-right:45px; width:auto;">
+                            <p class="command-container">
+                                <span id="model">
+                                    {{task_obj_python_cmd}}[<font color="#66bb6a;">'model'</font>].data
+                                </span>
+                                <button class="copy-icon" onclick="commandToClipboard('model')">
+                                    <svg width="16" height="16" fill="none" stroke="white" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
+                                        <use xlink:href="#copy-icon"></use>
+                                    </svg>
+                                </button>
+                            </p>
+                        </div>
+                        <br />
+                        <h3 style="color:#FFD700;">Preprocessing Artifacts&nbsp;:</h3>
+                        <div style="background-color:#000; color:#e6e6e6;
+                                    font-family:'Segoe UI', Roboto; font-size: 10pt;
+                                    white-space: nowrap !important; padding-left: 10px; margin-left:45px;
+                                    margin-right:45px; width:auto;">
+                            <p class="command-container">
+                                <span id="scaler">
+                                    <font color="#018f01"># fitted standard scaler</font>
+                                    <br />
+                                    {{task_obj_python_cmd}}[<font color="#66bb6a;">'scaler'</font>].data.__dict__
+                                </span>
+                                <button class="copy-icon" onclick="commandToClipboard('scaler')">
+                                    <svg width="16" height="16" fill="none" stroke="white" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
+                                        <use xlink:href="#copy-icon"></use>
+                                    </svg>
+                                </button>
+                            </p>
+                            <p class="command-container">
+                                <span id="buckets-edges">
+                                    <font color="#018f01"># num_features buckets edges</font>
+                                    <br />
+                                    {{task_obj_python_cmd}}[<font color="#66bb6a;">'buckets'</font>].data
+                                </span>
+                                <button class="copy-icon" onclick="commandToClipboard('buckets-edges')">
+                                    <svg width="16" height="16" fill="none" stroke="white" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
+                                        <use xlink:href="#copy-icon"></use>
+                                    </svg>
+                                </button>
+                            </p>
+                            <p class="command-container">
+                                <span id="encoder">
+                                    <font color="#018f01"># fitted one-hot encoder</font>
+                                    <br />
+                                    {{task_obj_python_cmd}}[<font color="#66bb6a;">'encoder'</font>].data.__dict__
+                                </span>
+                                <button class="copy-icon" onclick="commandToClipboard('encoder')">
+                                    <svg width="16" height="16" fill="none" stroke="white" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
+                                        <use xlink:href="#copy-icon"></use>
+                                    </svg>
+                                </button>
+                            </p>
+                        </div>
+                        <br />
+                        <br />
+                        <div style="display: flex;">
+                            <a href="#headingTwo" style="color: #6082B6; margin-left: auto;">
+                                section top&nbsp;&uarr;
+                            </a>
+                        </div>
+                    </div> <!-- card-body -->
+                </div> <!-- collapseTwo -->
+            </div> <!-- card -->
+            <hr />
+            <div class="card">
+                <div class="card-header" id="headingThree">
+                    <h5 class="mb-0">
+                        <button class="btn btn-link collapsed" data-toggle="collapse"
+                        data-target="#collapseThree" aria-expanded="false"
+                        aria-controls="collapseThree">
+                            <center>
+                                <h1 style="color: #6082B6;">Flow run DAG</h1>
+                            </center>
+                        </button>
+                    </h5>
+                </div>
+                <div id="collapseThree" class="collapse" aria-labelledby="headingThree"
+                data-parent="#accordion">
+                    <div class="card-body">
+                        <center>
+{{dag_svg}}
+                        </center>
+                        <div style="display: flex;">
+                            <a href="#headingThree" style="color: #6082B6;
+                             margin-left: auto;">section top&nbsp;&uarr;</a>
+                        </div>
+                    </div> <!-- card-body -->
+                </div> <!-- collapseThree -->
+            </div> <!-- card -->
+        </div> <!-- accordion -->
+        <br />
+        <br />
+        <footer class="footer">
+            <hr>
+            <p style="margin-top: 8px; margin-bottom: 8px;
+                      display: flex; justify-content: space-between; align-items: center;">
+                <small>
+                    <font color="white">
+                        2023-2024 &nbsp; - &nbsp; Metaflow &nbsp; - &nbsp;
+                        <code class="shiny-silver-text">retrain-pipelines {{__version__}}</code>
+                        &nbsp; - &nbsp;
+                        Open&nbsp;Source&nbsp;FTW&nbsp;!
+                    </font>
+                </small>
+                <a href="#pageTop" style="color: #6082B6; text-decoration: none;">page top&nbsp;↑</a>
+            </p>
+        </footer>
+    </body>
+</html>

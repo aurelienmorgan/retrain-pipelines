@@ -1,0 +1,65 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+dist/
+build/
+*.egg-info/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*.sublime-workspace
+*.sublime-project
+
+# Python environment
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+
+# Coverage reports
+htmlcov/
+.coverage
+.coverage.*
+*.cover
+
+# Pytest
+.cache
+.pytest_cache
+pytest-debug.log
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# pyenv
+.python-version
+
+# other
+*.log
+*.pot
+*.pyc
+
+# retrain-pipelines
+serving_artifacts/data/
+serving_artifacts/.env
