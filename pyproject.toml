@@ -5,7 +5,6 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "retrain_pipelines"
-version = "0.1.0"
 authors = [
     { name = "Aurelien-Morgan" }
 ]
@@ -79,17 +78,21 @@ dependencies = [
     "scikit-learn>=1",
     "numpy>=1.17.3,<2"
 ]
+dynamic = ["version"]
+
+[tool.setuptools_scm]
+write_to = "retrain_pipelines/__version__.py"
 
 [tool.pytest.ini_options]
 addopts = "--maxfail=1 --disable-warnings -q"
 testpaths = ["tests"]
 
-# Define an alias (entry point) that runs a .sh script directly
+# Alias (entry point) for CLI utility
 [project.scripts]
-alias_name = "retrain_pipelines.local_launcher:retrain_pipelines_local"
+retrain_pipelines_local = "retrain_pipelines.local_launcher:retrain_pipelines_local"
 
 [project.urls]
-"Homepage" = "https://github.com/aurelienmorgan/your-repo"
-"Repository" = "https://github.com/aurelienmorgan/your-repo"
-"PyPI" = "https://pypi.org/project/retrain_pipelines/"
+"Homepage" = "https://github.com/aurelienmorgan/retrain_pipelines"
+"Repository" = "https://github.com/aurelienmorgan/retrain_pipelines"
+"PyPI" = "https://pypi.org/project/retrain-pipelines/"
 
