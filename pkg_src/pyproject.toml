@@ -1,0 +1,83 @@
+
+[build-system]
+requires = ["setuptools>=42", "wheel", "setuptools_scm[toml]>=6.2"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "retrain_pipelines"
+authors = [
+    {name = "Aurelien-Morgan"}
+]
+description = "retrain-pipelines lowers the barrier to entry for the creation and management of professional machine learning retraining pipelines."
+readme = "README.MD"
+license = {text = "Apache License 2.0"}
+requires-python = ">=3.3"
+keywords = [
+    "machine-learning",
+    "ml-pipelines",
+    "retrain-pipelines",
+    "model-retraining",
+    "automl",
+    "mlops",
+    "model-versioning",
+    "model-blessing",
+    "inference-pipeline",
+    "docker-deployment",
+    "data-preprocessing",
+    "hyperparameter-tuning",
+    "model-performance",
+    "pipeline-documentation",
+    "eda",
+    "exploratory-data-analysis",
+    "continuous-integration",
+    "continuous-deployment",
+    "ci-cd",
+    "model-monitoring",
+    "pipeline-customization",
+    "pipeline-templates",
+    "open-source"
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+]
+dependencies = [
+    "ipykernel>=6.20",
+    "pandas>=2",
+    "matplotlib>=3.4",
+    "metaflow>=2.9",
+    "wandb>0.15",
+    "plotly>=4",
+    "jinja2>=3",
+    "scikit-learn>=1",
+    "numpy>=1.17.3,<2",
+    "colorama>=0.4"
+]
+dynamic = ["version"]
+
+[tool.setuptools_scm]
+root = ".."
+version_file = "retrain_pipelines/__version__.py"
+
+[tool.setuptools.packages.find]
+where = ["."]
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.package-data]
+"retrain_pipelines.pipeline_card.static" = ["*.js"]
+"retrain_pipelines.model.mf_tabnet_classif_torchserve" = ["Dockerfile.torchserve"]
+
+[tool.pytest.ini_options]
+addopts = "--maxfail=1 --disable-warnings -q"
+testpaths = ["tests"]
+
+# Alias (entry point) for CLI utility
+[project.scripts]
+retrain_pipelines_local = "retrain_pipelines.local_launcher:cli_utility"
+
+[project.urls]
+"Homepage" = "https://github.com/aurelienmorgan/retrain_pipelines"
+"Repository" = "https://github.com/aurelienmorgan/retrain_pipelines"
+"PyPI" = "https://pypi.org/project/retrain-pipelines/"
+

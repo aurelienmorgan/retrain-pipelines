@@ -1,8 +1,0 @@
-
-exclude serving_artifacts/*
-exclude sample_pipelines/*
-exclude tests/*
-exclude *.gitignore
-exclude README.MD
-exclude .pytest_cache/*
-global-exclude __pycache__/*

@@ -61,6 +61,8 @@ class TabNetHpCvWandbFlow(FlowSpec):
     Training pipeline
     """
 
+    #--- flow parameters -------------------------------------------------------
+
     RETRAIN_PIPELINE_TYPE = "mf_tabnet_classif_torchserve"
     # best way to share the config across subprocesses
     os.environ["retrain_pipeline_type"] = RETRAIN_PIPELINE_TYPE
@@ -70,8 +72,8 @@ class TabNetHpCvWandbFlow(FlowSpec):
         is_text=True,
         help="Path to the input data file",
         default=os.path.realpath(
-            os.path.join(os.path.dirname(__file__),
-                         "data", "TabNet_classif_data.csv"))
+            os.path.join(os.path.dirname(__file__), "..", "data",
+                         "synthetic_classif_tab_data_4classes.csv"))
     )
 
     # bucketization to be applied
@@ -154,6 +156,7 @@ class TabNetHpCvWandbFlow(FlowSpec):
              "(i.e. dir hosting your custom 'preprocessing.py'"+\
              " file), if different from default)"
     )
+    del preprocess_module_dir
 
     # pipeline_card artifacts location
     # (i.e. dir hosting pipeline_card.py and/or template.html)
@@ -172,6 +175,11 @@ class TabNetHpCvWandbFlow(FlowSpec):
              " and/or 'template.html' file)," +\
              " if different from default)"
     )
+    del pipeline_card_module_dir
+
+    del RETRAIN_PIPELINE_TYPE
+
+    #---------------------------------------------------------------------------
 
     @step
     def start(self):

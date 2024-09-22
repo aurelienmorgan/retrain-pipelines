@@ -61,5 +61,4 @@ dmypy.json
 *.pyc
 
 # retrain-pipelines
-serving_artifacts/data/
-serving_artifacts/.env
+serving_artifacts/

@@ -1,0 +1,59 @@
+FROM pytorch/torchserve:0.11.1-gpu
+
+# Install pytorch_tabnet
+RUN pip3 install pytorch_tabnet
+
+# get current non-root user
+# (model-server in the base image)
+RUN whoami
+
+# Switch to root to install packages
+USER root
+RUN whoami
+
+RUN apt update && apt install -y \
+    unzip \
+    && apt clean
+
+USER model-server
+RUN whoami
+
+WORKDIR /home/model-server/model-store/
+
+# Copy model files and preprocessing script
+COPY model.zip .
+COPY torchserve_tabnet_handler.py .
+COPY preprocessing.py .
+COPY feature_names.json .
+COPY buckets_params.json .
+COPY scaler_params.json .
+COPY encoder_params.json .
+
+RUN unzip -o model.zip -d .
+
+# Create model archive
+ENV EXTRA_FILES="model_params.json,preprocessing.py,\
+feature_names.json,buckets_params.json,scaler_params.json,\
+encoder_params.json"
+RUN torch-model-archiver --model-name tabnet_model \
+                         --version 1.0 \
+                         --serialized-file network.pt \
+                         --handler torchserve_tabnet_handler.py \
+                         --extra-files "$EXTRA_FILES" \
+                         --export-path . \
+                         --force
+
+# Copy and install the python dependencies
+# on the TorchServe server
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Expose ports
+EXPOSE 8080 8081 8082
+
+# Start TorchServe
+CMD ["torchserve", "--start", "--disable-token-auth", "--ncs", \
+     "--ts-config ", "/home/model-server/config.properties", \
+     "--model-store", "/home/model-server/model-store", \
+     "--models", "tabnet_model.mar"]
+
