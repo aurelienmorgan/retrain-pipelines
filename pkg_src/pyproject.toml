@@ -1,6 +1,6 @@
 
 [build-system]
-requires = ["setuptools>=42", "wheel", "setuptools_scm[toml]>=6.2"]
+requires = ["wheel", "setuptools>=60", "setuptools-scm>=8.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -38,7 +38,16 @@ keywords = [
     "open-source"
 ]
 classifiers = [
+    "Development Status :: 4 - Beta",
     "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: Apache Software License",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Topic :: Software Development :: Documentation",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: Software Development :: Version Control",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Utilities"
 ]
 dependencies = [
     "ipykernel>=6.20",
@@ -57,7 +66,7 @@ dynamic = ["version"]
 [tool.setuptools_scm]
 root = ".."
 version_scheme = "only-version"
-#local_scheme = "no-local-version"
+local_scheme = "no-local-version"
 version_file = "retrain_pipelines/__version__.py"
 
 [tool.setuptools.packages.find]
@@ -69,6 +78,9 @@ include-package-data = true
 [tool.setuptools.package-data]
 "retrain_pipelines.pipeline_card.static" = ["*.js"]
 "retrain_pipelines.model.mf_tabnet_classif_torchserve" = ["Dockerfile.torchserve"]
+
+[tool.setuptools.exclude-package-data]
+"*" = ["MANIFEST.in"]
 
 [tool.pytest.ini_options]
 addopts = "--maxfail=1 --disable-warnings -q"

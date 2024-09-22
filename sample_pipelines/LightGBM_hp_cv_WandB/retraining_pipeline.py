@@ -6,9 +6,9 @@ import sys
 # adding custom code to path for easy imports
 # while "retrain-pipelines" is not an installed package
 new_path_wsl = os.path.realpath(
-    "/mnt/d/jupyter_notebooks/job_hunt/AWS/fresh_start/")
+    "/mnt/d/jupyter_notebooks/job_hunt/AWS/fresh_start/pkg_src/")
 new_path_vmware = os.path.realpath(
-    "/mnt/hgfs/Host_Jupyter_Notebooks/job_hunt/AWS/fresh_start/")
+    "/mnt/hgfs/Host_Jupyter_Notebooks/job_hunt/AWS/fresh_start/pkg_src/")
 if new_path_wsl not in sys.path:
     sys.path.append(new_path_wsl)
 if new_path_vmware not in sys.path:

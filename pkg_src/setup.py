@@ -1,10 +1,17 @@
 
 import os
 import re
+import shutil
 import subprocess
+
+# to avoid having to maintain 1 for Gihub and 1 for PyPi
+README = "README.MD"
+if os.path.exists(os.path.join("..", README)):
+    shutil.copy(os.path.join("..", README), README)
 
 from setuptools import setup, find_packages
 from setuptools.command.install import install
+
 
 class DependenciesCheckInstallCommand(install):
     """Check for graphviz."""
@@ -29,6 +36,7 @@ class DependenciesCheckInstallCommand(install):
 
         install.run(self)
 
+
 setup(
     name='retrain_pipelines',
     author="Aurelien-Morgan",
@@ -37,4 +45,8 @@ setup(
         'install': DependenciesCheckInstallCommand,
     },
 )
+
+
+if os.path.exists(README):
+    os.remove(README)
 
