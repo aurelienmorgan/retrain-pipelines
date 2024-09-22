@@ -56,6 +56,8 @@ dynamic = ["version"]
 
 [tool.setuptools_scm]
 root = ".."
+version_scheme = "only-version"
+#local_scheme = "no-local-version"
 version_file = "retrain_pipelines/__version__.py"
 
 [tool.setuptools.packages.find]
