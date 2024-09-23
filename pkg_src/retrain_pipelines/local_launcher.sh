@@ -11,7 +11,7 @@ export METAFLOW_DATASTORE_SYSROOT_LOCAL=${HOME}/local_datastore/
 
 #---------------------------------------------------------------
 
-# Create local_datastore dir if first launch (with owner USER)
+# Create local_datastore dir if first launch (with owner : USER)
 (
   umask 0022
   mkdir -p "$METAFLOW_DATASTORE_SYSROOT_LOCAL"
@@ -20,6 +20,32 @@ export METAFLOW_DATASTORE_SYSROOT_LOCAL=${HOME}/local_datastore/
 #---------------------------------------------------------------
 
 #echo $(which python)
+
+# Check if retrain_pipelines Python package is installed
+# otherwise add "pkg_src" to PYTHONPATH
+# if exists and not there already.
+if ! python3 -c "import retrain_pipelines" &> /dev/null; then
+    # "'retrain_pipelines' package is not installed."
+
+    if [ -d "./pkg_src" ]; then
+        # "'pkg_src' directory exists."
+        if [[ ":$PYTHONPATH:" != *":$(pwd)/pkg_src:"* ]]; then
+            # ./pkg_src is not already in PYTHONPATH
+            export PYTHONPATH="$(pwd)/pkg_src:$PYTHONPATH"
+            #echo $PYTHONPATH
+        fi
+    else
+        # 'pkg_src' directory does not exist."
+        RED='\033[0;31m' # Define red color
+        NC='\033[0m'     # No color (reset)
+        echo -e "${RED}Couldn't find a 'retrain_pipelines' installation.${NC}"
+        exit 1
+    fi
+else
+    : # 'retrain_pipelines' package is already installed."
+fi
+
+#---------------------------------------------------------------
 
 
 usage() {
