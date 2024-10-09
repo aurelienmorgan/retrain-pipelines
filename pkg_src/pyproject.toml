@@ -8,6 +8,9 @@ name = "retrain_pipelines"
 authors = [
     {name = "Aurelien-Morgan"}
 ]
+maintainers = [
+    {name = "Aurelien-Morgan"}
+]
 description = "retrain-pipelines lowers the barrier to entry for the creation and management of professional machine learning retraining pipelines."
 readme = "README.MD"
 license = {text = "Apache License 2.0"}
@@ -86,12 +89,18 @@ include-package-data = true
 addopts = "--maxfail=1 --disable-warnings -q"
 testpaths = ["tests"]
 
-# Alias (entry point) for CLI utility
+[tool.ruff]
+src = ["src"]
+fix = true
+lint.select = ["E", "F", "B", "UP", "YTT", "C", "DTZ", "PYI", "PT", "I", "FURB", "RUF"]
+lint.ignore = ["B028"]
+lint.preview = true
+
+# alias / entrypoint for CLI utility
 [project.scripts]
 retrain_pipelines_local = "retrain_pipelines.local_launcher:cli_utility"
 
 [project.urls]
-"Homepage" = "https://github.com/aurelienmorgan/retrain_pipelines"
 "Repository" = "https://github.com/aurelienmorgan/retrain_pipelines"
 "PyPI" = "https://pypi.org/project/retrain-pipelines/"
 

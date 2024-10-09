@@ -10,8 +10,6 @@ from IPython import get_ipython
 from IPython.display import display, clear_output, HTML
 
 # Initialize colorama
-#init(autoreset=True)
-#init(convert=True)
 init(strip=False)
 
 def _create_wave_frame_html(text, t, width):
@@ -54,7 +52,10 @@ def animate_wave(text, duration=20, fps=15):
     """
     """
 
-    if os.getenv('launched_from_magic', None):
+    if (
+        os.getenv('launched_from_magic', None) or
+        os.getenv('launched_from_cli', None)
+    ):
         import io
 
         # Redirect stdout

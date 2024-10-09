@@ -137,9 +137,12 @@ def retrain_pipelines_local(
 
 def cli_utility():
     args = sys.argv[1:]  # all arguments
-    print(f"args: {args}")
+    #print(f"args: {args}")
+
+    env = os.environ.copy()
+    env['launched_from_cli'] = 'True'
     return retrain_pipelines_local(
                command=" ".join(args),
-               env=os.environ.copy()
+               env=env
            )
 

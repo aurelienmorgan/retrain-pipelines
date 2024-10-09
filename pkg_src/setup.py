@@ -4,6 +4,9 @@ import re
 import shutil
 import subprocess
 
+LICENSE = "LICENSE"
+if os.path.exists(os.path.join("..", LICENSE)):
+    shutil.copy(os.path.join("..", LICENSE), LICENSE)
 # to avoid having to maintain 1 for Gihub and 1 for PyPi
 README = "README.MD"
 if os.path.exists(os.path.join("..", README)):
