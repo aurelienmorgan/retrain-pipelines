@@ -8,6 +8,7 @@ useradd -m user
 ##############################
 #    metaflow-service-db-1   #
 ##############################
+MF_ROOT=${MF_ROOT:-/data}
 PGDATA_DIR=${PGDATA_DIR:-${MF_ROOT}/pgdata}
 echo "Creating and launching 'metaflow-service-db'"
 udocker --allow-root pull postgres:11
