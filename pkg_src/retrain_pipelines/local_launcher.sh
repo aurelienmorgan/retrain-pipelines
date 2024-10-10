@@ -19,19 +19,19 @@ export METAFLOW_DATASTORE_SYSROOT_LOCAL=${HOME}/local_datastore/
 
 #---------------------------------------------------------------
 
-#echo $(which python)
+# echo $(which python)
 
 # Check if retrain_pipelines Python package is installed
 # otherwise add "pkg_src" to PYTHONPATH
 # if exists and not there already.
 if ! python3 -c "import retrain_pipelines" &> /dev/null; then
     # "'retrain_pipelines' package is not installed."
-
-    if [ -d "./pkg_src" ]; then
+    PARENT_PARENT_DIR="$(dirname "$(dirname "${BASH_SOURCE[0]}")")"
+    if [[ "$(basename "$PARENT_PARENT_DIR")" == "pkg_src" ]]; then
         # "'pkg_src' directory exists."
-        if [[ ":$PYTHONPATH:" != *":$(pwd)/pkg_src:"* ]]; then
+        if [[ ":$PYTHONPATH:" != *":$PARENT_PARENT_DIR:"* ]]; then
             # ./pkg_src is not already in PYTHONPATH
-            export PYTHONPATH="$(pwd)/pkg_src:$PYTHONPATH"
+            export PYTHONPATH="$PARENT_PARENT_DIR:$PYTHONPATH"
             #echo $PYTHONPATH
         fi
     else
