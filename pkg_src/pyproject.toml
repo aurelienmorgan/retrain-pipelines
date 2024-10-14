@@ -4,7 +4,7 @@ requires = ["wheel", "setuptools>=60", "setuptools-scm>=8.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "retrain_pipelines"
+name = "test_5_retrain_pipelines"
 authors = [
     {name = "Aurelien-Morgan"}
 ]
@@ -12,7 +12,7 @@ maintainers = [
     {name = "Aurelien-Morgan"}
 ]
 description = "retrain-pipelines lowers the barrier to entry for the creation and management of professional machine learning retraining pipelines."
-readme = "README.MD"
+readme = { file = "README.md", content-type = "text/markdown" }
 license = {text = "Apache License 2.0"}
 requires-python = ">=3.3"
 keywords = [
@@ -101,6 +101,6 @@ lint.preview = true
 retrain_pipelines_local = "retrain_pipelines.local_launcher:cli_utility"
 
 [project.urls]
-"Repository" = "https://github.com/aurelienmorgan/retrain_pipelines"
+"Repository" = "https://github.com/aurelienmorgan/retrain-pipelines"
 "PyPI" = "https://pypi.org/project/retrain-pipelines/"
 

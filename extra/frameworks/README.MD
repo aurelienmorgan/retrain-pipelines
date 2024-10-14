@@ -1,30 +1,31 @@
-![logo_large](https://github.com/user-attachments/assets/19725866-13f9-48c1-b958-35c2e014351a)
+![logo_large](https://github.com/user-attachments/assets/1194ae2d-ed68-4f9f-8768-90e2f7edd97d)
 
 
 # Frameworks
 <b>retrain-pipelines</b> is designed to support a variety of modalities and scenarios, with several frameworks being adopted.
 
-To help teams iterate faster, we thought of offering assistance with personal sandbox environment creation. The intend naturally being to develop draft retraining pipelines fast.
+To help teams iterate faster, we thought of offering assistance with personal sandbox environment creation. The intent naturally being to draft retraining pipelines fast.
 
 Currently, [Metaflow](https://metaflow.org/) is the first of these frameworks to be integrated.
 
 ---
 
-<img src="https://github.com/user-attachments/assets/24c90e1c-3ae7-4d3c-aaf0-b552bb08266d" alt="Metaflow" width="250" style="float: right;">
+<img src="https://github.com/user-attachments/assets/ecc20501-869d-4159-b5a0-eb0a117520e5" alt="Metaflow" width="200" style="float: right;">
 
 ## Metaflow sandbox environments
 
- However true that <b>Metaflow</b> itself is Apache 2 and free to use, it is cumbersome to install without relying on AWS S3 storage. <u>We fixed that&nbsp;!</u> Below you will find easy-to-follow steps to install <b>Metaflow service+ui</b> for free usage.<br />
+ However true that <b>Metaflow</b> itself is Apache 2 and free to use, it is cumbersome to install without relying on AWS S3 storage. <u>We fixed that&nbsp;!</u> Below you will find easy-to-follow steps to install <b>Metaflow service+ui</b> for free usage with two possible setups described here.
+
+### fully local<br />
 <em><small>(Note that Metaflow isn't supported on native Windows but, all is fine if you go through WSL.)</small></em>
 
-### fully local
 To run <b>Metaflow</b> locally, one needs to first clone both the [metaflow-service](https://github.com/Netflix/metaflow-service)
 and [metaflow-ui](https://github.com/Netflix/metaflow-ui) official repos.
 
 We tested with <code>metaflow-service v2.4.0</code> and <code>metaflow-ui v1.3.12</code> but, it's likely that newer versions work for you as well.
 <ul>
    <li>
-      Create the local artifacts-store directory with adequat permissions via the below CLI command&nbsp;:<br />
+      Create the local artifacts-store directory with adequate permissions via the below CLI command&nbsp;:<br />
       <code>umask 0022 | mkdir -p ${HOME}/local_datastore</code>
    </li>
    <li>
@@ -68,40 +69,45 @@ We tested with <code>metaflow-service v2.4.0</code> and <code>metaflow-ui v1.3.1
       <a href="http://localhost:3000/" target="_blank">http://localhost:3000/</a>
    </li>
    <li>
-      Python SDK
+      Python API<br />
+      Launch the execution of flow runs programatically. 3 different ways to do just that&nbsp;:
         <ul>
            <li>
-              raw<br />
+              raw command with proper set of variables&nbsp;&rArr;<br />
               <code>
-                 blabla
+                 ! export METAFLOW_SERVICE_URL=http://localhost:8080/ && \<br />
+                 &nbsp; &nbsp; export METAFLOW_DEFAULT_METADATA=service && \<br />
+                 &nbsp; &nbsp; export METAFLOW_DEFAULT_DATASTORE='local' && \<br />
+                 &nbsp; &nbsp; export METAFLOW_DATASTORE_SYSROOT_LOCAL={HOME}/local_datastore/ && \<br />
+                 &nbsp; &nbsp; cd {HOME}/local_datastore/ && \<br />
+                 &nbsp; &nbsp; python &lt;fullpath_to_your_flow.py&gt; run
               </code>
            </li>
            <li>
-              <b>retrain-pipelines</b> CLI utility<br />
-              <em>more on this later</em>
+              <b>retrain-pipelines</b> CLI utility&nbsp;&rArr;<br />
+              <em>more on this soon</em>
            </li>
            <li>
-              <b>retrain-pipelines</b> Jupyter magic<br />
-              <em>more on this later</em>
+              <b>retrain-pipelines</b> Jupyter magic&nbsp;&rArr;<br />
+              <em>more on this soon</em>
            </li>
         </ul>
    </li>
    <li>
-      Python API
+      Python SDK
         <ul>
            <li>
-              raw<br />
+              raw import preempted with proper set of variables&nbsp;&rArr;<br />
               <code>
-                 blabla
+                 import os<br />
+                 &nbsp; os.environ['METAFLOW_SERVICE_URL'] = 'http://localhost:8080/'<br />
+                 &nbsp; os.environ['METAFLOW_DEFAULT_METADATA'] = 'service'<br />
+                 &nbsp; import metaflow
               </code>
            </li>
            <li>
-              <b>retrain-pipelines</b> CLI utility<br />
-              <em>more on this later</em>
-           </li>
-           <li>
-              <b>retrain-pipelines</b> Jupyter magic<br />
-              <em>more on this later</em>
+              <b>retrain-pipelines</b> dedicated python module&nbsp;&rArr;<br />
+              <em>more on this soon</em>
            </li>
         </ul>
    </li>
@@ -109,18 +115,18 @@ We tested with <code>metaflow-service v2.4.0</code> and <code>metaflow-ui v1.3.1
 
 <br />
 
-### hosting on Google Colab
+### hosting on <img src="https://github.com/user-attachments/assets/bd56a1bc-9bb7-4699-86fe-e26648d5f62a" width=30 />Google Colab
 
 If you want to develop retraining pipelines for deep learning models and are GPU poor, we've thought of you too&nbsp;!<br />
 You can install <b>Metaflow</b> on a CPU Google Colab notebook and use it from another instance of Google Colab notebook which has a GPU runtime.
 
- - Following the installation/startup instructions as detailled in the []().
- - To get started in developping a retraining pipeline on a separate Google Colab notebook, use []() as a starting point.<br />
+ - Following the installation/startup instructions as put together in the [metaflow_service.ipynb](./Metaflow/metaflow_service.ipynb). Just press "open in colab" and execute the couple cells in there to spin <b>Statefull Metaflow Service+UI</b> up on Google Colab as well as expose it externally.
+ - To get started in developping a retraining pipeline on a separate Google Colab notebook, use [remote_local_metaflow.ipynb](./Metaflow/remote_local_metaflow.ipynb) as a starting point.<br />
 There, you'll see how to connect the two. That way, you can run dev pipeline runs using the Google Colab free-tier GPUs !<br />
 <em><small>(Note that this option is not advised for high CPU workloads, since clearly this is not the strong suit of Google Colab.)</small></em><br />
-For details on the inner-workings of this <b>Statefull Metaflow Service+UI</b> installation, go read our dedicated article on HuggingFace @https://hf.co/.......... .
+For details on the inner-workings of this <b>Statefull Metaflow Service+UI</b> installation, go read <a href="https://huggingface.co/blog/Aurelien-Morgan/stateful-metaflow-on-colab/" target="_blank">our dedicated article on <img src="https://github.com/user-attachments/assets/3ee54f64-0796-4573-9d01-daf26a57c748" width=20/>HuggingFace</a>.
 
-Note that, if unspecified while executing the `startup.sh` script, the default config for this setup is `/data` as MF_ROOT (to host <code>logs</code> and <code>persistent db</code> and <code>artifacts store</code>) and the exposed port number is `7860`. Just remember that this is a setup for which the host for <b>Metaflow</b> and the host for the runtime executing flow runs <u>shall share read/write access to the same MF_ROOT dir (same storage, same fullpath)</u>.
+Note that, if unspecified while executing the `startup.sh` script, the default config for this setup is `/data` as MF_ROOT (to host <code>logs</code> and <code>persistent db</code> and <code>artifacts store</code>) and the exposed port number is `7860`. Just remember that this is a setup for which the host for <b>Metaflow</b> and the host for the runtime executing flow runs <u>shall share read/write access to the same MF_ROOT dir (<em>same storage, same fullpath</em>)</u>.
 
 ---
 

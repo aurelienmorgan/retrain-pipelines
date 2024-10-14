@@ -15,7 +15,8 @@ import urllib
 
 from functools import wraps
 
-os.environ['METAFLOW_SERVICE_URL'] = 'http://localhost:8080/'
+os.environ['METAFLOW_SERVICE_URL'] = \
+    os.environ.get('METAFLOW_SERVICE_URL', 'http://localhost:8080/')
 os.environ['METAFLOW_DEFAULT_METADATA'] = 'service'
 
 # in case user is behind a proxy =>

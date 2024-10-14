@@ -8,7 +8,7 @@ LICENSE = "LICENSE"
 if os.path.exists(os.path.join("..", LICENSE)):
     shutil.copy(os.path.join("..", LICENSE), LICENSE)
 # to avoid having to maintain 1 for Gihub and 1 for PyPi
-README = "README.MD"
+README = "README.md"
 if os.path.exists(os.path.join("..", README)):
     shutil.copy(os.path.join("..", README), README)
 
@@ -48,8 +48,4 @@ setup(
         'install': DependenciesCheckInstallCommand,
     },
 )
-
-
-if os.path.exists(README):
-    os.remove(README)
 

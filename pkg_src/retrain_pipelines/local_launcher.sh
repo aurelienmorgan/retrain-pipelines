@@ -4,10 +4,11 @@ export REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
 
 export PARENT_DIR=$(pwd)
 
-export METAFLOW_SERVICE_URL=http://localhost:8080/
+export METAFLOW_SERVICE_URL=${METAFLOW_SERVICE_URL:-http://localhost:8080/}
 export METAFLOW_DEFAULT_METADATA=service
 export METAFLOW_DEFAULT_DATASTORE=local
-export METAFLOW_DATASTORE_SYSROOT_LOCAL=${HOME}/local_datastore/
+export METAFLOW_DATASTORE_SYSROOT_LOCAL=\
+${METAFLOW_DATASTORE_SYSROOT_LOCAL:-${HOME}/local_datastore/}
 
 #---------------------------------------------------------------
 
