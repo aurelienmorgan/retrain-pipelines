@@ -39,7 +39,7 @@ TABLE_EXISTS=$(psql -h localhost -p 5432 -U postgres -d postgres -t \
                         WHERE table_name = 'flows_v3');")
 if [ "$TABLE_EXISTS" = " f" ]; then
     curl -o ${MF_ROOT}/db_init.sql \
-        https://github.com/aurelienmorgan/retrain-pipelines/extra/frameworks/Metaflow/db_init.sql
+        https://raw.githubusercontent.com/aurelienmorgan/retrain-pipelines/refs/heads/master/extra/frameworks/Metaflow/db_init.sql
     psql -h localhost -p 5432 -U postgres -d postgres -f ${MF_ROOT}/db_init.sql
 else
     # db preventive maintenance
