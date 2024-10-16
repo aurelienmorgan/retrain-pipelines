@@ -1,3 +1,7 @@
+
+![PyPI - Downloads](https://img.shields.io/pypi/dm/retrain-pipelines)
+![GitHub - License](https://img.shields.io/github/license/aurelienmorgan/retrain-pipelines?logo=github&style=flat&color=green)
+
 ![uder_construction](https://github.com/user-attachments/assets/2ab16d54-c565-409b-b00c-fd3ad20d59df)
 <center>This README is nowhere near ready yet.</center>
 
@@ -22,6 +26,15 @@ In essence, <b>retrain-pipelines</b> offers a seamless solution: "Come with your
 - **Custom HTML Templates**: For further personalization, retrain-pipelines supports customizable HTML templates, enabling you to adjust formatting, insert specific charts, change page colors, or even add your company's logo to documentation pages. 
 
 <b>retrain-pipelines</b> doesn't just streamline the retraining process, it empowers teams to innovate faster, iterate smarter, and deploy more robust models with confidence. Whether you're looking for an out-of-the-box solution or a highly customizable pipeline, <b>retrain-pipelines</b> is your ultimate companion for continuous model improvement.
+
+## Sample pipelines
+
+the <b>retrain-pipelines</b> package comes with off-the-shelf pipelines. Find them at <code>/sample_pipelines</code>. For instance&nbsp;:
+
+| framework | modality | task | model lib | Serving |
+|----------|----------|----------|----------|----------|
+| <a href="https://metaflow.org/" target="_blank">Metaflow</a> <img src="https://github.com/user-attachments/assets/30f4f382-3032-4bf7-b697-f6dbcab35fd7" height=20px /> | Tabular   | regression   | <a href="https://www.dask.org/" target="_blank">Dask</a> <img src="https://github.com/user-attachments/assets/a94807e7-cc67-4415-9a9e-da1ed4755cb1" width=20px /> / <a href="https://lightgbm.readthedocs.io/en/stable/" target="_blank">LightGBM</a> <img src="https://github.com/user-attachments/assets/92ac0b53-17f8-470d-9c73-619657db42bd" width=20px />   | <a href="https://www.seldon.io/solutions/seldon-mlserver" target="_blank">ML Server</a> <img src="https://github.com/user-attachments/assets/69c57bce-cd38-4f8c-8730-e5171e842d13" width=20px /> |
+| <a href="https://metaflow.org/" target="_blank">Metaflow</a> <img src="https://github.com/user-attachments/assets/30f4f382-3032-4bf7-b697-f6dbcab35fd7" height=20px /> | Tabular   | classification | <a href="https://pytorch.org/" target="_blank">Pytorch</a> <img src="https://github.com/user-attachments/assets/bfa9b38e-e9b3-41ff-8370-e64a0a0a4a93" width=20px /> / <a href="https://github.com/dreamquark-ai/tabnet/tree/develop" target="_blank">TabNet</a> | <a href="https://pytorch.org/serve/" target="_blank">TorchServe</a> |
 
 
 --  DRAFT  --
