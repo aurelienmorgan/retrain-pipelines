@@ -70,8 +70,6 @@ We tested with <code>metaflow-service v2.4.0</code> and <code>metaflow-ui v1.3.1
               raw command with proper set of variables&nbsp;&rArr;<br />
               <code>!export METAFLOW_SERVICE_URL=http://localhost:8080/ && \</code><br />
               <code>&nbsp;export METAFLOW_DEFAULT_METADATA=service && \</code><br />
-              <code>&nbsp;export METAFLOW_DEFAULT_DATASTORE='local' && \</code><br />
-              <code>&nbsp;export METAFLOW_DATASTORE_SYSROOT_LOCAL={HOME}/local_datastore/ && \</code><br />
               <code>&nbsp;cd {HOME}/local_datastore/ && \</code><br />
               <code>&nbsp;python &lt;fullpath_to_your_flow.py&gt; run</code>
            </li>
