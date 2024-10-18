@@ -4,7 +4,7 @@ requires = ["wheel", "setuptools>=60", "setuptools-scm>=8.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "test_5_retrain_pipelines"
+name = "retrain_pipelines"
 authors = [
     {name = "Aurelien-Morgan"}
 ]

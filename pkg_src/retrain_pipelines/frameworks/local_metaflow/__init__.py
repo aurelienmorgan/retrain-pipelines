@@ -13,6 +13,9 @@ import os
 import sys
 import urllib
 
+import logging
+logger = logging.getLogger()
+
 from functools import wraps
 
 os.environ['METAFLOW_SERVICE_URL'] = \
@@ -56,29 +59,41 @@ and doing it via methods wrapping
 (maintain docstrings and all).
 """
 
+def _set_retrain_pipeline_type_env(
+    flow_start_task: metaflow.Task
+):
+    """
+    Allow support (with warning) for non-"retrain-pipelines" flows.
+    """
+
+    flow_start_task = \
+        list(flow.latest_run.steps())[-1].task
+    if "retrain_pipeline_type" in flow_start_task:
+        os.environ["retrain_pipeline_type"] = \
+            flow_start_task["retrain_pipeline_type"].data
+    else:
+        logger.warn("not recognized as a retrain-pipelines flow.")
+
+
 @wraps(metaflow.Flow)
 def Flow(*args, **kwargs):
     flow = metaflow.Flow(*args, **kwargs)
     if not os.getenv("retrain_pipeline_type", None):
-        os.environ["retrain_pipeline_type"] = \
-            list(flow.latest_run.steps())[-1] \
-                        .task["retrain_pipeline_type"].data
+        _set_retrain_pipeline_type_env(
+            list(flow.latest_run.steps())[-1].task)
     return flow
 
 @wraps(metaflow.Run)
 def Run(*args, **kwargs):
     run = metaflow.Run(*args, **kwargs)
     if not os.getenv("retrain_pipeline_type", None):
-        print(list(run.steps())[-1].task)
-        os.environ["retrain_pipeline_type"] = \
-            list(run.steps())[-1].task["retrain_pipeline_type"].data
+        _set_retrain_pipeline_type_env(list(run.steps())[-1].task)
     return run
 
 @wraps(metaflow.Task)
 def Task(*args, **kwargs):
     task = metaflow.Task(*args, **kwargs)
     if not os.getenv("retrain_pipeline_type", None):
-        os.environ["retrain_pipeline_type"] = \
-            task["retrain_pipeline_type"].data
+        _set_retrain_pipeline_type_env(task)
     return task
 

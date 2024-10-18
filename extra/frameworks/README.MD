@@ -77,11 +77,12 @@ We tested with <code>metaflow-service v2.4.0</code> and <code>metaflow-ui v1.3.1
            </li>
            <li>
               <b>retrain-pipelines</b> CLI utility&nbsp;&rArr;<br />
-              <em>more on this soon</em>
+              <code>retrain_pipelines_local &lt;relpath_to_your_flow.py&gt; run</code>
            </li>
            <li>
               <b>retrain-pipelines</b> Jupyter magic&nbsp;&rArr;<br />
-              <em>more on this soon</em>
+              <code>%load_ext retrain_pipelines.local_launcher_magic</code><br />
+              <code>%retrain_pipelines_local &lt;relpath_to_your_flow.py&gt; run</code>
            </li>
         </ul>
    </li>
@@ -97,7 +98,7 @@ We tested with <code>metaflow-service v2.4.0</code> and <code>metaflow-ui v1.3.1
            </li>
            <li>
               <b>retrain-pipelines</b> dedicated python module&nbsp;&rArr;<br />
-              <em>more on this soon</em>
+              <code>from retrain_pipelines.frameworks import local_metaflow as metaflow</code>
            </li>
         </ul>
    </li>

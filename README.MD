@@ -53,5 +53,7 @@ the <b>retrain-pipelines</b> package comes with off-the-shelf pipelines. Find th
 
 # build from source
     cd pkg_src && python -m build --verbose
-# install from source (dev mode) via :
+# install from source
+    pip install git+https://github.com/aurelienmorgan/retrain-pipelines.git@master#subdirectory=pkg_src
+# install from source (dev mode)
     pip install -e pkg_src

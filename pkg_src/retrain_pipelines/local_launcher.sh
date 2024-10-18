@@ -135,7 +135,8 @@ done
 cd $METAFLOW_DATASTORE_SYSROOT_LOCAL
 
 # Construct the command
-COMMAND="python ${FILE_PATH} ${EXECUTION_MODE}"
+PYTHON=$(command -v python3 || command -v python)
+COMMAND="$PYTHON ${FILE_PATH} ${EXECUTION_MODE}"
 if [[ -n "$DATA_FILE" ]]; then
   COMMAND="${COMMAND} --data_file ${DATA_FILE}"
 fi
