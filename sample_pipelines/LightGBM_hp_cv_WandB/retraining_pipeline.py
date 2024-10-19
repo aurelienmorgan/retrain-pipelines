@@ -6,6 +6,8 @@ import numpy as np
 import pandas as pd
 
 import json
+import time
+import shutil
 import joblib
 import logging
 import itertools
@@ -119,7 +121,7 @@ class LightGbmHpCvWandbFlow(FlowSpec):
 
     # Tempo (MLserver SDK) artifacts location
     # (i.e. dir hosting preprocessing.py)
-    preprocess_module_dir = \
+    default_preprocess_module_dir = \
         os.path.dirname(
             importlib.util.find_spec(
                 f"retrain_pipelines.model."
@@ -128,16 +130,34 @@ class LightGbmHpCvWandbFlow(FlowSpec):
     preprocess_artifacts_path = Parameter(
         "preprocess_artifacts_path",
         type=str,
-        default=preprocess_module_dir,
+        default=default_preprocess_module_dir,
         help="Tempo [MLserver SDK] artifacts location "+\
              "(i.e. dir hosting your custom 'preprocessing.py'"+\
              " file), if different from default"
     )
-    del preprocess_module_dir
+    @staticmethod
+    def _get_default_preprocess_artifacts_path() -> str:
+        return LightGbmHpCvWandbFlow.default_preprocess_module_dir
+    @staticmethod
+    def copy_default_preprocess_module(
+        target_dir: str,
+        exists_ok: bool = False
+    ) -> None:
+        os.makedirs(target_dir, exist_ok=True)
+        if (
+            not exists_ok and
+            os.path.exists(os.path.join(target_dir, "preprocessing.py"))
+        ):
+            print("File already exists. Skipping copy.")
+        else:
+            shutil.copy(os.path.join(
+                    LightGbmHpCvWandbFlow._get_default_preprocess_artifacts_path(),
+                    "preprocessing.py"
+                ), target_dir)
 
     # pipeline_card artifacts location
     # (i.e. dir hosting pipeline_card.py and/or template.html)
-    pipeline_card_module_dir = \
+    default_pipeline_card_module_dir = \
         os.path.dirname(
             importlib.util.find_spec(
                 f"retrain_pipelines.pipeline_card."+
@@ -146,13 +166,47 @@ class LightGbmHpCvWandbFlow(FlowSpec):
     pipeline_card_artifacts_path = Parameter(
         "pipeline_card_artifacts_path",
         type=str,
-        default=pipeline_card_module_dir,
+        default=default_pipeline_card_module_dir,
         help="pipeline_card artifacts location "+\
              "(i.e. dir hosting your custom 'pipeline_card.py'"+\
              " and/or 'template.html' file)," +\
              " if different from default"
     )
-    del pipeline_card_module_dir
+    @staticmethod
+    def _get_default_pipeline_card_module_dir() -> str:
+        return LightGbmHpCvWandbFlow.default_pipeline_card_module_dir
+    @staticmethod
+    def copy_default_pipeline_card_module(
+        target_dir: str,
+        exists_ok: bool = False
+    ) -> None:
+        os.makedirs(target_dir, exist_ok=True)
+        if (
+            not exists_ok and
+            os.path.exists(os.path.join(target_dir, "pipeline_card.py"))
+        ):
+            print("File already exists. Skipping copy.")
+        else:
+            shutil.copy(os.path.join(
+                    LightGbmHpCvWandbFlow._get_default_pipeline_card_module_dir(),
+                    "pipeline_card.py"
+                ), target_dir)
+    @staticmethod
+    def copy_default_pipeline_card_html_template(
+        target_dir: str,
+        exists_ok: bool = False
+    ) -> None:
+        os.makedirs(target_dir, exist_ok=True)
+        if (
+            not exists_ok and
+            os.path.exists(os.path.join(target_dir, "template.html"))
+        ):
+            print("File already exists. Skipping copy.")
+        else:
+            shutil.copy(os.path.join(
+                    LightGbmHpCvWandbFlow._get_default_pipeline_card_module_dir(),
+                    "template.html"),
+                target_dir)
 
     del RETRAIN_PIPELINE_TYPE
 
@@ -799,9 +853,6 @@ class LightGbmHpCvWandbFlow(FlowSpec):
         self.local_serve_is_ready = -1
 
         if self.model_version_blessed:
-            import time
-            import shutil
-            import numpy as np
             from tempo.serve.loader import save
             from retrain_pipelines.utils import system_has_conda, \
                     is_conda_env, venv_as_conda
