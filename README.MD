@@ -27,6 +27,14 @@ In essence, <b>retrain-pipelines</b> offers a seamless solution: "Come with your
 
 <b>retrain-pipelines</b> doesn't just streamline the retraining process, it empowers teams to innovate faster, iterate smarter, and deploy more robust models with confidence. Whether you're looking for an out-of-the-box solution or a highly customizable pipeline, <b>retrain-pipelines</b> is your ultimate companion for continuous model improvement.
 
+
+## Getting Started
+
+You can trigger a retrain-pipeline launch from many different places.
+
+[local_launcher](https://github.com/user-attachments/assets/866a6a84-e34f-44a2-a14f-e781c0c30403)
+
+
 ## Sample pipelines
 
 the <b>retrain-pipelines</b> package comes with off-the-shelf pipelines. Find them at <code>/sample_pipelines</code>. For instance&nbsp;:
@@ -44,7 +52,7 @@ the <b>retrain-pipelines</b> package comes with off-the-shelf pipelines. Find th
 
     - incl. link to pypi here https://pypi.org/project/retrain-pipelines/
 
-    - all is fine to track your draft pipelines as you iterate on developping them, but keeping tracks of the artifacts generated during those dry runs on the other hand has no value. To address that and all the "..." that come with it, we propose sandboxing.
+    - all is fine to track your draft pipelines as you iterate on developping them, but keeping tracks of the artifacts generated during those dry runs on the other hand has no value. To address that and all the "..." that come with it, we propose private sandboxing.
       Stateful yet ephemeral. Once your happy with a given ML retraining pipeline advancement, you're free to drop all the draft artifacts.
 
 
@@ -53,7 +61,7 @@ the <b>retrain-pipelines</b> package comes with off-the-shelf pipelines. Find th
 
 # build from source
     cd pkg_src && python -m build --verbose
-# install from source
-    pip install git+https://github.com/aurelienmorgan/retrain-pipelines.git@master#subdirectory=pkg_src
 # install from source (dev mode)
     pip install -e pkg_src
+# install from remote source
+    pip install git+https://github.com/aurelienmorgan/retrain-pipelines.git@master#subdirectory=pkg_src
