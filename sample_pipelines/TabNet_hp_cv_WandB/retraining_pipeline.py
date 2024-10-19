@@ -126,8 +126,8 @@ class TabNetHpCvWandbFlow(FlowSpec):
         "wandb_run_mode",
         type=str,
         default="online",
-        help="WandB mode for the flow-run"+\
-             "indicating whether to sync it to the wandb server"+\
+        help="WandB mode for the flow-run "+\
+             "indicating whether to sync it to the wandb server "+\
              "can be either 'disabled', 'offline', or 'online'."
     )
 
@@ -143,9 +143,9 @@ class TabNetHpCvWandbFlow(FlowSpec):
         "preprocess_artifacts_path",
         type=str,
         default=preprocess_module_dir,
-        help="TorchServe artifacts location"+\
+        help="TorchServe artifacts location "+\
              "(i.e. dir hosting your custom 'preprocessing.py'"+\
-             " file), if different from default)"
+             " file), if different from default"
     )
     del preprocess_module_dir
 
@@ -161,10 +161,10 @@ class TabNetHpCvWandbFlow(FlowSpec):
         "pipeline_card_artifacts_path",
         type=str,
         default=pipeline_card_module_dir,
-        help="pipeline_card artifacts location"+\
+        help="pipeline_card artifacts location "+\
              "(i.e. dir hosting your custom 'pipeline_card.py'"+\
              " and/or 'template.html' file)," +\
-             " if different from default)"
+             " if different from default"
     )
     del pipeline_card_module_dir
 
