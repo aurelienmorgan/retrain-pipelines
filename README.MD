@@ -47,7 +47,85 @@ the <b>retrain-pipelines</b> package comes with off-the-shelf pipelines. Find th
 You can simply give it your data and it just runs. The only manual change you need to do is regarding the endpoint request &amp; serving signatures, since it is purposely hard-coded.<br />
 Indeed, the <code>infra_validator</code> step is here to ensure that <u>your inference pipeline</u> (the one you're working on building a continuous-retraining automation for) keeps adhering to the schema expected by consumers of the inference endpoint. So, if you break the format of the input data, you need to create a somehow new retraining pipeline and assign it a unique name. This is to ensure that any interface disruption between the inference endpoint and its consumer(s) is intentional.
 
---  DRAFT  --
+## some important markers
+
+One of the things that make <b>retrain-pipelines</b> stand is its focus on strong MLOps fundamentals.
+
+<details>
+  <summary>model blessing</summary>
+<b>retrain-pipelines</b> cares for the newly-retrained model version to be evaluated against the previous model version from that retraining pipeline. We indeed ensure that no lesser-performing model ever gets into production.<br />
+Default sample pipelines each come with certain built-in evaluation criteria but, you can customize those per your own requirement. You can for instance choose to include evaluation of model performance on a particular sub-population, so as to serve as a gateway against potential incoming biases.
+<hr width=60% />
+</details>
+
+<details>
+  <summary>infrastructure validation</summary>
+<b>retrain-pipelines</b> cares for the inference endpoint to be tested prior to deployment. We pack the preprocessing engine together with the newly retrained (and blessed) model version with the ML-server of choice and deploy it locally. We then send an inference request to that temp endpoint and check for a <code>200 http-ok</code> response with a valid payload format.
+<hr width=60% />
+</details>
+
+<details>
+  <summary>pipeline cards</summary>
+<b>retrain-pipelines</b> is strongly opinionated around ease of quick-access to information ML-engineers care for when it comes to retraining and serving.<br />
+This comes with a central place and minimal amounts of clicks to navigate efficiently.
+<hr width=60% />
+</details>
+
+<details>
+  <summary>Third-parties integration</summary>
+TensorBoard, PyTorch Profiler, Weights and Biases. <b>retrain-pipelines</b> aims at making centrally available to ML engineers the information they care for.
+
+<details>
+  <summary>illustration with <code>WandB</code> in the <code>LightGBM_hp_cv_WandB</code> sample pipeline</summary>
+  In the example of the <code>LightGBM_hp_cv_WandB</code> sample pipeline for instance, you can find information on how to view details on logging performed during the different <code>training_job</code> steps of a given run. Follow the guidance from the below video&nbsp;:
+
+  [wandb_unedited.webm](https://github.com/user-attachments/assets/23b8f8a1-d303-4f54-bf3e-b994e4c41adf)
+</details>
+<hr width=60% />
+</details>
+
+<details>
+  <summary>customizability</summary>
+As eluded to <a href="#customizability--adaptability">above<a>, a lot of room is given to ML engineers for them to customize <b>retrain-pipelines</b> workflows.<br />
+For staters, the sample pipelines are freely modifiable themselves. But, it goes far beyond that. One can go deep into customization with defaults for <code>preprocessing</code> and for <code>pipeline_card generation</code> to be fully amendable as well.
+
+<details>
+  <summary>illustration with the <code>LightGBM_hp_cv_WandB</code> sample pipeline</summary>
+  Start by getting the default which you'd like to customize (any combinaison of the below 3 you'd like) :
+  <ul>
+    <li>reprocessing.py module</li>
+    <li>pipeline_card.py module</li>
+    <li>template.html html template</li>
+  </ul>
+
+  ```shell
+  cd sample_pipelines/LightGBM_hp_cv_WandB/
+  ```
+  ```python
+  from retraining_pipeline import LightGbmHpCvWandbFlow
+
+  LightGbmHpCvWandbFlow.copy_default_preprocess_module(".", exists_ok=True)
+  LightGbmHpCvWandbFlow.copy_default_pipeline_card_module(".", exists_ok=True)
+  LightGbmHpCvWandbFlow.copy_default_pipeline_card_html_template(".", exists_ok=True)
+  ```
+  Once you updated any of them, you can launch a <b>retrain-pipelines</b> run so it uses those :
+  ```python
+  retrain_pipelines_local retraining_pipeline.py run \
+    --pipeline_card_artifacts_path "." \
+    --preprocess_artifacts_path "."
+  ```
+</details>
+<hr width=60% />
+</details>
+
+
+## retrain-pipelines inspectors
+
+Inspectors are convenience methods that abstract away some of the logic to get access to Metaflow pipeline-run artifacts.
+
+[insert here example of Dask data-paralellism]
+
+## --  DRAFT  --
 
     - Say you use custom "preprocessing.py", "pipeline_card.py" and/or "template.html".
       If you chose to log the run on WandB, you can retrieve the versionned artifacts there afterwards via the WandB inspector "name_here" retrain-pipelines offers.
