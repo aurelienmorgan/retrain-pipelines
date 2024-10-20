@@ -6,6 +6,9 @@ import platform
 import webbrowser
 import subprocess
 
+import logging
+logger = logging.getLogger()
+
 from ..frameworks import local_metaflow as metaflow
 from ..frameworks.local_metaflow.exception import MetaflowNotFound
 
@@ -125,9 +128,13 @@ def _local_pipeline_card_path(
                   " didn't get to the 'pipeline_card' step.")
     pipeline_card_task = pipeline_card_task[0]
 
-    custom_card = metaflow.cards.get_cards(
-        pipeline_card_task, id='custom', type='html')[0]
-    # display(custom_card)
+    try:
+        custom_card = metaflow.cards.get_cards(
+            pipeline_card_task, id='custom', type='html')[0]
+        # display(custom_card)
+    except IndexError as idxErr:
+        logger.warn(f"No custom/html card exists for {pipeline_card_task}")
+        return []
 
     latest_prior_blessed_custom_card_fullname = None
     if (
@@ -372,7 +379,11 @@ def browse_local_pipeline_card(
 
     local_pipeline_card_paths = _local_pipeline_card_path(
         mf_flow_name, mf_run_id=mf_run_id)
-    if verbose: print(local_pipeline_card_paths)
-    if not local_pipeline_card_paths: return
-    _webbrowser_open(local_pipeline_card_paths)
+    if (
+        local_pipeline_card_paths and
+        len(local_pipeline_card_paths) > 0
+    ):
+        if verbose: print(local_pipeline_card_paths)
+        if not local_pipeline_card_paths: return
+        _webbrowser_open(local_pipeline_card_paths)
 
