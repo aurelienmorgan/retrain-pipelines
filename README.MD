@@ -44,8 +44,8 @@ the <b>retrain-pipelines</b> package comes with off-the-shelf pipelines. Find th
 | <a href="https://metaflow.org/" target="_blank">Metaflow</a> <img src="https://github.com/user-attachments/assets/30f4f382-3032-4bf7-b697-f6dbcab35fd7" height=20px /> | Tabular   | regression   | <a href="https://www.dask.org/" target="_blank">Dask</a> <img src="https://github.com/user-attachments/assets/a94807e7-cc67-4415-9a9e-da1ed4755cb1" width=20px /> / <a href="https://lightgbm.readthedocs.io/en/stable/" target="_blank">LightGBM</a> <img src="https://github.com/user-attachments/assets/92ac0b53-17f8-470d-9c73-619657db42bd" width=20px />   | <a href="https://www.seldon.io/solutions/seldon-mlserver" target="_blank">ML Server</a> <img src="https://github.com/user-attachments/assets/69c57bce-cd38-4f8c-8730-e5171e842d13" width=20px /> | <b><a href="https://github.com/aurelienmorgan/retrain-pipelines/tree/master/sample_pipelines/LightGBM_hp_cv_WandB" target="_blank">starter-kit</a></b> |
 | <a href="https://metaflow.org/" target="_blank">Metaflow</a> <img src="https://github.com/user-attachments/assets/30f4f382-3032-4bf7-b697-f6dbcab35fd7" height=20px /> | Tabular   | classification | <a href="https://pytorch.org/" target="_blank">Pytorch</a> <img src="https://github.com/user-attachments/assets/bfa9b38e-e9b3-41ff-8370-e64a0a0a4a93" width=20px /> / <a href="https://github.com/dreamquark-ai/tabnet/tree/develop" target="_blank">TabNet</a> | <a href="https://pytorch.org/serve/" target="_blank">TorchServe</a> | <b><a href="https://github.com/aurelienmorgan/retrain-pipelines/tree/master/sample_pipelines/TabNet_hp_cv_WandB" target="_blank">starter-kit</a></b> |
 
-You can simply give it your data and it just runs. The only manual change you need to do is regarding the endpoint request &amp; serving signatures, since it is purposely hard-coded.<br />
-Indeed, the <code>infra_validator</code> step is here to ensure that <u>your inference pipeline</u> (the one you're working on building a continuous-retraining automation for) keeps adhering to the schema expected by consumers of the inference endpoint. So, if you break the format of the input data, you need to create a somehow new retraining pipeline and assign it a unique name. This is to ensure that any interface disruption between the inference endpoint and its consumer(s) is intentional.
+You can simply give one of those your data and it just runs. The only manual change you need to do is regarding the endpoint request &amp; serving signatures, since it is purposely hard-coded.<br />
+<small>Indeed, the <code>infra_validator</code> step is here to ensure that <u>your inference pipeline</u> (the one you're working on building a continuous-retraining automation for) keeps adhering to the schema expected by consumers of the inference endpoint. So, if you break the format of the required input raw data, you need to create a somehow new retraining pipeline and assign it a new unique name. This is to ensure that any interface disruption between the inference endpoint and its consumer(s) is intentional.</small>
 
 ## some important markers
 
@@ -68,6 +68,25 @@ Default sample pipelines each come with certain built-in evaluation criteria but
   <summary>pipeline cards</summary>
 <b>retrain-pipelines</b> is strongly opinionated around ease of quick-access to information ML-engineers care for when it comes to retraining and serving.<br />
 This comes with a central place and minimal amounts of clicks to navigate efficiently.
+<table width=100%>
+  <tr width=100%>
+    <td>
+      <img src="https://github.com/user-attachments/assets/fc4b94a5-8178-49b0-822a-a8088dbf1b6d" width=100 height=80 />
+    </td>
+    <td>
+      titi
+    </td>
+    <td>
+      toto
+    </td>
+  </tr>
+  <tr>
+    <td colspan="3">
+      <em><small>click thumbnails to enlarge</small></em>
+    </td>
+  </tr>
+</table>
+Browse a live example for yourself <a href="https://retrain-pipelines.static.domains/html-custom-87f1ef839a6da38729" target="_blank">here on Static.app</a>
 <hr width=60% />
 </details>
 
@@ -79,7 +98,7 @@ TensorBoard, PyTorch Profiler, Weights and Biases. <b>retrain-pipelines</b> aims
   <summary>illustration with <code>WandB</code> in the <code>LightGBM_hp_cv_WandB</code> sample pipeline</summary>
   In the example of the <code>LightGBM_hp_cv_WandB</code> sample pipeline for instance, you can find information on how to view details on logging performed during the different <code>training_job</code> steps of a given run. Follow the guidance from the below video&nbsp;:
 
-  [wandb_unedited.webm](https://github.com/user-attachments/assets/23b8f8a1-d303-4f54-bf3e-b994e4c41adf)
+  [wandb_integration.webm](https://github.com/user-attachments/assets/730bc695-0768-484b-8e6e-2dbf0db08d68)
 </details>
 <hr width=60% />
 </details>
@@ -87,15 +106,15 @@ TensorBoard, PyTorch Profiler, Weights and Biases. <b>retrain-pipelines</b> aims
 <details>
   <summary>customizability</summary>
 As eluded to <a href="#customizability--adaptability">above<a>, a lot of room is given to ML engineers for them to customize <b>retrain-pipelines</b> workflows.<br />
-For staters, the sample pipelines are freely modifiable themselves. But, it goes far beyond that. One can go deep into customization with defaults for <code>preprocessing</code> and for <code>pipeline_card generation</code> to be fully amendable as well.
+For staters, the sample pipelines are freely modifiable themselves. But, it goes far beyond that. One can go deep into customization with the defaults for <code>preprocessing</code> and for <code>pipeline_card</code> being fully amendable as well.
 
 <details>
   <summary>illustration with the <code>LightGBM_hp_cv_WandB</code> sample pipeline</summary>
   Start by getting the default which you'd like to customize (any combinaison of the below 3 you'd like) :
   <ul>
-    <li>reprocessing.py module</li>
-    <li>pipeline_card.py module</li>
-    <li>template.html html template</li>
+    <li><code>reprocessing.py</code> module</li>
+    <li><code>pipeline_card.py</code> module</li>
+    <li><code>template.html</code> html template</li>
   </ul>
 
   ```shell
