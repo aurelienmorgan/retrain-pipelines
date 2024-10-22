@@ -3,7 +3,7 @@
 ![GitHub - License](https://img.shields.io/github/license/aurelienmorgan/retrain-pipelines?logo=github&style=flat&color=green)
 
 ![uder_construction](https://github.com/user-attachments/assets/2ab16d54-c565-409b-b00c-fd3ad20d59df)
-<center>This README is nowhere near ready yet.</center>
+<center>This README is almost ready now.</center>
 
 ![logo_large](https://github.com/user-attachments/assets/19725866-13f9-48c1-b958-35c2e014351a)
 
@@ -67,17 +67,30 @@ Default sample pipelines each come with certain built-in evaluation criteria but
 <details>
   <summary>pipeline cards</summary>
 <b>retrain-pipelines</b> is strongly opinionated around ease of quick-access to information ML-engineers care for when it comes to retraining and serving.<br />
-This comes with a central place and minimal amounts of clicks to navigate efficiently.
+That's why it offers a central place and minimal amounts of clicks to navigate efficiently.
 <table width=100%>
   <tr width=100%>
     <td>
-      <img src="https://github.com/user-attachments/assets/fc4b94a5-8178-49b0-822a-a8088dbf1b6d" width=100 height=80 />
+      <img src="https://github.com/user-attachments/assets/fc4b94a5-8178-49b0-822a-a8088dbf1b6d" width=100 height=80 /><br />
+      overview
     </td>
     <td>
-      titi
+      <img src="https://github.com/user-attachments/assets/e1bfe5f8-13a9-442a-a75a-6c73189c6274" width=100 height=80 /><br />
+      EDA
     </td>
     <td>
-      toto
+      overall retraining
+    </td>
+  </tr>
+  <tr>
+    <td>
+      hyperparameter tuning
+    </td>
+    <td>
+     key artifacts
+    </td>
+    <td>
+      pipeline DAG
     </td>
   </tr>
   <tr>
