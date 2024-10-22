@@ -143,7 +143,7 @@ class TabNetHpCvWandbFlow(FlowSpec):
         "preprocess_artifacts_path",
         type=str,
         default=default_preprocess_module_dir,
-        help="TorchServe artifacts location "+\
+        help="Tempo [MLserver SDK] artifacts location "+\
              "(i.e. dir hosting your custom 'preprocessing.py'"+\
              " file), if different from default"
     )
@@ -162,10 +162,12 @@ class TabNetHpCvWandbFlow(FlowSpec):
         ):
             print("File already exists. Skipping copy.")
         else:
-            shutil.copy(os.path.join(
+            filefullname = os.path.join(
                     TabNetHpCvWandbFlow._get_default_preprocess_artifacts_path(),
                     "preprocessing.py"
-                ), target_dir)
+                )
+            shutil.copy(filefullname, target_dir)
+            print(filefullname)
 
     # pipeline_card artifacts location
     # (i.e. dir hosting pipeline_card.py and/or template.html)
@@ -199,10 +201,12 @@ class TabNetHpCvWandbFlow(FlowSpec):
         ):
             print("File already exists. Skipping copy.")
         else:
-            shutil.copy(os.path.join(
+            filefullname = os.path.join(
                     TabNetHpCvWandbFlow._get_default_pipeline_card_module_dir(),
                     "pipeline_card.py"
-                ), target_dir)
+                )
+            shutil.copy(filefullname, target_dir)
+            print(filefullname)
     @staticmethod
     def copy_default_pipeline_card_html_template(
         target_dir: str,
@@ -215,10 +219,11 @@ class TabNetHpCvWandbFlow(FlowSpec):
         ):
             print("File already exists. Skipping copy.")
         else:
-            shutil.copy(os.path.join(
+            filefullname = os.path.join(
                     TabNetHpCvWandbFlow._get_default_pipeline_card_module_dir(),
-                    "template.html"),
-                target_dir)
+                    "template.html")
+            shutil.copy(filefullname, target_dir)
+            print(filefullname)
 
     del RETRAIN_PIPELINE_TYPE
 
