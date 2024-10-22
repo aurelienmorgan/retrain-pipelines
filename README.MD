@@ -75,7 +75,7 @@ That's why it offers a central place and minimal amounts of clicks to navigate e
       overview
     </td>
     <td>
-      <img src="https://github.com/user-attachments/assets/e1bfe5f8-13a9-442a-a75a-6c73189c6274" width=100 height=80 /><br />
+      <img src="https://github.com/user-attachments/assets/b5ce6b19-df87-4486-ac71-3cf06776452e" width=100 height=80 /><br />
       EDA
     </td>
     <td>
