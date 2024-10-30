@@ -66,6 +66,7 @@ def _set_retrain_pipeline_type_env(
     Allow support (with warning) for non-"retrain-pipelines" flows.
     """
 
+    print(flow_start_task)
     if "retrain_pipeline_type" in flow_start_task:
         os.environ["retrain_pipeline_type"] = \
             flow_start_task["retrain_pipeline_type"].data
@@ -92,6 +93,7 @@ def Run(*args, **kwargs):
 def Task(*args, **kwargs):
     task = metaflow.Task(*args, **kwargs)
     if not os.getenv("retrain_pipeline_type", None):
-        _set_retrain_pipeline_type_env(task)
+        run = task.parent.parent
+        _set_retrain_pipeline_type_env(list(run.steps())[-1].task)
     return task
 
