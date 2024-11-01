@@ -1,11 +1,15 @@
 
+
 import os
 import sys
 
-import re
+import ast
+import json
+import regex
 import shlex
 import subprocess
 import platform
+from json import JSONDecodeError
 
 
 def _split_preserve_dict(s):
@@ -14,9 +18,11 @@ def _split_preserve_dict(s):
     """
 
     # Temporarily replace the dictionary string
-    # (carefully not doing it for cases like "${...}")
-    dict_pattern = r'(?<!\$)(\{(?:[^{}]|\{[^{}]*\})*\})'
-    dicts = re.findall(dict_pattern, s)
+    # (handling matching closing curly braces properly,
+    #  even for nested dicts)
+    dict_pattern = \
+        r'\{(?!\w[\w\s-_]*\})(?:(?:[^{}]|(?R))*)\}'
+    dicts = regex.findall(dict_pattern, s)
     placeholders = [f'__DICT{i}__' for i in range(len(dicts))]
     for placeholder, dict_str in zip(placeholders, dicts):
         s = s.replace(dict_str, placeholder, 1)
@@ -24,16 +30,23 @@ def _split_preserve_dict(s):
     # Perform the split
     tokens = shlex.split(s)
     
-    # Restore the dictionary strings
+    # Restore the dictionary strings,
+    # making sure key names are between double quotes
     for placeholder, dict_str in zip(placeholders, dicts):
+        try:
+            json.loads(dict_str)
+        except JSONDecodeError:
+            dict_str = \
+                json.dumps(ast.literal_eval(dict_str))
         tokens = [dict_str if token == placeholder else token
                   for token in tokens]
-    
+
     return tokens
+
 
 def _strip_ansi_escape_codes(text):
     # Remove ANSI escape codes from text
-    ansi_escape = re.compile(r'\x1B\[.*?m')
+    ansi_escape = regex.compile(r'\x1B\[.*?m')
     return ansi_escape.sub('', text)
 
 def retrain_pipelines_local(
@@ -59,7 +72,7 @@ def retrain_pipelines_local(
         if "run" == command[2]:
             #print(env.keys())
             #print(os.environ.__dict__['_data'].keys())
-            pattern = re.compile(r'^\$\{([^}]+)\}$')
+            pattern = regex.compile(r'\{([A-Za-z0-9_ ]+)\}')
             for index in range(4, len(command), 2):
                 cmd_param_value = command[index]
                 match = pattern.match(cmd_param_value)

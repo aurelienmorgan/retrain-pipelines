@@ -20,7 +20,6 @@ ${METAFLOW_DATASTORE_SYSROOT_LOCAL:-${HOME}/local_datastore/}
 
 #---------------------------------------------------------------
 
-
 usage() {
   echo "Usage: $0 <file_path> <run|resume> [options]"
   echo ""
@@ -149,7 +148,7 @@ fi
 COMMAND="${COMMAND} ${OPTIONAL_ARGS[@]}"
 
 # Execute the Python script with the constructed command
-#echo $COMMAND
+# echo $COMMAND
 eval $COMMAND
 
 # sed -i 's/\r//' local_launcher.sh

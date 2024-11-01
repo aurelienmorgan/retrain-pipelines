@@ -62,6 +62,7 @@ dependencies = [
     "jinja2>=3",
     "scikit-learn>=1",
     "numpy>=1.17.3,<2",
+    "regex>=2022.10.31",
     "colorama>=0.4"
 ]
 dynamic = ["version"]
