@@ -6,6 +6,8 @@ import platform
 import webbrowser
 import subprocess
 
+from urllib.parse import urlparse
+
 import logging
 logger = logging.getLogger()
 
@@ -17,9 +19,7 @@ def _get_mf_run_by_id(
     mf_run_id: int
 ) -> metaflow.Run:
     """
-    
-    """
-    """
+
     Note : Metaflow doesn’t provide
            a direct function to get
            a run by ID across all flows.
@@ -81,6 +81,51 @@ def _get_mf_run(
     return mf_flow_run
 
 
+def _pipeline_card_task(
+    mf_flow_name: str = None,
+    mf_run_id: int = -1
+) -> metaflow.Task:
+    """
+
+    Params:
+        - mf_flow_name (str):
+            Name of the Metaflow flowspec.
+            When "mf_run_id" (below) is omitted,
+            this param here is mandatory.
+        - mf_run_id (int):
+            the id of the Metaflow flow run
+            to consider.
+            If omitted, the last flow run
+            is considered.
+            If both "mf_flow_name" and "mf_run_id"
+            are specified, they indeed must
+            be compatible.
+            throws MetaflowInvalidPathspec
+            or MetaflowNotFound
+
+    Results:
+        - (metaflow.Task)
+    """
+
+    mf_flow_run = _get_mf_run(mf_flow_name, mf_run_id)
+
+    pipeline_card_task = [
+        step.task for step in mf_flow_run.steps()
+        if step.id == 'pipeline_card']
+    if not pipeline_card_task:
+        if mf_run_id == -1:
+            print(f"{mf_flow_run.parent.id} run {mf_flow_run.id}"+
+                  " didn't get to the 'pipeline_card' step.",
+                  file=sys.stderr)
+            return None
+        else:
+            raise MetaflowNotFound(
+                f"{mf_flow_run.parent.id} run {mf_flow_run.id}"+
+                  " didn't get to the 'pipeline_card' step.")
+
+    return pipeline_card_task[0]
+
+
 def _local_pipeline_card_path(
     mf_flow_name: str = None,
     mf_run_id: int = -1
@@ -104,37 +149,24 @@ def _local_pipeline_card_path(
             or MetaflowNotFound
 
     Results:
-        - (list[str])
+        - (list[str]):
             path to the custom/html card
             in the local datastore
             (accompagnied with "last blessed" card
              if this one is "not blessed").
     """
 
-    mf_flow_run = _get_mf_run(mf_flow_name, mf_run_id)
-
-    pipeline_card_task = [
-        step.task for step in mf_flow_run.steps()
-        if step.id == 'pipeline_card']
-    if not pipeline_card_task:
-        if mf_run_id == -1:
-            print(f"{mf_flow_run.parent.id} run {mf_flow_run.id}"+
-                  " didn't get to the 'pipeline_card' step.",
-                  file=sys.stderr)
-            return []
-        else:
-            raise MetaflowNotFound(
-                f"{mf_flow_run.parent.id} run {mf_flow_run.id}"+
-                  " didn't get to the 'pipeline_card' step.")
-    pipeline_card_task = pipeline_card_task[0]
+    pipeline_card_task = _pipeline_card_task(mf_flow_name, mf_run_id)
+    if pipeline_card_task is None: return []
 
     try:
         custom_card = metaflow.cards.get_cards(
             pipeline_card_task, id='custom', type='html')[0]
-        # display(custom_card)
     except IndexError as idxErr:
         logger.warn(f"No custom/html card exists for {pipeline_card_task}")
         return []
+
+    mf_flow_run = pipeline_card_task.parent.parent
 
     latest_prior_blessed_custom_card_fullname = None
     if (
@@ -187,20 +219,18 @@ def _is_wsl():
         with open('/proc/version', 'r') as f:
             version_info = f.read().lower()
             if 'microsoft' in version_info:
-                # print(version_info)
                 return True
     if os.path.exists('/etc/os-release'):
         with open('/etc/os-release', 'r') as f:
             os_info = f.read().lower()
             if 'WSL' in os_info or 'Microsoft' in os_info:
-                # print(os_info)
                 return True
     return False
 
 
 def _windows_to_wsl_path(windows_path):
     """
-    # wslpath command to convert Windows path to WSL path
+    wslpath command to convert Windows path to WSL path
     and does so even if the directory does not exist
     """
     wsl_path = subprocess.check_output(
@@ -293,7 +323,7 @@ def _open_explorer(path: str):
         print(f"Failed to open explorer on {system}: {e}")
 
 
-def _webbrowser_open(file_fullnames: list):
+def _webbrowser_open(file_fullnames: list) -> bool:
     """
     Open local file in OS default web-browser.
     Supports MacOS, native Linux and WSL.
@@ -303,6 +333,13 @@ def _webbrowser_open(file_fullnames: list):
     For Prior entries, it copies them to
     the same root directory
     (for offline hyperlinking ease).
+
+    Params:
+        - file_fullnames (list[str])
+
+    Results:
+        - (bool):
+            success/failure
     """
 
     system = platform.system()
@@ -333,13 +370,13 @@ def _webbrowser_open(file_fullnames: list):
             # actual webbrowser open
             _ = webbrowser.open(f'file:///{tmp_file_path}',
                                 new=2)
-            return
+            return True
         elif not _is_desktop_environment():
             # headless native Linux
             # (server distro, for instance)
             print("No Desktop Environment detected. "+
-                  "Cannot open file explorer.")
-            return
+                  "Cannot open host-local file on web-browser.")
+            return False
 
     if len(file_fullnames) > 1:
         parent_dir = os.path.dirname(file_fullnames[-1])
@@ -351,6 +388,8 @@ def _webbrowser_open(file_fullnames: list):
 
     # All other cases
     _ = webbrowser.open(f'file://{file_fullnames[-1]}')
+
+    return True
 
 
 def browse_local_pipeline_card(
@@ -385,5 +424,72 @@ def browse_local_pipeline_card(
     ):
         if verbose: print(local_pipeline_card_paths)
         if not local_pipeline_card_paths: return
-        _webbrowser_open(local_pipeline_card_paths)
+        if not _webbrowser_open(local_pipeline_card_paths):
+            logger.warn("Do you not want to call "+
+                        "'browse_pipeline_card' instead ?")
+
+
+def browse_pipeline_card(
+    mf_backend_service_url: str,
+    mf_flow_name: str = None,
+    mf_run_id: int = -1,
+    verbose:bool = False
+):
+    """
+    opens the custom/html pipeline card
+    for a given flow run into the
+    default web browser of the requester.
+
+    Params:
+        - mf_backend_service_url (str):
+            URL of the Metaflow Metadata service
+            (among other things, its the service
+             in charge of serving cards to the Metaflow UI).
+        - mf_flow_name (str):
+            Name of the Metaflow flowspec.
+            When "mf_run_id" (below) is omitted,
+            this param here is mandatory.
+        - mf_run_id (int):
+            the id of the Metaflow flow run
+            to consider.
+            If omitted, the last flow run
+            is considered.
+            throws MetaflowInvalidPathspec
+            or MetaflowNotFound
+    """
+
+    try:
+        result = urlparse(mf_backend_service_url)
+        assert all([result.scheme, result.netloc]), \
+               ValueError(f"Invalid URL: '{mf_backend_service_url}'")
+    except ValueError:
+        raise ValueError(f"Invalid URL: '{mf_backend_service_url}'")
+
+
+    pipeline_card_task = _pipeline_card_task(mf_flow_name, mf_run_id)
+    if pipeline_card_task is None: return
+
+
+    custom_card = None
+    try:
+        custom_card = metaflow.cards.get_cards(
+            pipeline_card_task, id='custom', type='html')[0]
+    except IndexError as idxErr:
+        logger.warn(f"No custom/html card exists for {pipeline_card_task}")
+        return
+
+    mf_flow_name = pipeline_card_task.path_components[0]
+    mf_run_id = pipeline_card_task.path_components[1]
+    mf_task_id = pipeline_card_task.path_components[3]
+    pipeline_card_hash = custom_card.hash
+
+    pipeline_card_url = \
+        "{}/flows/{}/runs/{}/steps/pipeline_card/tasks/{}/cards/{}" \
+        .format(
+            mf_backend_service_url, mf_flow_name, mf_run_id,
+            mf_task_id, pipeline_card_hash
+        )
+
+    if verbose: print(pipeline_card_url)
+    _ = webbrowser.open(pipeline_card_url)
 

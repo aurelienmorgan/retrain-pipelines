@@ -8,7 +8,8 @@ In short : they are intended for
 some "after the facts" analysis.
 """
 
-from .utils import browse_local_pipeline_card
+from .utils import browse_local_pipeline_card, \
+                   browse_pipeline_card
 
 from .wandb import get_execution_source_code, \
                    explore_source_code
