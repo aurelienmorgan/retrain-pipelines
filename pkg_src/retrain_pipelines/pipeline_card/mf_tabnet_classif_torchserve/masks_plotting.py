@@ -176,7 +176,6 @@ def plot_masks_to_dict(
                 pass  # tight_layout applied within context manager
 
             target_class_plots[target_class] = fig
-            print(f"fig dims : {fig.get_size_inches()}")
             plt.close(fig)
         else:
             target_class_plots[target_class] = None
