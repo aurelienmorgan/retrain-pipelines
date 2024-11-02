@@ -75,15 +75,14 @@ def _tabular_regression_generate(
     """
 
     if seed is not None:
-        # Set a random seed for reproducibility
         np.random.seed(seed)
 
     #########################
     # 1 categorical feature #
     #########################
-    # Generate random categories count
+    # random categories count
     N = random.randint(4, 10)
-    # Generate random categorical feature values
+    # random categorical feature values
     num_digits = len(str(N))
     categories = [f'value{str(i+1).zfill(num_digits)}' for i in range(N)]
     categ_feature0 = np.random.choice(
@@ -94,7 +93,7 @@ def _tabular_regression_generate(
     #########################
     #  4 numeical features  #
     #########################
-    # Generate random features with different distributions
+    # random features with different distributions
     feature1 = np.random.normal(loc=0, scale=4, size=num_samples)
     feature2 = np.random.logistic(loc=5, scale=1, size=num_samples)
     # induce some linearities between
@@ -103,27 +102,27 @@ def _tabular_regression_generate(
     mean4, sigma4 = 0, 1
     # correlation coefficient
     correlation = 0.2
-    # Generate the uniform feature
+    # the uniform feature
     feature3 = np.random.uniform(
         low=low3, high=high3, size=num_samples)
-    # Generate the lognormal feature with a
+    # the lognormal feature with a
     # slight correlation to the above uniform feature
     feature4 = np.exp(mean4 +
                       sigma4 * np.random.normal(size=num_samples))
     feature4 = feature4 + \
                correlation * (feature3 - feature3.mean()) \
                              / feature3.std()
-    # Normalize for desired mean and variance
+    # normalize for mean and variance
     feature4 = (feature4 - feature4.mean()) \
                 / feature4.std() * sigma4 + mean4
 
-    # Generate random (some non-linear) transformations
+    # random (some non-linear) transformations
     transformation_functions = [np.random.choice(
                                     [np.square, np.tanh,
                                      lambda x: np.exp(-x**2),
                                      lambda x: x])
                                 for _ in range(4)]
-    # Apply the non-linear transformation functions to the features
+    # apply non-linear transformations to features
     transformed_num_features = \
         [np.round(func(feature), 1)
          for (func, feature)
@@ -134,8 +133,7 @@ def _tabular_regression_generate(
     #########################
     #    target variable    #
     #########################
-    # Create a dictionary to assign a
-    # specific impact score to each category
+    # dictionary of impact score per category
     category_impact = {category: np.random.rand()
                        for category in categories}
     # print(category_impact)
@@ -149,19 +147,16 @@ def _tabular_regression_generate(
         25*categorical_impact +
         np.sum(normalized_num_features, axis=0)
     )
-    # print(combined_score)
-    # Create the target variable based on the transformed features
+
+    # target variable based on transformed features
     # plus a tiny bit of noise
-    # raw_target = np.tanh(combined_score + np.random.normal(0, 1, num_samples))
     raw_target = combined_score + np.random.normal(
                                     0, 1/2 * np.std(combined_score)*5,
                                     num_samples)
-    # raw_target = np.tanh(raw_target / max(raw_target))
     scaled_target = (raw_target - np.min(raw_target)) / \
                     (np.max(raw_target) - np.min(raw_target))
     raw_target = np.tanh(scaled_target)
 
-    # Create a DataFrame to store the data
     data = pd.DataFrame({
         'categ_feature0': categ_feature0,
         'num_feature1': transformed_num_features[0],
@@ -207,69 +202,92 @@ def _tabular_classification_generate(
     """
 
     if seed is not None:
-        # Set a random seed for reproducibility
         np.random.seed(seed)
 
     #########################
     # 1 categorical feature #
     #########################
-    # Generate random categories count
+    # random categories count
     N = random.randint(4, 10)
-    # Generate random categorical feature values
+    # random categorical feature values
     num_digits = len(str(N))
     categories = [f'value{str(i+1).zfill(num_digits)}' for i in range(N)]
-    categ_feature0 = [random.choice(categories) for _ in range(num_samples)]
+    categ_feature0 = np.random.choice(
+            categories, size=num_samples,
+            p=np.random.dirichlet(np.ones(N), size=1).flatten()
+    )
 
     #########################
     #  4 numeical features  #
     #########################
-    # Generate random features with different distributions
+    # random features with different distributions
     feature1 = np.random.normal(loc=0, scale=2, size=num_samples)
     feature2 = np.random.logistic(loc=5, scale=1, size=num_samples)
-    feature3 = np.random.uniform(low=-3, high=3, size=num_samples)
-    feature4 = np.random.lognormal(mean=0, sigma=1, size=num_samples)
+    # induce some linearities between
+    # the following 2 numerical features
+    low3, high3 = -3, 3 
+    mean4, sigma4 = 0, 1
+    # correlation coefficient
+    correlation = 0.2
+    # the uniform feature
+    feature3 = np.random.uniform(
+        low=low3, high=high3, size=num_samples)
+    # the lognormal feature with a
+    # slight correlation to the above uniform feature
+    feature4 = np.exp(mean4 +
+                      sigma4 * np.random.normal(size=num_samples))
+    feature4 = feature4 + \
+               correlation * (feature3 - feature3.mean()) \
+                             / feature3.std()
+    # normalize for mean and variance
+    feature4 = (feature4 - feature4.mean()) \
+                / feature4.std() * sigma4 + mean4
 
-    # Generate random coefficients for each feature
-    coefficients = np.random.rand(4)
-    # Generate random non-linear transformation functions for each feature
+    # random (some non-linear) transformations
     transformation_functions = [np.random.choice(
-                                    [np.sin, np.exp, np.square, np.tanh])
+                                    [#np.square,
+                                     #np.tanh,
+                                     lambda x: np.exp(-x**2),
+                                     lambda x: x
+                                    ])
                                 for _ in range(4)]
-    # Apply the non-linear transformation functions to the features
-    transformed_num_features = [np.round(func(feature), 1)
-                                for (func, feature) in zip(
-                                        transformation_functions,
-                                        [feature1, feature2, feature3, feature4])
-                               ]
+    # apply non-linear transformations to features
+    transformed_num_features = \
+        [np.round(func(feature), 1)
+         for (func, feature)
+         in zip(transformation_functions,
+                [feature1, feature2, feature3, feature4])
+        ]
 
     #########################
     #    target variable    #
     #########################
-    # Create a dictionary to assign a specific impact score to each category
-    category_impact = {category: np.random.rand() for category in categories}
+    # dictionary of impact score per category
+    category_impact = {category: np.random.rand()
+                       for category in categories}
     # print(category_impact)
-    categorical_impact = np.array([category_impact[cat] for cat in categ_feature0])
+    categorical_impact = np.array([category_impact[cat]
+                                   for cat in categ_feature0])
     # Combine the categorical feature impact
-    # with the combination of the transformed nulmerical features
-    combined_score = categorical_impact + np.sum(transformed_num_features, axis=0)
+    # with the combination of the transformed numerical features
+    combined_score = (
+        5*categorical_impact +
+        np.sum(transformed_num_features, axis=0)
+    )
 
-    # Create the target variable based on the transformed features and coefficients
-    raw_target = (combined_score + np.random.normal(0, 1, num_samples))
-    raw_target = np.tanh(raw_target / max(raw_target))
+    # target variable based on transformed features
+    # plus a tiny bit of noise
+    raw_target = combined_score + np.random.normal(
+                                    0, 1/3 * np.std(combined_score),
+                                    num_samples)
 
-    # Create 4 classes by splitting the distribution of `raw_target`
-    # for a "randomly" balanced; use 3 random percentilesbetween 10% and 90%
-    random_percentiles = sorted(np.random.uniform(10, 90, 3))
+    # 4 classes by splitting distrib of `raw_target`
+    # in a "randomly" balanced manner
+    random_percentiles = sorted([np.random.uniform(20+i*20-5, 20+i*20+5)
+                                 for i in range(3)])
     thresholds = np.percentile(raw_target, random_percentiles)
     target = np.digitize(raw_target, bins=thresholds)
 
-    # print classes prior probabilities
-    classes_counts = np.bincount(target)
-    classes_priors = [round(100 * count / num_samples, 1)
-                      for count in classes_counts]
-    print(f"Classes priors: {classes_priors}%")
-
-    # Create a DataFrame to store the data
     data = pd.DataFrame({
         'categ_feature0': categ_feature0,
         'num_feature1': transformed_num_features[0],
@@ -278,6 +296,10 @@ def _tabular_classification_generate(
         'num_feature4': transformed_num_features[3],
         'target': [f"class_{target_val}" for target_val in target]
     })
+
+    classes_priors = [round(100 * count / num_samples, 1)
+                      for count in np.bincount(target)]
+    print(f"Classes priors: {classes_priors}%")
 
     return data
 
