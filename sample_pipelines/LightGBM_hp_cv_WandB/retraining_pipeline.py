@@ -28,6 +28,7 @@ from sklearn.preprocessing import OrdinalEncoder
 from metaflow import FlowSpec, step, Parameter, JSONType, \
     IncludeFile, current, metaflow_config as mf_config, \
     retry, Flow, Task, card
+from metaflow.current import Current
 from metaflow.cards import Image, Table, Markdown, Artifact
 
 import wandb
@@ -377,32 +378,58 @@ class LightGbmHpCvWandbFlow(FlowSpec):
     def training_job(self):
         from retrain_pipelines.model import dask_regressor_fit
 
-        current_task = Task(current.pathspec)
+        def _parent_cv_task_info(
+            training_job_task: LightGbmHpCvWandbFlow,
+            current_: Current
+        ) -> (int, dict) :
+            """
+            for a given training job, retrieve info pertaining
+            to the parent "cross_validation" task :
+                    - its task_id
+                    - the set of hyperparameter values
+                      it has been assigned.
 
-        # retrieve list of ids for the "cross_validation" tasks
-        # of the current flow run
-        cross_validation_ids = [
-            task.id for task in current_task.parent.parent[
-                                    'cross_validation'].tasks()]
-        cross_validation_ids.sort()
+            Params:
+                - training_job_task (LightGbmHpCvWandbFlow)
+                - current_ (Current)
 
-        # retrieve predecessors info (nested foreach)
-        # for the current task
-        foreach_level = 0
-        cross_validation_foreach_frame = self._foreach_stack[foreach_level]
-        cross_validation_id = \
-            cross_validation_ids[cross_validation_foreach_frame.index]
-        self.cross_validation_id = cross_validation_id
-        print(f"cross_validation {cross_validation_id}")
-        cross_validation_input = self.foreach_stack()[foreach_level][-1]
-        self.fold_hp_params = cross_validation_input # <= to artifact store
-        print(f"hyperparameter values : {self.fold_hp_params}")
+            Results:
+                - (int)
+                - (dict)
+            """
 
-        foreach_level = 1
-        training_job_foreach_frame = self._foreach_stack[foreach_level]
-        training_job_index = training_job_foreach_frame.index
-        print(f"CV fold #{training_job_index+1}/"+
-              f"{training_job_foreach_frame.num_splits}")
+            current_task = Task(current_.pathspec)
+
+            # retrieve list of ids for the "cross_validation" tasks
+            # of the current flow run
+            cross_validation_ids = [
+                task.id for task in current_task.parent.parent[
+                                        'cross_validation'].tasks()]
+            cross_validation_ids.sort()
+
+            # retrieve predecessors info (nested foreach)
+            # for the current task
+            foreach_level = 0
+            cross_validation_foreach_frame = \
+                training_job_task._foreach_stack[foreach_level]
+            cross_validation_id = \
+                cross_validation_ids[cross_validation_foreach_frame.index]
+            print(f"cross_validation {cross_validation_id}")
+            cross_validation_input = \
+                training_job_task.foreach_stack()[foreach_level][-1]
+            print(f"hyperparameter values : {cross_validation_input}")
+
+            foreach_level = 1
+            training_job_foreach_frame = \
+                training_job_task._foreach_stack[foreach_level]
+            training_job_index = training_job_foreach_frame.index
+            print(f"CV fold #{training_job_index+1}/"+
+                  f"{training_job_foreach_frame.num_splits}")
+
+            return cross_validation_id, cross_validation_input
+
+        self.cross_validation_id, self.fold_hp_params = \
+            _parent_cv_task_info(self, current)
 
         ###################
         # actual training #
@@ -419,7 +446,7 @@ class LightGbmHpCvWandbFlow(FlowSpec):
                                         # same as your 'login'
                 notes="first attempt",
                 tags=["baseline", "dev"],
-                job_type=str(cross_validation_id),
+                job_type=str(self.cross_validation_id),
                 # sync_tensorboard=True,
                 dir=self.wandb_run_dir, # custom log directory
                                         # (internals ; local, for online synch)
@@ -427,9 +454,10 @@ class LightGbmHpCvWandbFlow(FlowSpec):
                     **self.fold_hp_params,
                     **dict(
                         mf_id=current.run_id,
-                        mf='_'.join(["cv_task", cross_validation_id]),
+                        mf='_'.join(["cv_task", self.cross_validation_id]),
                         mf_task='_'.join([current.step_name,
-                                          cross_validation_id, current.task_id])
+                                          self.cross_validation_id,
+                                          current.task_id])
                     )
                 },
                 settings=wandb.Settings(
@@ -487,9 +515,9 @@ class LightGbmHpCvWandbFlow(FlowSpec):
 
             parallel_run.log(dict(hp_cv_rmse=self.fold_rmse))
             hp_table = wandb.Table(
-                data=[list(cross_validation_input.values())+
+                data=[list(self.fold_hp_params.values())+
                       [self.fold_rmse]],
-                columns=list(cross_validation_input.keys())+\
+                columns=list(self.fold_hp_params.keys())+\
                         ['rmse']
             )
             wandb.log({'Sweep_table': hp_table})
@@ -521,10 +549,9 @@ class LightGbmHpCvWandbFlow(FlowSpec):
               f"std : {float(np.std(hp_cv_rmses))}, "+
               f"median : {float(np.median(hp_cv_rmses))}")
 
-        self.hp_perf_dict = {**self.foreach_stack()[0][-1],
-                             "rmse": self.hp_rmse}
+        self.hp_dict = self.foreach_stack()[0][-1]
 
-        print(f"hp values lead to an rmse of {self.hp_perf_dict}")
+        print(f"hp values {self.hp_dict} lead to an rmse of {self.hp_rmse}")
 
         self.next(self.best_hp)
 
@@ -540,23 +567,31 @@ class LightGbmHpCvWandbFlow(FlowSpec):
         """
 
         self.merge_artifacts(inputs, exclude=['cross_validation_id',
-                                              'hp_rmse', 'hp_perf_dict'])
+                                              'hp_rmse', 'hp_dict'])
 
         # organize respective hp results
         self.hp_perfs_list = [
             {'mf:cv_task': input.cross_validation_id,
-             **input.hp_perf_dict
+             **{**input.hp_dict,
+                "rmse": input.hp_rmse}
             } for input in inputs
         ]
         print(pd.DataFrame(self.hp_perfs_list
                           ).sort_values(by='rmse',ascending=False
                           ).to_string(index=False))
 
-        # Get per metrics from previous steps
+        # get perf metrics from previous steps
         hp_rmses = [input.hp_rmse for input in inputs]
+        print(f"hp_accuracies : {hp_rmses}")
 
-        # Find the best parameters
-        self.hyperparameters = self.all_hp_params[np.argmin(hp_rmses)]
+        best_cv_agg_task_idx = np.argmin(hp_rmses)
+        print(f"best_cv_agg_task_idx : {best_cv_agg_task_idx}")
+        print(f"best_cv_agg_task_idx : "+
+              f"{inputs[best_cv_agg_task_idx].cross_validation_id}")
+
+        # find best hyperparams
+        self.hyperparameters = inputs[best_cv_agg_task_idx].hp_dict
+        print(f"hyperparameters : {self.hyperparameters}")
 
         self.next(self.train_model)
 
@@ -854,7 +889,7 @@ class LightGbmHpCvWandbFlow(FlowSpec):
 
         # tracking below using a 3-states var
         # -1 for not applicable, and
-        # 0/1 bool for failure/success otherwize
+        # 0/1 bool for failure/success otherwise
         self.local_serve_is_ready = -1
 
         if self.model_version_blessed:
@@ -862,9 +897,7 @@ class LightGbmHpCvWandbFlow(FlowSpec):
             from retrain_pipelines.utils import system_has_conda, \
                     is_conda_env, venv_as_conda
 
-            # save (at the expected format for lightgbm models) :
-            #model_booster_file = os.path.join(self.serving_artifacts_local_folder, 'model.bst')
-            #self.model.booster_.save_model(model_booster_file)
+            # serialize model version
             model_file = os.path.join(self.serving_artifacts_local_folder,
                                       'model.joblib')
             joblib.dump(self.model, model_file)

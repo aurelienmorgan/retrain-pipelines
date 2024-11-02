@@ -6,7 +6,6 @@ import json
 import time
 import shutil
 import logging
-import itertools
 import traceback
 import subprocess
 import importlib.util
@@ -30,6 +29,7 @@ from sklearn.preprocessing import StandardScaler, \
 from metaflow import FlowSpec, step, Parameter, JSONType, \
     IncludeFile, current, metaflow_config as mf_config, \
     resources, Flow, Task, card
+from metaflow.current import Current
 from metaflow.cards import Image, Table, Markdown, Artifact
 
 import wandb
@@ -397,32 +397,58 @@ class TabNetHpCvWandbFlow(FlowSpec):
     def training_job(self):
         from retrain_pipelines.model import PrintLR, WandbCallback
 
-        current_task = Task(current.pathspec)
+        def _parent_cv_task_info(
+            training_job_task: TabNetHpCvWandbFlow,
+            current_: Current
+        ) -> (int, dict) :
+            """
+            for a given training job, retrieve info pertaining
+            to the parent "cross_validation" task :
+                    - its task_id
+                    - the set of hyperparameter values
+                      it has been assigned.
 
-        # retrieve list of ids for the "cross_validation" tasks
-        # of the current flow run
-        cross_validation_ids = [
-            task.id for task in current_task.parent.parent[
-                                    'cross_validation'].tasks()]
-        cross_validation_ids.sort()
+            Params:
+                - training_job_task (TabNetHpCvWandbFlow)
+                - current_ (Current)
 
-        # retrieve predecessors info (nested foreach)
-        # for the current task
-        foreach_level = 0
-        cross_validation_foreach_frame = self._foreach_stack[foreach_level]
-        cross_validation_id = \
-            cross_validation_ids[cross_validation_foreach_frame.index]
-        self.cross_validation_id = cross_validation_id
-        print(f"cross_validation {cross_validation_id}")
-        cross_validation_input = self.foreach_stack()[foreach_level][-1]
-        self.fold_hp_params = cross_validation_input # <= to artifact store
-        print(f"hyperparameter values : {self.fold_hp_params}")
+            Results:
+                - (int)
+                - (dict)
+            """
 
-        foreach_level = 1
-        training_job_foreach_frame = self._foreach_stack[foreach_level]
-        training_job_index = training_job_foreach_frame.index
-        print(f"CV fold #{training_job_index+1}/"+
-              f"{training_job_foreach_frame.num_splits}")
+            current_task = Task(current_.pathspec)
+
+            # retrieve list of ids for the "cross_validation" tasks
+            # of the current flow run
+            cross_validation_ids = [
+                task.id for task in current_task.parent.parent[
+                                        'cross_validation'].tasks()]
+            cross_validation_ids.sort()
+
+            # retrieve predecessors info (nested foreach)
+            # for the current task
+            foreach_level = 0
+            cross_validation_foreach_frame = \
+                training_job_task._foreach_stack[foreach_level]
+            cross_validation_id = \
+                cross_validation_ids[cross_validation_foreach_frame.index]
+            print(f"cross_validation {cross_validation_id}")
+            cross_validation_input = \
+                training_job_task.foreach_stack()[foreach_level][-1]
+            print(f"hyperparameter values : {cross_validation_input}")
+
+            foreach_level = 1
+            training_job_foreach_frame = \
+                training_job_task._foreach_stack[foreach_level]
+            training_job_index = training_job_foreach_frame.index
+            print(f"CV fold #{training_job_index+1}/"+
+                  f"{training_job_foreach_frame.num_splits}")
+
+            return cross_validation_id, cross_validation_input
+
+        self.cross_validation_id, self.fold_hp_params = \
+            _parent_cv_task_info(self, current)
 
         ###################
         # actual training #
@@ -439,7 +465,7 @@ class TabNetHpCvWandbFlow(FlowSpec):
                                         # named same as your 'login'
                 notes="first attempt",
                 tags=["baseline", "dev"],
-                job_type=str(cross_validation_id),
+                job_type=str(self.cross_validation_id),
                 # sync_tensorboard=True,
                 dir=self.wandb_run_dir, # custom log directory
                                         # (internals ; local,
@@ -448,9 +474,9 @@ class TabNetHpCvWandbFlow(FlowSpec):
                     **self.fold_hp_params,
                     **dict(
                         mf_id=current.run_id,
-                        mf='_'.join(["cv_task", cross_validation_id]),
+                        mf='_'.join(["cv_task", self.cross_validation_id]),
                         mf_task='_'.join([current.step_name,
-                                          cross_validation_id,
+                                          self.cross_validation_id,
                                           current.task_id])
                     )
                 },
@@ -471,7 +497,6 @@ class TabNetHpCvWandbFlow(FlowSpec):
         y_train, y_val = (self.y_train.iloc[train_idx],
                           self.y_train.iloc[test_idx])
 
-        # eval_set = [(X_val, y_val)]
         # Add eval_set and eval_names to track evaluation results
         eval_set = [(self.X_train.values, self.y_train),
                     (self.X_test.values, self.y_test)]
@@ -499,7 +524,6 @@ class TabNetHpCvWandbFlow(FlowSpec):
         )
 
         pred_labels = tabnet_clf.predict(X_val.values)
-        # accuracy
         self.accuracy = accuracy_score(y_val, pred_labels)
 
         print(f"Fold finished with accuracy: {self.accuracy:.5f}.")
@@ -536,18 +560,14 @@ class TabNetHpCvWandbFlow(FlowSpec):
         hp_cv_accuracies = []
 
         for training_job_input in inputs:
-            # Get per metrics from previous steps
             hp_cv_accuracies.append(training_job_input.accuracy)
-        # print(inputs[0].foreach_stack()[0])
 
         self.hp_accuracy = float(np.mean(hp_cv_accuracies))
-        # print(self._foreach_stack)
-        hp_dict_dict = self.foreach_stack()[0][-1]
-        self.hp_perf_dict = {**flatten_dict(hp_dict_dict,
-                                            callable_to_name=True),
-                             'accuracy': self.hp_accuracy}
 
-        print(f"hp values lead to an accuracy of {self.hp_perf_dict}")
+        self.hp_dict_dict = self.foreach_stack()[0][-1]
+
+        print(f"hp values {self.hp_dict_dict} lead "+
+              f"to an accuracy of {self.hp_accuracy}")
 
         self.next(self.best_hp)
 
@@ -562,23 +582,35 @@ class TabNetHpCvWandbFlow(FlowSpec):
         for training on the whole training-set next.
         """
 
-        self.merge_artifacts(inputs, exclude=['cross_validation_id',
-                                              'hp_accuracy', 'hp_perf_dict'])
+        self.merge_artifacts(
+            inputs,
+            exclude=['cross_validation_id',
+                     'hp_accuracy', 'hp_dict_dict'])
 
         # organize respective hp results
         self.hp_perfs_list = [
             {'mf:cv_task': input.cross_validation_id,
-             **input.hp_perf_dict
+             **{**flatten_dict(input.hp_dict_dict,
+                               callable_to_name=True),
+                'accuracy': input.hp_accuracy}
             } for input in inputs
         ]
         print(pd.DataFrame(self.hp_perfs_list
-                          ).sort_values(by='accuracy', ascending=False))
+                          ).sort_values(
+                                by='accuracy', ascending=False))
 
-        # Get per metrics from previous steps
+        # get perf metrics from previous steps
         hp_accuracies = [input.hp_accuracy for input in inputs]
+        print(f"hp_accuracies : {hp_accuracies}")
 
-        # Find the best parameters
-        self.hyperparameters = self.all_hp_params[np.argmin(hp_accuracies)]
+        best_cv_agg_task_idx = np.argmax(hp_accuracies)
+        print(f"best_cv_agg_task_idx : {best_cv_agg_task_idx}")
+        print(f"best_cv_agg_task_idx : "+
+              f"{inputs[best_cv_agg_task_idx].cross_validation_id}")
+
+        # find best hyperparams
+        self.hyperparameters = inputs[best_cv_agg_task_idx].hp_dict_dict
+        print(f"hyperparameters : {self.hyperparameters}")
 
         self.next(self.train_model)
 
@@ -686,7 +718,7 @@ class TabNetHpCvWandbFlow(FlowSpec):
         self.model = model
         self.predictions = model.predict(self.X_test.values)
 
-        # Generate training plot
+        # training plot
         epochs = range(1, len(model.history['Training_accuracy']) + 1)
         train_accuracy = model.history['Training_accuracy']
         valid_accuracy = model.history['Validation_accuracy']
@@ -702,13 +734,13 @@ class TabNetHpCvWandbFlow(FlowSpec):
         ax1.set_xlabel('Epochs')
         ax1.set_ylabel('Accuracy')
         ax1.tick_params(axis='y', labelcolor='black')
-        # Create secondary y-axis for learning rates
+        # secondary y-axis for learning rates
         ax2 = ax1.twinx()
         ax2.plot(epochs, learning_rates, 'r-', linewidth=0.4,
                  label='Learning Rate', zorder=1)
         ax2.set_ylabel('Learning Rate', color="#d93838")
         ax2.tick_params(axis='y', labelcolor="#d93838")
-        # Adding legends (making sure both ar above plots (zorder)
+        # legends (making sure both are above plots' zorder)
         handles1, labels1 = ax1.get_legend_handles_labels()
         handles2, labels2 = ax2.get_legend_handles_labels()
         first_legend = plt.legend(handles1, labels1, loc='lower left')
@@ -747,7 +779,6 @@ class TabNetHpCvWandbFlow(FlowSpec):
                               average='weighted')
         f1 = f1_score(self.y_test, self.predictions,
                       average='weighted')
-        conf_matrix = confusion_matrix(self.y_test, self.predictions)
 
         self.classes_weighted_metrics = {
             "accuracy": accuracy,
@@ -755,7 +786,8 @@ class TabNetHpCvWandbFlow(FlowSpec):
             "recall": recall,
             "f1": f1
         }
-        self.conf_matrix = conf_matrix
+
+        self.conf_matrix = confusion_matrix(self.y_test, self.predictions)
         #############################################
 
         if "disabled" != self.wandb_run_mode:
@@ -766,7 +798,7 @@ class TabNetHpCvWandbFlow(FlowSpec):
                 name=str(current.run_id),
                 mode=self.wandb_run_mode,
                 #entity='organization', # default being the entity
-                                       # named same as your WandB 'login'
+                                        # named same as your WandB 'login'
                 notes="first attempt",
                 tags=["baseline", "dev"],
                 job_type=str(current.run_id),
@@ -809,12 +841,10 @@ class TabNetHpCvWandbFlow(FlowSpec):
         with open(encoder_file, "r") as json_file:
             encoder_dict = json.load(json_file)
         if encoder_dict:
-            print(encoder_dict)
             # we choose to report on model performance
             # per slice of the first categorical feature
             first_categ_feature_sliced_metrics = {}
             first_categorical_feature = list(encoder_dict.keys())[0]
-            print(first_categorical_feature)
             # actual sliced perf computation
             for feature_categ in encoder_dict[first_categorical_feature]:
                 feature_column_name = \
