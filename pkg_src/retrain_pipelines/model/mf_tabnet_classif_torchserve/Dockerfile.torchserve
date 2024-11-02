@@ -13,7 +13,8 @@ RUN whoami
 
 RUN apt update && apt install -y \
     unzip \
-    && apt clean
+    git \
+    && apt clean && rm -rf /var/lib/apt/lists/*
 
 USER model-server
 RUN whoami
