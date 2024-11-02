@@ -10,13 +10,14 @@ def _dimensions_from_df(
     """
     Generate and return plotly-friendly dimensions
     from given input dataframe
+
+    Note : For chart readability, we keep
+           columns with more than one distinct value.
     """
 
     dimensions = []
     for i, col in enumerate(input_df.columns):
         if (
-            # For chart readability,
-            # we keep columns with more than one distinct value
             input_df[col].nunique() > 1 or
             # indeed, we keep the perf metric in any event
             i == len(input_df.columns)-1
@@ -35,7 +36,6 @@ def _dimensions_from_df(
             else:
                 # Numerical features
                 if i != len(input_df.columns)-1:
-                    # Extract unique values for tick marks
                     unique_vals = sorted(input_df[col].unique())
                     num_dim = {
                         'label': col,
@@ -64,24 +64,32 @@ def parallel_coord_plot(
     a given hyperparameters tuning settings.
 
     Param:
-        - perf_df (pd.DataFrame): a dataframe with non-null columns.
-          the n-1 first columns being hyperparameter columns
-          the last column in the (numerical) performance column
-          each row correspond to a training run.
+        - perf_df (pd.DataFrame):
+            a dataframe with non-null columns.
+            The n-1 first columns being hyperparameter columns
+            the last column is the (numerical) performance column
+            each row correspond to a training run.
 
     Result:
-        - str: portable html string
+        - str:
+            portable html string
+
+    Note:
+        when on a Jupyter notebook =>
+        ```python
+        display(HTML(parallel_coord_plot(perf_df)))
+        ```
     """
 
     fig = go.Figure(data=
         go.Parcoords(
             line = dict(color = perf_df.iloc[:,-1:],
-                        colorscale = 'Portland', # 'Tealgrn', #'Electric',
+                        colorscale = 'Portland',
                         cmin = min(perf_df.iloc[:, -1]),
                         cmax = max(perf_df.iloc[:, -1]),
                         showscale = True,
                         colorbar=dict(len=1, ypad=0,
-                                      xpad=0, x=1, # xanchor='right',
+                                      xpad=0, x=1,
                                       ticktext=[],
                                       tickvals=[]
                                      )
@@ -106,7 +114,5 @@ def parallel_coord_plot(
         tickfont_size=14,
         labelfont_size=14
     )
-    # DEBUG, when on a Jupyter notebook =>
-    #display(HTML(fig.to_html(full_html=False)))
 
-    return fig.to_html(full_html=False)
+    return fig.to_html(full_html=False, include_plotlyjs=True)
