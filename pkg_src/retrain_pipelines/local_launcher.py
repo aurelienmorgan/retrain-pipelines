@@ -9,7 +9,6 @@ import regex
 import shlex
 import subprocess
 import platform
-from json import JSONDecodeError
 
 
 def _split_preserve_dict(s):
@@ -35,7 +34,7 @@ def _split_preserve_dict(s):
     for placeholder, dict_str in zip(placeholders, dicts):
         try:
             json.loads(dict_str)
-        except JSONDecodeError:
+        except json.JSONDecodeError:
             dict_str = \
                 json.dumps(ast.literal_eval(dict_str))
         tokens = [dict_str if token == placeholder else token
