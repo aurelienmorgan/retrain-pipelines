@@ -77,7 +77,7 @@ def test_mf_lightgbm_regress_tempo():
         ), "run",
         "--data_file", data_file_path,
         "--buckets_param", '{"num_feature1": 100, "num_feature2": 50}',
-        "--pipeline_hp_grid", "${pipeline_hp_grid}",
+        "--pipeline_hp_grid", "{pipeline_hp_grid}",
         "--cv_folds", "2",
         "--wandb_run_mode", "offline"
     ]
@@ -165,7 +165,7 @@ def test_mf_tabnet_classif_torchserve():
         ), "run",
         "--data_file", data_file_path,
         "--buckets_param", '{"num_feature1": 100, "num_feature2": 50}',
-        "--pipeline_hp_grid", "${pipeline_hp_grid}",
+        "--pipeline_hp_grid", "{pipeline_hp_grid}",
         "--cv_folds", "2",
         "--wandb_run_mode", "offline"
     ]
