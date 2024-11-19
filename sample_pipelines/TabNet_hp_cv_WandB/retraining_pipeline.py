@@ -67,8 +67,6 @@ class TabNetHpCvWandbFlow(FlowSpec):
                          "synthetic_classif_tab_data_4classes.csv"))
     )
 
-    # bucketization to be applied
-    # on raw numerical feature(s)
     buckets_param = Parameter(
         "buckets_param",
         help="Bucketization to be applied "+\
@@ -79,7 +77,6 @@ class TabNetHpCvWandbFlow(FlowSpec):
         default=dedent("""{}""")
     )
 
-    # Tune hyperparameters of the model
     pipeline_hp_grid = Parameter(
         "pipeline_hp_grid",
         help="TabNet model hyperparameters domain " + \
@@ -112,16 +109,12 @@ class TabNetHpCvWandbFlow(FlowSpec):
         }""").replace("'", '"').strip('"')
     )
 
-    # Cross-Validation folds
     cv_folds = Parameter(
         "cv_folds",
         help="(int) how many Cross Validation folds shall be used.",
         default=3
     )
 
-    # WandB mode for the flow-run
-    # indicating whether to sync it to the wandb server
-    # can be either 'disabled', 'offline', or 'online'
     wandb_run_mode = Parameter(
         "wandb_run_mode",
         type=str,
@@ -169,8 +162,6 @@ class TabNetHpCvWandbFlow(FlowSpec):
             shutil.copy(filefullname, target_dir)
             print(filefullname)
 
-    # pipeline_card artifacts location
-    # (i.e. dir hosting pipeline_card.py and/or template.html)
     default_pipeline_card_module_dir = \
         os.path.dirname(
             importlib.util.find_spec(
