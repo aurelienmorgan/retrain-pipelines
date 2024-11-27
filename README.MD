@@ -1,6 +1,8 @@
 ﻿
-![PyPI - Downloads](https://img.shields.io/pypi/dm/retrain-pipelines)
-![GitHub - License](https://img.shields.io/github/license/aurelienmorgan/retrain-pipelines?logo=github&style=flat&color=green)
+![PyPI - Monthly Downloads](https://img.shields.io/pypi/dm/retrain-pipelines)
+![PyPI - Total Downloads](https://static.pepy.tech/badge/retrain-pipelines)
+![PyPI - Release version](https://img.shields.io/pypi/v/retrain-pipelines)
+![GitHub - License](https://img.shields.io/github/license/aurelienmorgan/retrain-pipelines?logo=github&style=flat&color=purple)
 
 ![logo_large](https://github.com/user-attachments/assets/19725866-13f9-48c1-b958-35c2e014351a)
 
@@ -171,7 +173,7 @@ For instance&nbsp;:
   ```
   This opens the <code>pipeline_card</code> in a web-browser tab, so you don't have to look for it.
   It's ideal for quick ideation during the drafting phase&nbsp;:
-  developers can now <code>run/resume</code> &amp; <code>browse</code> in a chain on instructions.
+  developers can now <code>run/resume</code> &amp; <code>browse</code> in a chain of instructions.
   <hr width=60% />
   </details>
   </li>
