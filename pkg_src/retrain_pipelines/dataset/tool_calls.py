@@ -16,16 +16,15 @@ from matplotlib.ticker import FuncFormatter
 
 def _normalize_parameters(params: Dict) -> str:
     """
-    Normalize parameters dictionary by sorting keys and their values.
+    Normalize parameters dictionary by sorting keys
+    and their values.
     Returns a canonical string representation.
     """
     if not params:
         return "{}"
 
-    # Sort parameters by key
     sorted_params = dict(sorted(params.items()))
 
-    # Convert to a consistent string representation
     return json.dumps(sorted_params, sort_keys=True)
 
 
@@ -34,13 +33,11 @@ def _normalize_tool(
 ) -> Dict:
     """
     Create a normalized version of a tool
-    with consistent parameter ordering.
+    with consistent parameters ordering.
     """
 
     normalized = tool.copy()
     if "parameters" in normalized:
-        # If parameters is already a string (from previous processing),
-        # parse it first
         if isinstance(normalized["parameters"], str):
             try:
                 params = json.loads(normalized["parameters"])
@@ -66,7 +63,6 @@ def _parse_tools(
     list of normalized tools.
     """
     try:
-        # tools_list = literal_eval(tools_list_str)
         tools_list = json.loads(tools_list_str)
         return [_normalize_tool(tool)
                 for tool in tools_list]
@@ -90,7 +86,8 @@ def _normalize_answer_tool(
         # (from previous processing), parse it first
         if (
             isinstance(normalized["arguments"], list)
-            and all(isinstance(i, str) for i in normalized["arguments"])
+            and all(isinstance(i, str)
+            for i in normalized["arguments"])
         ):
             try:
                 params = json.loads(normalized["arguments"])
@@ -119,11 +116,9 @@ def _parse_answer_tools(
     in tool calls, only their respective names.
     """
     try:
-        # tools_list = literal_eval(tools_list_str)
         tools_list = json.loads(tools_list_str)
         return [_normalize_answer_tool(tool)
                 for tool in tools_list]
-    # except (ValueError, SyntaxError):
     except Exception as ex:
         print(tools_list_str, file=sys.stderr)
         print(ex, file=sys.stderr)
@@ -196,7 +191,8 @@ def count_tool_occurrences(
         )
         .with_columns(with_columns)
         .drop("tool")
-        .sort(["occurrences", "tool_name"], descending=[True, False])
+        .sort(["occurrences", "tool_name"],
+              descending=[True, False])
     )
 
 
@@ -225,8 +221,8 @@ def plot_tools_occurences(
     tail = tools_occurences_df.tail(head_tail_size)
 
     # Create x-coordinates with a gap
+    # of 50 units between head and tail
     x_coords = np.arange(2*head_tail_size)
-    # Add a gap of 50 units between head and tail
     x_coords[head_tail_size:] += 50
 
     fig, ax = plt.subplots(figsize=(14, 7))
@@ -249,7 +245,6 @@ def plot_tools_occurences(
     # Set limits to remove empty areas
     ax.set_xlim(x_coords[0] - 0.5, x_coords[-1] + 0.5)
 
-    # y-axis
     ax.set_yscale('log')
     ax.set_ylabel('Occurrences (log scale)', fontsize=14)
     def format_func(value, tick_number):
@@ -257,7 +252,6 @@ def plot_tools_occurences(
     ax.yaxis.set_major_formatter(FuncFormatter(format_func))
     ax.tick_params(axis='y', labelsize=14)
 
-    # labels and title
     ax.set_xlabel('Tool Name (every 10th)', fontsize=14)
     ax.set_title(
         title_prefix+

@@ -26,8 +26,8 @@ def _dataset_repo_branch_commits_files(
             'title', 'files'
     """
     commits = list_repo_commits(repo_id, revision=repo_branch,
-                                    repo_type="dataset",
-                                    token=os.environ["HF_TOKEN"])
+                                repo_type="dataset",
+                                token=os.environ["HF_TOKEN"])
     commits_dict = {}
     for commit in commits:
         files = list_repo_files(
@@ -61,7 +61,7 @@ def get_dataset_branches_commits_files(
         - (dict)
             'branches'
                 (
-                    branch_name', 'commits',
+                    'branch_name', 'commits',
                     (
                         'commit_hash', 'created_at',
                         'title', 'files'
@@ -100,11 +100,9 @@ def get_latest_parquet_commit(
     repo_id: str
 ) -> dict:
     """
-    Get the dataset version info
-    for the latest commit
+    Get the dataset version info for the latest commit
     for a given HF Dataset repo.
-    Focus put on parquet files
-    and associated metadata.
+    Focus put on parquet files and associated metadata.
 
     Params:
         - repo_id (str):
@@ -153,11 +151,9 @@ def get_parquet_commit(
     commit_hash: str = None
 ) -> dict:
     """
-    Get the dataset version info for
-    a given "revision" (commit_hash)
-    of a given HF dataset.
-    Focus put on parquet files
-    and associated metadata.
+    Get the dataset version info for a given "revision"
+    (commit_hash) of a given HF dataset.
+    Focus put on parquet files and associated metadata.
 
     Params:
         - repo_id (str):
@@ -220,8 +216,8 @@ def get_parquet_commit(
 
 def get_lazy_df(
     repo_id: str,
-    commit_hash: list = None,
-    hf_token:str = os.environ["HF_TOKEN"]
+    commit_hash: str = None,
+    hf_token:str = None
 ) -> (str, str, pl.lazyframe.frame.LazyFrame):
     """
     Polars lazy dataframe object
@@ -258,7 +254,7 @@ def get_lazy_df(
             is given as input.
         - commit_date (str):
             24hrs, UTC format.
-        - lazyèdf (pl.lazyframe.frame.LazyFrame):
+        - lazydf (pl.lazyframe.frame.LazyFrame):
     """
 
     parquet_commit = get_parquet_commit(
@@ -288,90 +284,4 @@ def get_lazy_df(
     return parquet_commit['commit_hash'], \
            parquet_commit['commit_date'], \
            lazy_df
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
