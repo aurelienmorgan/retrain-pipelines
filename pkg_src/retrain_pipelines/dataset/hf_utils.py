@@ -1,5 +1,6 @@
 
 import os
+import re
 import json
 
 import polars as pl
@@ -96,28 +97,34 @@ def get_dataset_branches_commits_files(
     return dataset_repo_branches
 
 
-def get_latest_parquet_commit(
-    repo_id: str
+def get_latest_commit(
+    repo_id: str,
+    files_filter: str = ".*"
 ) -> dict:
     """
     Get the dataset version info for the latest commit
     for a given HF Dataset repo.
-    Focus put on parquet files and associated metadata.
+    Focus put on files matching the given regex pattern
+    with associated metadata.
 
     Params:
         - repo_id (str):
             Path to the HuggingFace dataset.
+        - files_filter (str):
+            only consider commits with any file
+            matching this regex pattern.
 
     Results:
         - (dict):
             'commit_hash', 'commit_date',
-            'branch_name', 'parquet_files'
+            'branch_name', 'files'
     """
 
     dataset_repo_branches = \
         get_dataset_branches_commits_files(repo_id)
 
-    latest_commit = None
+    latest_matching_commit = None
+    regex_pattern = re.compile(files_filter)
 
     for branch_type, branches in dataset_repo_branches.items():
         for branch_name, branch_data in branches.items():
@@ -125,53 +132,61 @@ def get_latest_parquet_commit(
                 commit_hash, commit_data \
                 in branch_data["commits"].items() \
             :
-                parquet_files = [
+                matching_files = [
                     f for f in commit_data["files"]
-                      if f.endswith(".parquet")
+                      if regex_pattern.search(f)
                 ]
-                if parquet_files:
+                if matching_files:
                     commit_date = commit_data["created_at"]
                     if (
-                        not latest_commit or commit_date
-                            > latest_commit["commit_date"]
+                        not latest_matching_commit
+                        or commit_date >
+                            latest_matching_commit["commit_date"]
                     ):
-                        latest_commit = {
+                        latest_matching_commit = {
                             "commit_hash": commit_hash,
                             "commit_date": commit_date,
                             "branch_name": \
                                 branch_data["branch_name"],
-                            "parquet_files": parquet_files,
+                            "files": matching_files,
                         }
     
-    return latest_commit
+    return latest_matching_commit
 
 
-def get_parquet_commit(
+def get_commit(
     repo_id: str,
-    commit_hash: str = None
+    commit_hash: str = None,
+    files_filter: str = ".*"
 ) -> dict:
     """
     Get the dataset version info for a given "revision"
     (commit_hash) of a given HF dataset.
-    Focus put on parquet files and associated metadata.
+    Focus put on files matching the given regex pattern
+    with associated metadata.
 
     Params:
         - repo_id (str):
             Path to the HuggingFace dataset.
         - commit_hash (Optional, str):
-            particular "revision" of the dataset
+            Particular "revision" of the dataset
             to scan.
+        - files_filter (str):
+            Only consider files matching this regex pattern.
 
     Results:
         - (dict):
             'commit_hash', 'commit_date',
-            'branch_name', 'parquet_files'
+            'branch_name', 'files'
     """
+
+    regex_pattern = re.compile(files_filter)
+
     if not commit_hash:
-        parquet_commit = get_latest_parquet_commit(
-            repo_id
+        matching_commit = get_latest_commit(
+            repo_id, files_filter
         )
-        return parquet_commit
+        return matching_commit
     else:
         dataset_repo_branches = \
             get_dataset_branches_commits_files(repo_id)
@@ -185,30 +200,26 @@ def get_parquet_commit(
                     in branch_data["commits"].items() \
                 :
                     if commit_hash == branch_commit_hash:
-                        parquet_files = [
+                        matching_files = [
                             f for f
                               in branch_commit_data["files"]
-                              if f.endswith(".parquet")
+                              if regex_pattern.search(f)
                         ]
-                        if len(parquet_files) > 0:
-                            parquet_commit = {
+                        if len(matching_files) > 0:
+                            matching_commit = {
                                 "commit_hash": commit_hash,
                                 "commit_date": \
                                     branch_commit_data["created_at"],
                                 "branch_name": \
                                     branch_data["branch_name"],
-                                "parquet_files": parquet_files,
+                                "files": matching_files,
                             }
-                            return parquet_commit
+                            return matching_commit
                         else:
                             print(f"commit '{commit_hash}' " +
-                                  "hosts no parquet file",
+                                  f"hosts no files matching pattern " +
+                                  f"'{files_filter}'",
                                   file=sys.stderr)
-                            # break here, some commit_hashes
-                            # being common to several branches
-                            # think "init commit, REDAME.MD
-                            # only (no datafile)
-                            # convert duckdb, parquet..."
                             return None
 
     return None
@@ -257,8 +268,10 @@ def get_lazy_df(
         - lazydf (pl.lazyframe.frame.LazyFrame):
     """
 
-    parquet_commit = get_parquet_commit(
-        repo_id=repo_id, commit_hash=commit_hash
+    parquet_commit = get_commit(
+        repo_id=repo_id,
+        commit_hash=commit_hash,
+        files_filter=".*\.parquet"
     )
     if not parquet_commit:
         print(f"commit '{commit_hash}' " +
@@ -274,7 +287,7 @@ def get_lazy_df(
             parquet_file
         )
         for parquet_file \
-            in parquet_commit['parquet_files']
+            in parquet_commit['files']
     ]
 
     lazy_df = pl.scan_parquet(
