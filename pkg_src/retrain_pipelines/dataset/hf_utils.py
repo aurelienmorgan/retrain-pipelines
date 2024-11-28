@@ -69,6 +69,7 @@ def get_dataset_branches_commits_files(
                     )
                 )
     """
+
     refs = list_repo_refs(repo_id, repo_type="dataset",
                           token=os.environ["HF_TOKEN"])
 
@@ -228,7 +229,8 @@ def get_commit(
 def get_lazy_df(
     repo_id: str,
     commit_hash: str = None,
-    hf_token:str = None
+    files_filter: str = ".*\.parquet",
+    hf_token:str = None,
 ) -> (str, str, pl.lazyframe.frame.LazyFrame):
     """
     Polars lazy dataframe object
@@ -254,6 +256,11 @@ def get_lazy_df(
                 parameter. If None, it is updated
                 to convey the actual (latest) value
                 info back to the caller
+        - files_filter (str):
+            Only consider files matching this regex pattern.
+            This can serve if the dataset has many tables
+            (possibly each with several splits),
+            with different formats, for instance.
         - hf_token (Optional, str):
             Needed if the HF dataset is "gated"
             (requires to be granted access).

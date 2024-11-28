@@ -10,7 +10,7 @@ from .tool_calls import count_tool_occurrences, \
                         plot_words_count
 
 from .hf_utils import get_dataset_branches_commits_files, \
-                      get_latest_parquet_commit, \
-                      get_parquet_commit, \
+                      get_latest_commit, \
+                      get_commit, \
                       get_lazy_df
 
