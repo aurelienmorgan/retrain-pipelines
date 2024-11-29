@@ -2,11 +2,15 @@
 import os
 import re
 import json
+import random
 
 import polars as pl
 
+from typing import Optional, Callable, Iterator
+
 from huggingface_hub import list_repo_refs, list_repo_commits, \
     list_repo_files
+from datasets import IterableDataset
 
 
 def _dataset_repo_branch_commits_files(
@@ -307,4 +311,103 @@ def get_lazy_df(
             "commit_utc_date_str": parquet_commit['commit_date'], \
             "lazy_df": lazy_df
         }
+
+def iterable_dataset_multi_buffer_sampler(
+    dataset: IterableDataset,
+    total_samples: int,
+    attributes_selector: Optional[Callable]=None,
+    buffer_size: int = 1000,
+    num_passes: int = 3,
+    seed: int = None
+) -> Iterator:
+    """
+    Lazy random sampling with multiple buffer passes.
+
+    Randomizes via reservoir sampling
+    across iterative buffer windows.
+
+    Ensures broader distribution than single-pass shuffling.
+
+    Supports reproducible sampling with optional seed.
+
+    Enables selective attribute extraction.
+
+    Usage:
+    ```python
+    samples = list(multi_buffer_sampler(
+        hf_streaming_dataset['train'],
+        total_samples=1000,
+        buffer_size=2000,
+        num_passes=3,
+        selector=lambda x: {
+            # Select desired attributes
+            'key1': x['key1'],
+            'key2': x['key2']
+        }
+    ))
+    ```
+
+    Parameters:
+        - dataset (IterableDataset):
+            Input streaming dataset
+        - total_samples (int):
+            Number of samples to return
+        - selector: Optional[Callable] = None
+            Transform input item.
+            Optional function transforming input item
+            to subset of desired attributes.
+            Extract specific attributes pre-yield
+        - buffer_size (int):
+            Size of each buffer.
+            Larger buffer for better randomization.
+        - num_passes (int):
+            Number of shuffling passes.
+            Multiple passes for better coverage.
+        - seed (int):
+            Random seed for reproducibility
+
+    Results:
+        - (Iterator)
+    """
+    if seed is not None:
+        random.seed(seed)
+
+    samples_per_pass = total_samples // num_passes
+    remainder = total_samples % num_passes
+
+    for pass_idx in range(num_passes):
+        # Adjust samples for last pass to include remainder
+        current_samples = (
+            samples_per_pass + remainder
+            if pass_idx == num_passes - 1
+            else samples_per_pass
+        )
+
+        # Get samples with a fresh buffer
+        buffer = []
+        for item in dataset:
+            item = (
+                attributes_selector(item)
+                if attributes_selector else item
+            )
+            if len(buffer) < buffer_size:
+                buffer.append(item)
+            else:
+                # Randomly replace items in buffer
+                idx = random.randint(0, buffer_size - 1)
+                buffer[idx] = item
+
+            # Yield an item when buffer is full
+            if len(buffer) == buffer_size:
+                idx = random.randint(0, len(buffer) - 1)
+                yield buffer[idx]
+                current_samples -= 1
+
+            if current_samples <= 0:
+                break
+
+        while current_samples > 0 and buffer:
+            idx = random.randint(0, len(buffer) - 1)
+            yield buffer[idx]
+            current_samples -= 1
 
