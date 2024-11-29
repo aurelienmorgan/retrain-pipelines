@@ -231,7 +231,7 @@ def get_lazy_df(
     commit_hash: str = None,
     files_filter: str = ".*\.parquet",
     hf_token:str = None,
-) -> (str, str, pl.lazyframe.frame.LazyFrame):
+) -> dict:
     """
     Polars lazy dataframe object
     for a given HuggingFace-hosted dataset.
@@ -267,12 +267,13 @@ def get_lazy_df(
             @see https://huggingface.co/docs/hub/en/datasets-gated
 
     Results:
-        - commit_hash (str):
-            gets handy when no input value
-            is given as input.
-        - commit_date (str):
-            24hrs, UTC format.
-        - lazydf (pl.lazyframe.frame.LazyFrame):
+        - (dict):
+            - commit_hash (str):
+                gets handy when no input value
+                is given as input.
+            - commit_date (str):
+                24hrs, UTC format.
+            - lazydf (pl.lazyframe.frame.LazyFrame):
     """
 
     parquet_commit = get_commit(
@@ -301,7 +302,9 @@ def get_lazy_df(
         polars_hf_urls,
         storage_options={"token": hf_token})
 
-    return parquet_commit['commit_hash'], \
-           parquet_commit['commit_date'], \
-           lazy_df
+    return {
+            "commit_hash": parquet_commit['commit_hash'], \
+            "commit_utc_date_str": parquet_commit['commit_date'], \
+            "lazy_df": lazy_df
+        }
 
