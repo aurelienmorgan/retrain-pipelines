@@ -203,10 +203,15 @@ def plot_tools_occurences(
 ) -> Figure:
     """
     Plots distribution of tools within set of records.
-    "tool A is referenced 'x' times, etc".
+    "tool 'A' is referenced 'x' times, etc".
 
     Params:
         - tools_occurences_df (pl.dataframe.frame.DataFrame):
+            at least columns "tool_name", "occurrences"
+            (the plotting will not use other columns,
+             however DEVELOPPER is free to group rows
+             by other keys (such as list of parameters, etc)
+             at will)
         - head_tail_size (int):
             since population of tools often-times get very large,
             we only print most-frequently and least-frenquently
