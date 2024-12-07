@@ -60,8 +60,6 @@ def get_html(
     #          EDA           #
     ##########################
     records_count = "{:,}".format(params['records_count'])
-    # classes_prior_prob = \
-        # "{:.1f}%".format(params['classes_prior_prob']*100)
     classes_prior_prob = params['classes_prior_prob']
     features_desc_table = pd.DataFrame(
             [params['features_desc']]
@@ -268,7 +266,6 @@ def get_html(
                 target_class_curves=target_class_curves,
                 buckets_table=indent(buckets_table, ' '*52),
                 hyperparameters_table=indent(hyperparameters_table, ' '*56),
-                feature_imp_curve="", #feature_imp_curve,
                 classes_weighted_metrics_table= \
                     indent(classes_weighted_metrics_table, ' '*52),
                 slice_feature_name=slice_feature_name,
