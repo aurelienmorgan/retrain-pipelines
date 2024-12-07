@@ -4,6 +4,7 @@ import re
 import json
 import random
 
+import pandas as pd
 import polars as pl
 
 from typing import Optional, Callable, Iterator
@@ -312,6 +313,73 @@ def get_lazy_df(
             "lazy_df": lazy_df
         }
 
+
+def get_column_info(
+    lazy_df: pl.lazyframe.frame.LazyFrame,
+    engine: str = "cpu"
+) -> pd.DataFrame:
+    """
+    Basic types description.
+    Aggregate min/max for numericals and
+    words count strings.
+
+    Params:
+        - lazy_df (pl.lazyframe.frame.LazyFrame):
+            the dataset table to consider.
+        - engine (str):
+            Polars' engine (cpu or gpu)
+
+    Results:
+        - (pd.DataFrame):
+    """
+
+    schema = lazy_df.limit(1).collect(engine=engine)[0].schema
+
+    result = lazy_df.select([
+        pl.col(c).min().alias(f"{c}_min")
+        if t in [pl.Int64, pl.Float64]
+        else pl.lit(None).alias(f"{c}_min")
+        for c, t in schema.items()
+    ] + [
+        pl.col(c).max().alias(f"{c}_max")
+        if t in [pl.Int64, pl.Float64]
+        else pl.lit(None).alias(f"{c}_max")
+        for c, t in schema.items()
+    ] + [
+        pl.col(c).map_elements(lambda x: len(str(x).split()),
+                               return_dtype=pl.Int64
+                              ).min().alias(f"{c}_min_words")
+        if t == pl.Utf8
+        else pl.lit(None).alias(f"{c}_min_words")
+        for c, t in schema.items()
+    ] + [
+        pl.col(c).map_elements(lambda x: len(str(x).split()),
+                               return_dtype=pl.Int64
+                              ).max().alias(f"{c}_max_words")
+        if t == pl.Utf8
+        else pl.lit(None).alias(f"{c}_max_words")
+        for c, t in schema.items()
+    ])
+    df = result.collect(engine=engine)
+
+    column_info = {}
+    for col, dtype in schema.items():
+        if dtype in [pl.Int64, pl.Float64]:
+            column_info[col] = \
+                f"{str(dtype)} - " + \
+                f"[{df[0][f'{col}_min'][0]}-" + \
+                f"{df[0][f'{col}_max'][0]}]"
+        elif dtype == pl.Utf8:
+            column_info[col] = \
+                f"[{df[0][f'{col}_min_words'][0]}-" + \
+                f"{df[0][f'{col}_max_words'][0]}] words"
+        else:
+            raise NotImplementedError(
+                f"Data type '{dtype}' not implemented")
+
+    return pd.DataFrame(column_info, index=["Range"])
+
+
 def iterable_dataset_multi_buffer_sampler(
     dataset: IterableDataset,
     total_samples: int,
@@ -334,7 +402,7 @@ def iterable_dataset_multi_buffer_sampler(
 
     Usage:
     ```python
-    samples = list(multi_buffer_sampler(
+    samples = list(iterable_dataset_multi_buffer_sampler(
         hf_streaming_dataset['train'],
         total_samples=1000,
         buffer_size=2000,

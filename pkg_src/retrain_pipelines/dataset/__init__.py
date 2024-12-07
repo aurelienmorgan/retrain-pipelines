@@ -13,5 +13,6 @@ from .hf_utils import get_dataset_branches_commits_files, \
                       get_latest_commit, \
                       get_commit, \
                       get_lazy_df, \
+                      get_column_info, \
                       iterable_dataset_multi_buffer_sampler
 
