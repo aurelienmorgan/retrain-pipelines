@@ -19,15 +19,20 @@ jobs:
             "https://api.github.com/repos/${{ github.repository }}/traffic/clones" | \
             jq '.count')
           echo "CLONE_COUNT=$clone_count" >> $GITHUB_ENV
+          current_date=$(date +'%Y-%m-%d')
+          echo "API-retrieved clones count for the day ($current_date): $clone_count"
 
       - name: Update Gist
+        env:
+          GIST_ID: 6dc3699f407bffa35cd6670ad08dd307
         run: |
           gist_content=$(curl -s -H "Authorization: token ${{ secrets.PAT }}" \
-            "https://api.github.com/gists/6dc3699f407bffa35cd6670ad08dd307")
+            "https://api.github.com/gists/$GIST_ID")
           current_count=$(echo "$gist_content" | jq -r '.files."clone_count.json".content' | jq '.count')
+          echo "Current clones count from Gist: $current_count"
           new_count=$((current_count + CLONE_COUNT))
           new_content=$(jq -n --arg count "$new_count" '{"count": $count | tonumber}')
           curl -X PATCH -H "Authorization: token ${{ secrets.PAT }}" \
+            -H "Accept: application/vnd.github.v3+json" \
             -d '{"files":{"clone_count.json":{"content": '"$new_content"'}}}' \
-            "https://api.github.com/gists/6dc3699f407bffa35cd6670ad08dd307"
-
+            "https://api.github.com/gists/$GIST_ID"
