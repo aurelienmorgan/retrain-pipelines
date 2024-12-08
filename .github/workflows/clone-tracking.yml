@@ -9,6 +9,7 @@ on:
 jobs:
   update-clone-count:
     runs-on: ubuntu-latest
+    environment: repo_workflow_env
     steps:
       - name: Checkout repository
         uses: actions/checkout@v2
