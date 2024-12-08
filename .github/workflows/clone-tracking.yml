@@ -43,5 +43,5 @@ jobs:
           echo "New content: $new_content"
           curl -X PATCH -H "Authorization: token ${{ secrets.PAT }}" \
             -H "Accept: application/vnd.github.v3+json" \
-            -d "{\"files\": {\"clone_count.json\": {\"content\": \"$new_content\"}}}" \
+            -d "{\"files\": {\"clone_count.json\": {\"content\": $new_content}}}" \
             "https://api.github.com/gists/$GIST_ID"
