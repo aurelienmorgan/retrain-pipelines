@@ -39,7 +39,7 @@ jobs:
           current_count=$(echo "$gist_content" | jq -r '.files."clone_count.json".content' | jq '.count')
           echo "Current clones count from Gist: $current_count"
           new_count=$((current_count + CLONE_COUNT))
-          new_content=$(jq -n --arg count "$new_count" '{"count": ($count | tonumber | tostring)}')
+          new_content="{\"count\": $new_count}"
           curl -X PATCH -H "Authorization: token ${{ secrets.PAT }}" \
             -H "Accept: application/vnd.github.v3+json" \
             -d '{"files":{"clone_count.json":{"content": '"$new_content"'}}}' \
