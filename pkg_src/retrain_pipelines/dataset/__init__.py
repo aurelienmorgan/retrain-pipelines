@@ -6,7 +6,7 @@ from .dataset import DatasetType, \
 
 from .tool_calls import count_tool_occurrences, \
                         plot_tools_occurences, \
-                        polars_df_column_words_stats, \
+                        column_words_stats, \
                         plot_words_count
 
 from .hf_utils import get_dataset_branches_commits_files, \

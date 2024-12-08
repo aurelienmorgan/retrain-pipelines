@@ -321,7 +321,7 @@ def get_column_info(
     """
     Basic types description.
     Aggregate min/max for numericals and
-    words count strings.
+    words count for strings.
 
     Params:
         - lazy_df (pl.lazyframe.frame.LazyFrame):
@@ -335,6 +335,11 @@ def get_column_info(
 
     schema = lazy_df.limit(1).collect(engine=engine)[0].schema
 
+    def count_words(text):
+        if text is None:
+            return 0
+        return len(re.findall(r"\w+", str(text)))
+
     result = lazy_df.select([
         pl.col(c).min().alias(f"{c}_min")
         if t in [pl.Int64, pl.Float64]
@@ -346,14 +351,14 @@ def get_column_info(
         else pl.lit(None).alias(f"{c}_max")
         for c, t in schema.items()
     ] + [
-        pl.col(c).map_elements(lambda x: len(str(x).split()),
+        pl.col(c).map_elements(lambda x: count_words(x),
                                return_dtype=pl.Int64
                               ).min().alias(f"{c}_min_words")
         if t == pl.Utf8
         else pl.lit(None).alias(f"{c}_min_words")
         for c, t in schema.items()
     ] + [
-        pl.col(c).map_elements(lambda x: len(str(x).split()),
+        pl.col(c).map_elements(lambda x: count_words(x),
                                return_dtype=pl.Int64
                               ).max().alias(f"{c}_max_words")
         if t == pl.Utf8

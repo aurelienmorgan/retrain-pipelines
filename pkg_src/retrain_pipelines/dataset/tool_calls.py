@@ -9,7 +9,6 @@ import polars as pl
 from typing import Dict, List
 
 import matplotlib.pyplot as plt
-from matplotlib import ticker
 from matplotlib.figure import Figure
 from matplotlib.ticker import FuncFormatter
 
@@ -196,10 +195,16 @@ def count_tool_occurrences(
     )
 
 
+def _mpl_float_format_func(value, tick_number):
+    """Must be declared outside calling function
+    for returned objects to be 'pickelable'."""
+    return f"{value:,.0f}"
+
 def plot_tools_occurences(
     tools_occurences_df: pl.dataframe.frame.DataFrame,
     head_tail_size: int = 200,
-    title_prefix: str = ""
+    title_prefix: str = "",
+    fontsize: int = 10
 ) -> Figure:
     """
     Plots distribution of tools within set of records.
@@ -217,6 +222,7 @@ def plot_tools_occurences(
             we only print most-frequently and least-frenquently
             referenced once (head and tail of the distributuon)
         - title_prefix (str):
+        - fontsize (int):
 
     Results:
         - (Figure)
@@ -230,39 +236,38 @@ def plot_tools_occurences(
     x_coords = np.arange(2*head_tail_size)
     x_coords[head_tail_size:] += 50
 
-    fig, ax = plt.subplots(figsize=(14, 7))
+    fig, ax = plt.subplots(figsize=(9, 2))
 
     bars1 = ax.bar(x_coords[:head_tail_size],
                    head["occurrences"], color='skyblue',
                    label='most frequent')
     bars2 = ax.bar(x_coords[head_tail_size:],
                    tail["occurrences"], color='lightsalmon',
-                   label='least frequent')
+                   label="least frequent")
 
     # x-axis
     all_labels = pl.concat([head["tool_name"],
                             tail["tool_name"]])
     tick_positions = x_coords[::10]  # Every 10th position
-    tick_labels = all_labels[::10]  # Every 10th label
+    tick_labels = all_labels[::10]   # Every 10th label
     ax.set_xticks(tick_positions)
     ax.set_xticklabels(tick_labels, rotation=45, ha='right',
-                       fontsize=14)
+                       fontsize=fontsize-1)
     # Set limits to remove empty areas
     ax.set_xlim(x_coords[0] - 0.5, x_coords[-1] + 0.5)
 
-    ax.set_yscale('log')
-    ax.set_ylabel('Occurrences (log scale)', fontsize=14)
-    def format_func(value, tick_number):
-        return f'{value:,.0f}'
-    ax.yaxis.set_major_formatter(FuncFormatter(format_func))
-    ax.tick_params(axis='y', labelsize=14)
+    ax.set_yscale("log")
+    ax.set_ylabel("Occurrences (log scale) ", fontsize=fontsize)
+    ax.yaxis.set_major_formatter(
+        FuncFormatter(_mpl_float_format_func))
+    ax.tick_params(axis='y', labelsize=fontsize)
 
-    ax.set_xlabel('Tool Name (every 10th)', fontsize=14)
+    ax.set_xlabel('Tool Name (every 10th)', fontsize=fontsize)
     ax.set_title(
         title_prefix+
         f"Top {head_tail_size} and Bottom {head_tail_size} "+
         "Tool Occurrences",
-        fontsize=18
+        fontsize=fontsize+2
     )
 
     # gap band
@@ -270,18 +275,21 @@ def plot_tools_occurences(
                facecolor='lightgray', alpha=0.5)
     gap_text = \
         f"{len(tools_occurences_df) - 2*head_tail_size:,.0f} " + \
-        "entries not shown"
+        "entries\nnot shown"
     ax.text(head_tail_size+25, 0.5, gap_text,
             ha='center', va='center', color='red',
-            fontweight='normal', fontsize=14,
+            fontweight='normal', fontsize=fontsize,
             rotation=90, transform=ax.get_xaxis_transform())
 
-    ax.legend(fontsize=14)
+    ax.legend(fontsize=fontsize-1)
+
+    fig.tight_layout()
+    plt.close(fig)
 
     return fig
 
 
-def polars_df_column_words_stats(
+def column_words_stats(
     polars_df: pl.dataframe.frame.DataFrame,
     column_name: str
 ) -> pl.dataframe.frame.DataFrame:
@@ -339,10 +347,16 @@ def polars_df_column_words_stats(
     )
 
 
+def _mpl_int_format_func(value, tick_number):
+    """Must be declared outside calling function
+    for returned objects to be 'pickelable'."""
+    return f"{int(value):,}"
+
 def plot_words_count(
     lazy_df: pl.lazyframe.frame.LazyFrame,
     column_name: str,
-    engine: str = "cpu"
+    engine: str = "cpu",
+    fontsize: int = 10
 ) -> Figure:
     """
 
@@ -353,6 +367,7 @@ def plot_words_count(
           to count words
         - engine (str):
             Polars' engine (cpu or gpu)
+        - fontsize (int):
 
     Results:
         - (Figure)
@@ -369,7 +384,7 @@ def plot_words_count(
 
 
     fig, (ax1, ax2) = plt.subplots(
-        1, 2, figsize=(8, 4), gridspec_kw={'width_ratios': [2, 1]})
+        1, 2, figsize=(7, 3.78), gridspec_kw={'width_ratios': [2, 1]})
     bin_ranges = [(i, i + 5) for i in range(0, max(word_counts), 5)]
     binned_counts = [0] * len(bin_ranges)
     for count in word_counts:
@@ -379,15 +394,19 @@ def plot_words_count(
                 break
     ax1.barh(range(len(binned_counts)), binned_counts,
              color="skyblue", edgecolor="black")
+
+    ax1.set_ylabel("Words Count Range", fontsize=fontsize)
     ax1.set_yticks(range(len(binned_counts)))
     ax1.set_yticklabels([f"{lower+1}-{upper}"
                          for lower, upper in bin_ranges], ha='right')
+    ax1.tick_params(axis='y', labelsize=fontsize-1)
+
     ax1.set_xlabel("Number of Records in Range (log scale)",
-                   fontsize=12)
-    ax1.set_ylabel("Words Count Range", fontsize=12)
+                   fontsize=fontsize)
     ax1.set_xscale('log')
     ax1.xaxis.set_major_formatter(
-        ticker.FuncFormatter(lambda x, pos: f"{int(x):,}"))
+        FuncFormatter(_mpl_int_format_func))
+    ax1.tick_params(axis='x', labelsize=fontsize-1)
     ax1.grid(axis="x", linestyle="--", alpha=0.7)
 
     box = ax2.boxplot(word_counts, vert=True)
@@ -395,25 +414,34 @@ def plot_words_count(
         median_val = median.get_ydata()[0]
         ax2.text(median.get_xdata()[0], median_val,
                  f'{int(median_val)}', horizontalalignment='center',
-                 verticalalignment='bottom')
+                 verticalalignment='bottom', fontsize=fontsize-1)
     for cap in box['caps']:
         cap_val = cap.get_ydata()[0]
         ax2.text(cap.get_xdata()[0], cap_val, f'{int(cap_val)}',
                  horizontalalignment='center',
-                 verticalalignment='bottom')
+                 verticalalignment='bottom',
+                 fontsize=fontsize-1)
     q1 = box['whiskers'][0].get_ydata()[0]
     q3 = box['whiskers'][1].get_ydata()[0]
     ax2.text(box['whiskers'][0].get_xdata()[0], q1, f'{int(q1)}',
-             horizontalalignment='right', verticalalignment='bottom')
+             horizontalalignment='right', verticalalignment='bottom',
+             fontsize=fontsize-1)
     ax2.text(box['whiskers'][1].get_xdata()[0], q3, f'{int(q3)}',
-             horizontalalignment='left', verticalalignment='top')
+             horizontalalignment='left', verticalalignment='top',
+             fontsize=fontsize-1)
 
     ax2.set_ylabel('Word Count')
+    ax2.tick_params(axis='y', labelsize=fontsize-1)
     ax2.set_xticks([])
     ax2.set_xlabel('')
     ax2.grid(True)
 
-    fig.suptitle("Queries Words Count Distribution", fontsize=16)
+    fig.suptitle("Queries Words Count Distribution", fontsize=fontsize+2)
+
+    fig.tight_layout()
+    fig.subplots_adjust(top=0.92)
+
+    plt.close(fig)
 
     return fig
 
