@@ -41,7 +41,11 @@ jobs:
           new_count=$((current_count + CLONE_COUNT))
           new_content="{\"count\":$new_count}"
           echo "New content: $new_content"
+          payload=$(jq -n \
+            --arg content "{\"count\":$new_count}" \
+            '{"files": {"clone_count.json": {"content": $content}}}')
+          echo "Constructed payload: $payload"
           curl -X PATCH -H "Authorization: token ${{ secrets.PAT }}" \
             -H "Accept: application/vnd.github.v3+json" \
-            -d "{\"files\": {\"clone_count.json\": {\"content\": $new_content}}}" \
+            -d "$payload" \
             "https://api.github.com/gists/$GIST_ID"
