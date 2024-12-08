@@ -42,7 +42,7 @@ jobs:
           new_content="{\"count\":$new_count}"
           echo "New content: $new_content"
           payload=$(jq -n \
-            --arg content "{\"count\":$new_count}" \
+            --arg content "{\"count\": $new_count}" \
             '{"files": {"clone_count.json": {"content": $content}}}')
           echo "Constructed payload: $payload"
           curl -X PATCH -H "Authorization: token ${{ secrets.PAT }}" \
