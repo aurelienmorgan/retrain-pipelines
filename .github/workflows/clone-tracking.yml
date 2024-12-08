@@ -1,0 +1,33 @@
+name: Update Clone Count
+
+on:
+  schedule:
+    - cron: '0 0 * * *'  # Runs daily at midnight
+  workflow_dispatch:  # Allows manual triggering
+
+jobs:
+  update-clone-count:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+
+      - name: Fetch clone count
+        id: fetch_count
+        run: |
+          clone_count=$(curl -s -H "Authorization: token ${{ secrets.PAT }}" \
+            "https://api.github.com/repos/${{ github.repository }}/traffic/clones" | \
+            jq '.count')
+          echo "CLONE_COUNT=$clone_count" >> $GITHUB_ENV
+
+      - name: Update Gist
+        run: |
+          gist_content=$(curl -s -H "Authorization: token ${{ secrets.PAT }}" \
+            "https://api.github.com/gists/6dc3699f407bffa35cd6670ad08dd307")
+          current_count=$(echo "$gist_content" | jq -r '.files."clone_count.json".content' | jq '.count')
+          new_count=$((current_count + CLONE_COUNT))
+          new_content=$(jq -n --arg count "$new_count" '{"count": $count | tonumber}')
+          curl -X PATCH -H "Authorization: token ${{ secrets.PAT }}" \
+            -d '{"files":{"clone_count.json":{"content": '"$new_content"'}}}' \
+            "https://api.github.com/gists/6dc3699f407bffa35cd6670ad08dd307"
+
