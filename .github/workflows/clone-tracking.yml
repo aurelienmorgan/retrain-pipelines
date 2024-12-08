@@ -16,18 +16,11 @@ jobs:
       - name: Fetch clone count
         id: fetch_count
         run: |
-          # Fetch clone count from GitHub Traffic API
           response=$(curl -s -H "Authorization: token ${{ secrets.PAT }}" \
             "https://api.github.com/repos/${{ github.repository }}/traffic/clones")
           echo "API Response: $response"
-
-          # Extract today's date in YYYY-MM-DD format
           today=$(date -u +"%Y-%m-%d")
-
-          # Find today's clone count
           clone_count=$(echo "$response" | jq --arg today "$today" '.clones[] | select(.timestamp | startswith($today)) | .count')
-
-          # Check if clone_count is null and set environment variable
           if [ -z "$clone_count" ]; then
             echo "CLONE_COUNT=0" >> $GITHUB_ENV  # Default to 0 if no clones today
           else
@@ -39,58 +32,14 @@ jobs:
         env:
           GIST_ID: 6dc3699f407bffa35cd6670ad08dd307
         run: |
-          # Fetch current content of the Gist
           gist_content=$(curl -s -H "Authorization: token ${{ secrets.PAT }}" \
             "https://api.github.com/gists/$GIST_ID")
           echo "Gist Response: $gist_content"
-
-          # Extract current count from the Gist
           current_count=$(echo "$gist_content" | jq -r '.files."clone_count.json".content' | jq '.count')
-          
-          # Echo the current clones count before updating
           echo "Current clones count from Gist: $current_count"
-          
-          # Calculate new count and prepare new content if clone_count is not null
           new_count=$((current_count + CLONE_COUNT))
           new_content=$(jq -n --arg count "$new_count" '{"count": $count | tonumber}')
-          
-          # Update the Gist with the new count
           curl -X PATCH -H "Authorization: token ${{ secrets.PAT }}" \
             -H "Accept: application/vnd.github.v3+json" \
             -d '{"files":{"clone_count.json":{"content": '"$new_content"'}}}' \
             "https://api.github.com/gists/$GIST_ID"
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
