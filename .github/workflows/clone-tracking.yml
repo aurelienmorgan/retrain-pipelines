@@ -25,7 +25,7 @@ jobs:
           if [ -z "$clone_count" ]; then
             echo "CLONE_COUNT=0" >> $GITHUB_ENV  # Default to 0 if no clones yesterday
           else
-            echo "CLONE_COUNT=$clone_count" >> $GITHUB_ENV
+            echo "CLONE_COUNT=$clone_count-1" >> $GITHUB_ENV  # account for herein checkout
           fi
           echo "API-retrieved clones count for the day ($yesterday): $clone_count"
 
