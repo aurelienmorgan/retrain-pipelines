@@ -39,8 +39,7 @@ jobs:
           current_count=$(echo "$gist_content" | jq -r '.files."clone_count.json".content' | jq '.count' | tr -d '"')
           echo "Current clones count from Gist: $current_count"
           new_count=$((current_count + CLONE_COUNT))
-          new_content="{\"count\":$new_count}"
-          echo "New content: $new_content"
+          echo "New count: $new_count"
           payload=$(jq -n \
             --arg content "{\"count\": \"$new_count\"}" \
             '{"files": {"clone_count.json": {"content": $content}}}')
