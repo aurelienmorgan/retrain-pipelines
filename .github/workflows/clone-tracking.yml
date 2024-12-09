@@ -20,14 +20,14 @@ jobs:
           response=$(curl -s -H "Authorization: token ${{ secrets.PAT }}" \
             "https://api.github.com/repos/${{ github.repository }}/traffic/clones")
           echo "API Response: $response"
-          today=$(date -u +"%Y-%m-%d")
-          clone_count=$(echo "$response" | jq --arg today "$today" '.clones[] | select(.timestamp | startswith($today)) | .count')
+          yesterday=$(date -u -d "2 hours ago" +"%Y-%m-%d")  # account for potential delay in start time
+          clone_count=$(echo "$response" | jq --arg yesterday "$yesterday" '.clones[] | select(.timestamp | startswith($yesterday)) | .count')
           if [ -z "$clone_count" ]; then
-            echo "CLONE_COUNT=0" >> $GITHUB_ENV  # Default to 0 if no clones today
+            echo "CLONE_COUNT=0" >> $GITHUB_ENV  # Default to 0 if no clones yesterday
           else
             echo "CLONE_COUNT=$clone_count" >> $GITHUB_ENV
           fi
-          echo "API-retrieved clones count for the day ($today): $clone_count"
+          echo "API-retrieved clones count for the day ($yesterday): $clone_count"
 
       - name: Update Gist
         env:
