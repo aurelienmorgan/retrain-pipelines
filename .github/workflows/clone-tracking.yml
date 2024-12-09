@@ -35,7 +35,7 @@ jobs:
         run: |
           gist_content=$(curl -s -H "Authorization: token ${{ secrets.PAT }}" \
             "https://api.github.com/gists/$GIST_ID")
-          echo "Gist Response: $gist_content"
+          #echo "Gist Response: $gist_content"
           current_count=$(( $(echo "$gist_content" | jq -r '.files."clone_count.json".content' | jq '.count') ))
           echo "Current clones count from Gist: $current_count"
           new_count=$((current_count + CLONE_COUNT))
