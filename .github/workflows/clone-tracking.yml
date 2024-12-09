@@ -9,9 +9,6 @@ on:
 jobs:
   update-clone-count:
     runs-on: ubuntu-latest
-    environment:
-      name: repo_not_a_deployment_env
-      deployments: false
     steps:
       - name: Checkout repository
         uses: actions/checkout@v2
