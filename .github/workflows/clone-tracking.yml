@@ -9,7 +9,7 @@ on:
 jobs:
   update-clone-count:
     runs-on: ubuntu-latest
-    environment: repo_workflow_env
+    environment: production
     steps:
       - name: Checkout repository
         uses: actions/checkout@v2
@@ -36,13 +36,13 @@ jobs:
           gist_content=$(curl -s -H "Authorization: token ${{ secrets.PAT }}" \
             "https://api.github.com/gists/$GIST_ID")
           echo "Gist Response: $gist_content"
-          current_count=$(echo "$gist_content" | jq -r '.files."clone_count.json".content' | jq '.count')
+          current_count=$(( $(echo "$gist_content" | jq -r '.files."clone_count.json".content' | jq '.count') ))
           echo "Current clones count from Gist: $current_count"
           new_count=$((current_count + CLONE_COUNT))
           new_content="{\"count\":$new_count}"
           echo "New content: $new_content"
           payload=$(jq -n \
-            --arg content "{\"count\": $new_count}" \
+            --arg content "{\"count\": \"$new_count\"}" \
             '{"files": {"clone_count.json": {"content": $content}}}')
           echo "Constructed payload: $payload"
           curl -X PATCH -H "Authorization: token ${{ secrets.PAT }}" \
