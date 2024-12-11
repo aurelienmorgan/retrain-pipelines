@@ -1,6 +1,7 @@
 
 import os
 import re
+import sys
 import json
 import random
 
@@ -284,7 +285,7 @@ def get_lazy_df(
     parquet_commit = get_commit(
         repo_id=repo_id,
         commit_hash=commit_hash,
-        files_filter=".*\.parquet"
+        files_filter=files_filter
     )
     if not parquet_commit:
         print(f"commit '{commit_hash}' " +
