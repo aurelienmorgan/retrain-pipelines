@@ -1,9 +1,10 @@
+
 name: Update Clone Count
 
 on:
   schedule:
     - cron: '0 0 * * *'  # Runs daily at midnight
-  workflow_dispatch:  # Allows manual triggering
+  workflow_dispatch:     # Allows manual triggering
 
 jobs:
   update-clone-count:
@@ -15,19 +16,34 @@ jobs:
       - name: Fetch clone count
         id: fetch_count
         run: |
-          clone_count=$(curl -s -H "Authorization: token ${{ secrets.PAT }}" \
-            "https://api.github.com/repos/${{ github.repository }}/traffic/clones" | \
-            jq '.count')
-          echo "CLONE_COUNT=$clone_count" >> $GITHUB_ENV
+          response=$(curl -s -H "Authorization: token ${{ secrets.PAT }}" \
+            "https://api.github.com/repos/${{ github.repository }}/traffic/clones")
+          echo "API Response: $response"
+          yesterday=$(date -u -d "2 hours ago" +"%Y-%m-%d")  # account for potential delay in start time
+          clone_count=$(echo "$response" | jq --arg yesterday "$yesterday" '.clones[] | select(.timestamp | startswith($yesterday)) | .count')
+          if [ -z "$clone_count" ]; then
+            echo "CLONE_COUNT=0" >> $GITHUB_ENV  # Default to 0 if no clones yesterday
+          else
+            echo "CLONE_COUNT=$clone_count-1" >> $GITHUB_ENV  # -1 to account for herein checkout
+          fi
+          echo "API-retrieved clones count for the day ($yesterday): $clone_count"
 
       - name: Update Gist
+        env:
+          GIST_ID: 6dc3699f407bffa35cd6670ad08dd307
         run: |
           gist_content=$(curl -s -H "Authorization: token ${{ secrets.PAT }}" \
-            "https://api.github.com/gists/6dc3699f407bffa35cd6670ad08dd307")
-          current_count=$(echo "$gist_content" | jq -r '.files."clone_count.json".content' | jq '.count')
+            "https://api.github.com/gists/$GIST_ID")
+          #echo "Gist Response: $gist_content"
+          current_count=$(echo "$gist_content" | jq -r '.files."clone_count.json".content' | jq '.count' | tr -d '"')
+          echo "Current clones count from Gist: $current_count"
           new_count=$((current_count + CLONE_COUNT))
-          new_content=$(jq -n --arg count "$new_count" '{"count": $count | tonumber}')
+          echo "New count: $new_count"
+          payload=$(jq -n \
+            --arg content "{\"count\": \"$new_count\"}" \
+            '{"files": {"clone_count.json": {"content": $content}}}')
+          echo "Constructed payload: $payload"
           curl -X PATCH -H "Authorization: token ${{ secrets.PAT }}" \
-            -d '{"files":{"clone_count.json":{"content": '"$new_content"'}}}' \
-            "https://api.github.com/gists/6dc3699f407bffa35cd6670ad08dd307"
-
+            -H "Accept: application/vnd.github.v3+json" \
+            -d "$payload" \
+            "https://api.github.com/gists/$GIST_ID"
