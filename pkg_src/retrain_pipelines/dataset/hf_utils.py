@@ -3,15 +3,21 @@ import os
 import re
 import sys
 import json
+import yaml
 import random
 
 import pandas as pd
 import polars as pl
 
+from datetime import datetime
+
 from typing import Optional, Callable, Iterator
 
 from huggingface_hub import list_repo_refs, list_repo_commits, \
-    list_repo_files
+    list_repo_files, hf_hub_download
+from huggingface_hub.utils import RepositoryNotFoundError, \
+    RevisionNotFoundError, EntryNotFoundError
+
 from datasets import IterableDataset
 
 
@@ -484,4 +490,192 @@ def iterable_dataset_multi_buffer_sampler(
             idx = random.randint(0, len(buffer) - 1)
             yield buffer[idx]
             current_samples -= 1
+
+
+def _get_latest_README_commit(
+    repo_id: str,
+    target_commit_hash: str,
+    verbose: bool = True
+) -> (str, datetime):
+    """
+    Using a given commit as a starting point,
+    look for the latest prior commit for which
+    there was a README.md file.
+
+    This is to address cases where
+        'the commit corresponding to this commit_hash
+         didn't include a README'.
+    for instance, typical of 'auto-convert bot'
+    (think duckdb or parquet, 
+     @see https://huggingface.co/docs/dataset-viewer/en/parquet#conversion-to-parquet).
+
+    Params:
+        - repo_id (str):
+            Path to the HuggingFace dataset.
+        - commit_hash (Optional, str):
+            particular "revision" of the dataset
+            to scan.
+        - verbose (bool):
+            whether or not to print commit
+            hash and date (arget vs latest README)
+
+    Results:
+        - (str, datetime):
+            latest_README_commit_hash,
+            latest_README_commit_date
+    """
+    hf_dataset_branches_commits_files = \
+        get_dataset_branches_commits_files(repo_id=repo_id)
+
+    target_date = None
+    for repo, repo_data in hf_dataset_branches_commits_files.items():
+        for branch, branch_data in repo_data.items():
+            for commit_hash, commit_data in branch_data['commits'].items():
+                if commit_hash == target_commit_hash:
+                    target_date = datetime.strptime(
+                        commit_data['created_at'], '%Y-%m-%d %H:%M:%S UTC')
+                    break
+            if target_date:
+                break
+        if target_date:
+            break
+    if verbose:
+        print("target commit : ".ljust(25), target_commit_hash, target_date)
+
+    README_date = None
+    README_commit_hash = None
+    for repo, repo_data in hf_dataset_branches_commits_files.items():
+        for branch, branch_data in repo_data.items():
+            for commit_hash, commit_data in branch_data['commits'].items():
+                if 'README.md' in commit_data['files']:
+                    commit_date = datetime.strptime(
+                        commit_data['created_at'], '%Y-%m-%d %H:%M:%S UTC')
+                    if commit_date <= target_date:
+                        README_date = datetime.strptime(
+                            commit_data['created_at'], '%Y-%m-%d %H:%M:%S UTC')
+                        README_commit_hash = commit_hash
+                        if verbose:
+                            print("lastest README commit : ".ljust(25),
+                                  README_commit_hash, README_date)
+                        break
+            else:
+                continue
+            break
+        else:
+            continue
+        break
+
+    return README_commit_hash, README_date
+
+
+def get_repo_readme_card_data(
+    repo_id: str,
+    commit_hash: str = None,
+    hf_token: str = None,
+    verbose: bool = True
+) -> dict:
+    """
+    From the HuggingFace Hub
+    readme file's YAML header.
+    Note: we do not consider the latest version
+    of the README file, rather the newest
+    backward from the commit date
+    associated to 'commit_hash'.
+
+    Params:
+        - repo_id (str):
+            Path to the HuggingFace dataset.
+        - commit_hash (Optional, str):
+            particular "revision" of the dataset
+            to scan.
+        - hf_token (Optional, str):
+            Needed if the HF dataset is "gated"
+            (requires to be granted access).
+            @see https://huggingface.co/docs/hub/en/datasets-gated
+
+    Results:
+        - (dict):
+    """
+
+    try:
+        readme_path = hf_hub_download(
+            repo_id=repo_id,
+            revision=commit_hash,
+            filename="README.md",
+            repo_type="dataset",
+            use_auth_token=hf_token
+        )
+        if verbose:
+            print(readme_path)
+    except EntryNotFoundError as err:
+        if commit_hash is not None and "" < commit_hash:
+            latest_README_commit_hash, latest_README_commit_date = \
+                _get_latest_README_commit(
+                    repo_id=repo_id, target_commit_hash=commit_hash
+                )
+            readme_path = hf_hub_download(
+                repo_id=repo_id,
+                revision=latest_README_commit_hash,
+                filename="README.md",
+                repo_type="dataset",
+                use_auth_token=hf_token
+            )
+            if verbose:
+                print(readme_path)
+        else:
+            raise err
+
+    with open(readme_path, "r") as f:
+        content = f.read()
+    yaml_content = content.split('---')[1].strip()
+    config_data = yaml.safe_load(yaml_content)
+
+    return config_data
+
+
+def get_new_dataset_minor_version(
+    repo_id: str,
+    hf_token: str = None
+) -> str:
+    """
+    `retrain-pipelines` datasets on the HuggingFace Hub
+    have a "version" tag in their metadata
+    (str formatted "major.minor").
+    We here retrieve the latest value and
+    return it minor-incremented.
+
+    Params:
+        - repo_id (str):
+            Path to the HuggingFace dataset.
+        - hf_token (Optional, str):
+            Needed if the HF dataset is "gated"
+            (requires to be granted access).
+            @see https://huggingface.co/docs/hub/en/datasets-gated
+
+    Results:
+        - (str):
+            new version label
+    """
+    card_data = None
+    new_version = None
+    try:
+        card_data = get_repo_readme_card_data(
+            repo_id=repo_id, hf_token=hf_token, verbose=False
+        )
+    except RepositoryNotFoundError as err:
+        print(f"repo {repo_id} not found.\n" +
+              "If you are trying to access a private or gated repo, " +
+              "make sure you are authenticated.",
+              file=sys.stderr)
+        print(err, file=sys.stderr)
+
+    if card_data is not None and "version" in card_data:
+        last_version = str(card_data.get("version", {}))
+        new_version = last_version.split('=')[-1].strip('"').rsplit('.', 1)[0] + \
+                      '.' + \
+                      str(int(last_version.rsplit('.', 1)[-1].strip('"')) + 1)
+    else:
+        new_version = "0.1"
+
+    return new_version
 

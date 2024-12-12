@@ -14,5 +14,7 @@ from .hf_utils import get_dataset_branches_commits_files, \
                       get_commit, \
                       get_lazy_df, \
                       get_column_info, \
-                      iterable_dataset_multi_buffer_sampler
+                      iterable_dataset_multi_buffer_sampler, \
+                      get_repo_readme_card_data, \
+                      get_new_dataset_minor_version
 
