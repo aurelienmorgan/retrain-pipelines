@@ -291,7 +291,8 @@ def plot_tools_occurences(
 
 def column_words_stats(
     polars_df: pl.dataframe.frame.DataFrame,
-    column_name: str
+    column_name: str,
+    column_attr_handler: callable = lambda x: x
 ) -> pl.dataframe.frame.DataFrame:
     """
     
@@ -301,6 +302,21 @@ def column_words_stats(
         - column_name (str)
           name of the text column for which
           to count words
+        - column_attr_handler (callable, optional):
+          function applied to the "question" attribute,
+          in case it's not pure string type.
+          Defaults to the identity function.
+
+    Usage:
+        Given "polars_df" a polars (lazy or not) dataframe
+        of schema :
+        Schema([('question', Struct({'text': String,
+                                     'tokens': List(String)}))
+        words_stats = \
+            column_words_stats(
+                polars_df,
+                "question", attr_handler=lambda x: x.get("text")
+            ).collect(engine=engine)
 
     Results:
         - (pl.dataframe.frame.DataFrame
@@ -318,12 +334,14 @@ def column_words_stats(
     return polars_df.select(
         [
             pl.col(column_name)
+            .map_elements(column_attr_handler, return_dtype=pl.String)
             .str.extract_all(r"\w+")
             .map_elements(lambda arr: len(arr), return_dtype=pl.Int16)
             .max()
             .alias("max"),
 
             pl.col(column_name)
+            .map_elements(column_attr_handler, return_dtype=pl.String)
             .str.extract_all(r"\w+")
             .map_elements(lambda arr: len(arr), return_dtype=pl.Int16)
             .quantile(0.25)  # 1st quartile
@@ -331,6 +349,7 @@ def column_words_stats(
             .alias("q1"),
 
             pl.col(column_name)
+            .map_elements(column_attr_handler, return_dtype=pl.String)
             .str.extract_all(r"\w+")
             .map_elements(lambda arr: len(arr), return_dtype=pl.Int16)
             .quantile(0.5)  # 2nd quartile
@@ -338,6 +357,7 @@ def column_words_stats(
             .alias("q2"),
 
             pl.col(column_name)
+            .map_elements(column_attr_handler, return_dtype=pl.String)
             .str.extract_all(r"\w+")
             .map_elements(lambda arr: len(arr), return_dtype=pl.Int16)
             .quantile(0.75)  # 3rd quartile

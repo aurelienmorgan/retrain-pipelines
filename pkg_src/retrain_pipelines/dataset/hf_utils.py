@@ -18,7 +18,7 @@ from huggingface_hub import list_repo_refs, list_repo_commits, \
 from huggingface_hub.utils import RepositoryNotFoundError, \
     RevisionNotFoundError, EntryNotFoundError
 
-from datasets import IterableDataset
+from datasets import IterableDataset, DatasetDict
 
 
 def _dataset_repo_branch_commits_files(
@@ -517,7 +517,7 @@ def _get_latest_README_commit(
             to scan.
         - verbose (bool):
             whether or not to print commit
-            hash and date (arget vs latest README)
+            hash and date (target vs latest README)
 
     Results:
         - (str, datetime):
@@ -678,4 +678,25 @@ def get_new_dataset_minor_version(
         new_version = "0.1"
 
     return new_version
+
+
+def dataset_dict_to_config_str(
+    dataset_dict: DatasetDict
+) -> str:
+    """
+    Intended use: readme yaml header 'configs' tag.
+    """
+
+    result = "configs:\n"
+    for config_name, dataset in dataset_dict.items():
+        result += f"  - config_name: {config_name}\n"
+        result += "    data_files:\n"
+        if isinstance(dataset, dict):
+            for split, _ in dataset.items():
+                result += f"      - split: {split}\n"
+                result += f"        path: {config_name}/{split}.parquet\n"
+        else:
+            result += "      - split: train\n"
+            result += f"        path: {config_name}/data.parquet\n"
+    return result
 
