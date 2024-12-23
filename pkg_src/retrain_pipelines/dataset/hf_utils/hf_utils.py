@@ -521,20 +521,28 @@ def get_new_dataset_minor_version(
     new_version = None
     try:
         dataset_info = api.dataset_info(
-            repo_id=repo_id, revision=None
+            repo_id=repo_id, revision=None,
+            token=hf_token
         )
     except RepositoryNotFoundError as err:
         print(f"repo {repo_id} not found.\n" +
-              "If you are trying to access a private or gated repo, " +
-              "make sure you are authenticated.",
+              "If you are trying to access a " +
+              "private or gated repo, " +
+              "make sure you are authenticated " +
+              "and your credentials allow it.",
               file=sys.stderr)
         print(err, file=sys.stderr)
 
-    if dataset_info is not None and "version" in dataset_info.card_data:
-        last_version = str(dataset_info.card_data.get("version", {}))
-        new_version = last_version.split('=')[-1].strip('"').rsplit('.', 1)[0] + \
-                      '.' + \
-                      str(int(last_version.rsplit('.', 1)[-1].strip('"')) + 1)
+    if (
+        dataset_info is not None and
+        "version" in dataset_info.card_data
+    ):
+        last_version = \
+            str(dataset_info.card_data.get("version", {}))
+        new_version = \
+            last_version.split('=')[-1].strip('"').rsplit('.', 1)[0] + \
+            '.' + \
+            str(int(last_version.rsplit('.', 1)[-1].strip('"')) + 1)
     else:
         new_version = "0.1"
 
@@ -562,36 +570,74 @@ def dataset_dict_to_config_str(
     return result
 
 
-def get_arxiv_code(
+def get_arxiv_codes(
     repo_id: str,
     commit_hash: str = None
-) -> str:
+) -> list:
     """
+    Retrieve all arXiv codes associated with
+    the dataset on the HFHub.
+
     Params:
         - repo_id (str):
             Path to the HuggingFace dataset.
         - commit_hash (Optional, str):
-            particular "revision" of the dataset
-            to scan.
+            Specific "revision" of the dataset to scan.
 
-    Results:
-        - (str)
+    Returns:
+        - List[str]:
+            List of arXiv codes.
     """
 
     api = HfApi()
-    
+    arxiv_codes = []
     try:
         dataset_info = api.dataset_info(
             repo_id=repo_id, revision=commit_hash
         )
-        arxiv_tag = next((tag
+        arxiv_tags = [tag for tag in dataset_info.tags
+                      if tag.startswith('arxiv:')]
+        for arxiv_tag in arxiv_tags:
+            arxiv_code = arxiv_tag.split(':')[1]
+            arxiv_codes.append(arxiv_code)
+    except Exception as err:
+        print(err, file=sys.stderr)
+        return []
+
+    return arxiv_codes
+
+
+
+def get_license_label(
+    repo_id: str,
+    commit_hash: str = None
+):
+    """
+    @see @see https://huggingface.co/docs/hub/repositories-licenses
+
+    Params:
+        - repo_id (str):
+            Path to the HuggingFace dataset.
+        - commit_hash (Optional, str):
+            Specific "revision" of the dataset to scan.
+
+    Returns:
+        - (str)
+    """
+
+    api = HfApi()
+    try:
+        dataset_info = api.dataset_info(
+            repo_id=repo_id, revision=commit_hash
+        )
+        license_tag = next((tag
                           for tag in dataset_info.tags
-                          if tag.startswith('arxiv:')),
+                          if tag.startswith('license:')),
                          None)
         
-        if arxiv_tag:
-            arxiv_code = arxiv_tag.split(':')[1]
-            return arxiv_code
+        if license_tag:
+            license_label = license_tag.split(':')[1]
+            return license_label
         else:
             return None
     except Exception as err:
