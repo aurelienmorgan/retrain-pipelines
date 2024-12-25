@@ -72,6 +72,131 @@ def _parse_tools(
         return []
 
 
+def get_unique_tools(
+    lazy_df: pl.LazyFrame,
+    struct_schema: pl.Struct
+) -> pl.LazyFrame:
+    """
+    Get unique tools from the DataFrame,
+    considering tools with same parameters
+    but in different orders as identical.
+
+    Params:
+        - lazy_df (pl.lazyframe.frame.LazyFrame):
+        - struct_schema (pl.Struct):
+            The schema tools are abiding to.
+            We expect tool declaration with
+            description and params description.
+
+    Results:
+        - (pl.LazyFrame)
+    """
+    return (
+        lazy_df
+        .with_columns([
+            pl.col("tools")
+            .map_elements(
+                _parse_tools,
+                return_dtype=pl.List(struct_schema))
+            .alias("parsed_tools")
+        ])
+        .select(
+            pl.col("parsed_tools") \
+                .explode().alias("tool")
+        )
+        .unique()
+    )
+
+
+def find_records_with_tool(
+    lazy_df: pl.LazyFrame,
+    struct_schema: pl.Struct,
+    tool_name: str,
+    tool_description: str,
+    tool_parameters: Dict
+) -> pl.LazyFrame:
+    """
+    Find all records in the lazy DataFrame
+    that contain a specific tool.
+
+    Usage :
+        ```python
+        find_records_with_tool(
+                lazy_df,
+                tool_name="symbol",
+                tool_description=\
+                    "Fetches stock data for " + \
+                    "a given ticker symbol " + \
+                    "from the RapidAPI service.",
+                tool_parameters={
+                    "symbol": {
+                        "default": "AAPL",
+                        "description": \
+                            "The ticker symbol " + \
+                            "of the stock to retrieve " + \
+                            "data for.",
+                        "type": "str"}}
+            ).collect(engine=engine)
+        ```
+
+    Parameters:
+        - lazy_df (pl.LazyFrame):
+            input LazyFrame with 'tools' column
+        - struct_schema (pl.Struct):
+            The schema tools are abiding to.
+            We expect tool declaration with
+            description and params description.
+        - tool_name (str):
+            name of the tool to search for
+        - tool_description (str):
+            description of the tool
+        - tool_parameters (Dict):
+            parameters dictionary of the tool
+
+    Results:
+        - (pl.LazyFrame):
+            only the records
+            where the tool is present
+    """
+
+    # Create normalized version of the tool to be looked-up
+    lookup_tool = _normalize_tool({
+        "name": tool_name,
+        "description": tool_description,
+        "parameters": tool_parameters
+    })
+
+    def _contains_tool(tools_str: str) -> bool:
+        try:
+            tools_list = _parse_tools(tools_str)
+            return any(
+                tool["name"] == lookup_tool["name"] and
+                tool["description"] == \
+                    lookup_tool["description"] and
+                tool["parameters"] == \
+                    lookup_tool["parameters"]
+                for tool in tools_list
+            )
+        except:
+            return False
+
+    return (
+        lazy_df
+        .with_columns([
+            pl.col("tools")
+            .map_elements(
+                _parse_tools,
+                return_dtype=pl.List(struct_schema))
+            .alias("parsed_tools")
+        ])
+        .filter(
+            pl.col("tools").map_elements(
+                _contains_tool,
+                return_dtype=pl.Boolean)
+        )
+    )
+
+
 def _normalize_answer_tool(
     tool: Dict
 ) -> Dict:
