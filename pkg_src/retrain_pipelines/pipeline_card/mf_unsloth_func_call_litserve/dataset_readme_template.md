@@ -59,7 +59,8 @@ Source datasets :
     {% if main_arxiv_codes -%}
     arxiv&nbsp;:<br />
     {%- for main_arxiv_code in main_arxiv_codes %}
-      - https://huggingface.co/papers/{{ main_arxiv_code }}<br />
+      - <a href="https://huggingface.co/papers/{{ main_arxiv_code }}"
+           target="_blank">https://huggingface.co/papers/{{ main_arxiv_code }}</a><br />
     {% endfor -%}
     {% endif -%}
     <br />
@@ -78,7 +79,8 @@ Source datasets :
     {% if enrich_arxiv_codes -%}
     arxiv&nbsp;:<br />
     {%- for enrich_arxiv_code in enrich_arxiv_codes %}
-      - https://huggingface.co/papers/{{ enrich_arxiv_code }}<br />
+      - <a href="https://huggingface.co/papers/{{ enrich_arxiv_code }}"
+           target="_blank">https://huggingface.co/papers/{{ enrich_arxiv_code }}</a><br />
     {% endfor -%}
     {% endif -%}
     <br />

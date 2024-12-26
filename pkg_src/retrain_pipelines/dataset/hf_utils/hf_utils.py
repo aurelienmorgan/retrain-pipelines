@@ -788,6 +788,7 @@ def get_pretty_name(
 def _local_dataset_folder_to_hub(
     repo_id: str,
     local_folder: str,
+    commit_message: str = "new commit",
     hf_token: str = None,
 ) -> str:
     """
@@ -799,6 +800,9 @@ def _local_dataset_folder_to_hub(
             (is created if needed and if authorized).
         - local_folder (str):
             path to the source folder to be pushed.
+        - commit_message (str):
+            the message associated to the 'push_to_hub'
+            commit.
         - hf_token (Optional, str):
             "create on namespace" permission required.
     """
@@ -832,14 +836,14 @@ def _local_dataset_folder_to_hub(
             path_in_repo="",
             folder_path=local_folder,
             delete_patterns=["**"],
-            commit_message=f"`retrain-pipelines v{__version__}` "+ \
-                            "Upload multi-table dataset with README.",
+            commit_message=commit_message,
             token=hf_token
         )
         dataset_new_commit_hash = dataset_new_commit.oid
     except HfHubHTTPError as err:
         print("Failed to upload dataset to HuggingFace Hub.\n" +
-              "Is 'write' permission associated to the HF_TOKEN you use ?\n" +
+              "Is 'write' permission associated to " +
+              "the HF_TOKEN you use ?\n" +
               f"On the `{repo_id.split('/')[0]}` namespace ?",
               file=sys.stderr)
         print(''.join(traceback.format_exception(
@@ -909,11 +913,22 @@ def push_dataset_version_to_hub(
               "w") as f:
         f.write(dataset_readme_content)
 
-    dataset_version_commit_hash = _local_dataset_folder_to_hub(
-        repo_id=repo_id,
-        local_folder=tmp_dir,
-        hf_token=hf_token
-    )
+    data = yaml.safe_load(
+        dataset_readme_content.split('---')[1])
+    version, timestamp = data['version'], data['timestamp']
+    commit_message = f"v{version} - {timestamp} - " + \
+                     f"retrain-pipelines v{__version__} - "+ \
+                      "Upload multi-table dataset "+ \
+                      "with README."
+    print(commit_message)
+
+    dataset_version_commit_hash = \
+        _local_dataset_folder_to_hub(
+            repo_id=repo_id,
+            local_folder=tmp_dir,
+            commit_message=commit_message,
+            hf_token=hf_token
+        )
 
     shutil.rmtree(tmp_dir, ignore_errors=True)
 

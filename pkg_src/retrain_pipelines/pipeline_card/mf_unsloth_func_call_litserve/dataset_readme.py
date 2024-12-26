@@ -70,14 +70,16 @@ def _dataset_readme_params(
         dataset_dict["supervised_finetuning"]["validation"].num_rows
     size_category = get_size_category(records_count)
 
-    main_commit_hash, _ = get_latest_README_commit(
-        repo_id=hf_dataset_dict["repo_id"],
-        target_commit_hash=hf_dataset_dict["commit_hash"]
-    )
-    enrich_commit_hash, _ = get_latest_README_commit(
-        repo_id=hf_enrich_dataset_dict["repo_id"],
-        target_commit_hash=hf_enrich_dataset_dict["commit_hash"]
-    )
+    main_commit_hash, main_commit_utc_date_str = \
+        get_latest_README_commit(
+            repo_id=hf_dataset_dict["repo_id"],
+            target_commit_hash=hf_dataset_dict["commit_hash"]
+        )
+    enrich_commit_hash, enrich_commit_utc_date_str = \
+        get_latest_README_commit(
+            repo_id=hf_enrich_dataset_dict["repo_id"],
+            target_commit_hash=hf_enrich_dataset_dict["commit_hash"]
+        )
 
     main_pretty_name = get_pretty_name(
         repo_id=hf_dataset_dict["repo_id"],
@@ -143,12 +145,12 @@ def _dataset_readme_params(
                 hf_enrich_dataset_dict["repo_id"],
 
             "main_commit_hash": main_commit_hash,
-            "enrich_commit_hash": main_commit_hash,
+            "enrich_commit_hash": enrich_commit_hash,
 
             "main_commit_utc_date_str": \
-                hf_dataset_dict["commit_utc_date_str"],
+                main_commit_utc_date_str,
             "enrich_commit_utc_date_str": \
-                hf_enrich_dataset_dict["commit_utc_date_str"],
+                enrich_commit_utc_date_str,
 
             "main_pretty_name": main_pretty_name,
             "enrich_pretty_name": enrich_pretty_name,
