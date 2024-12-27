@@ -8,7 +8,7 @@
 
 {{configs }}
 
-version: {{ new_version_label }}
+version: '{{ new_version_label }}'
 
 timestamp: {{ utc_timestamp }}
 

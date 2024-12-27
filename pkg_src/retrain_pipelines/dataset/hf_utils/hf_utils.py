@@ -20,12 +20,13 @@ from requests.exceptions import ReadTimeout
 
 from huggingface_hub import list_repo_refs, list_repo_commits, \
     list_repo_files, hf_hub_download, HfApi
-from huggingface_hub.utils import RepositoryNotFoundError, \
-    RevisionNotFoundError, EntryNotFoundError, HfHubHTTPError
+from huggingface_hub.utils import RevisionNotFoundError, \
+    EntryNotFoundError, HfHubHTTPError
 
 from datasets import IterableDataset, DatasetDict
 
 from retrain_pipelines import __version__
+from retrain_pipelines.utils.hf_utils import local_repo_folder_to_hub
 
 
 def _dataset_repo_branch_commits_files(
@@ -501,63 +502,6 @@ def iterable_dataset_multi_buffer_sampler(
             current_samples -= 1
 
 
-def get_new_dataset_minor_version(
-    repo_id: str,
-    hf_token: str = None
-) -> str:
-    """
-    `retrain-pipelines` datasets on the HuggingFace Hub
-    have a "version" tag in their metadata
-    (str formatted "major.minor").
-    We here retrieve the latest value and
-    return it minor-incremented.
-
-    Params:
-        - repo_id (str):
-            Path to the HuggingFace dataset.
-        - hf_token (Optional, str):
-            Needed if the HF dataset is "gated"
-            (requires to be granted access).
-            @see https://huggingface.co/docs/hub/en/datasets-gated
-
-    Results:
-        - (str):
-            new version label
-    """
-    api = HfApi()
-
-    dataset_info = None
-    new_version = None
-    try:
-        dataset_info = api.dataset_info(
-            repo_id=repo_id, revision=None,
-            token=hf_token
-        )
-    except RepositoryNotFoundError as err:
-        print(f"repo {repo_id} not found.\n" +
-              "If you are trying to access a " +
-              "private or gated repo, " +
-              "make sure you are authenticated " +
-              "and your credentials allow it.",
-              file=sys.stderr)
-        print(err, file=sys.stderr)
-
-    if (
-        dataset_info is not None and
-        "version" in dataset_info.card_data
-    ):
-        last_version = \
-            str(dataset_info.card_data.get("version", {}))
-        new_version = \
-            last_version.split('=')[-1].strip('"').rsplit('.', 1)[0] + \
-            '.' + \
-            str(int(last_version.rsplit('.', 1)[-1].strip('"')) + 1)
-    else:
-        new_version = "0.1"
-
-    return new_version
-
-
 def dataset_dict_to_config_str(
     dataset_dict: DatasetDict
 ) -> str:
@@ -785,74 +729,6 @@ def get_pretty_name(
     return pretty_name
 
 
-def _local_dataset_folder_to_hub(
-    repo_id: str,
-    local_folder: str,
-    commit_message: str = "new commit",
-    hf_token: str = None,
-) -> str:
-    """
-    Upload all files in a single commit.
-
-    Params:
-        - repo_id (str):
-            Path to the HuggingFace dataset version
-            (is created if needed and if authorized).
-        - local_folder (str):
-            path to the source folder to be pushed.
-        - commit_message (str):
-            the message associated to the 'push_to_hub'
-            commit.
-        - hf_token (Optional, str):
-            "create on namespace" permission required.
-    """
-
-    api = HfApi()
-    dataset_new_commit_hash = None
-
-    try:
-        api.create_repo(
-            repo_id=repo_id,
-            repo_type="dataset",
-            exist_ok=True,
-            private=True,
-            token=hf_token
-        )
-    except HfHubHTTPError as err:
-        print(f"Failed to create dataset `{repo_id.split('/')[1]}` "+
-              f"under the `{repo_id.split('/')[0]}` namespace " +
-              "on the HuggingFace Hub.\n" +
-              "Does the HF_TOKEN you use have the permission " +
-              "on that namespace ?",
-              file=sys.stderr)
-        print(''.join(traceback.format_exception(
-                    type(err), err, err.__traceback__)))
-        return None
-
-    try:
-        dataset_new_commit = api.upload_folder(
-            repo_id=repo_id,
-            repo_type="dataset",
-            path_in_repo="",
-            folder_path=local_folder,
-            delete_patterns=["**"],
-            commit_message=commit_message,
-            token=hf_token
-        )
-        dataset_new_commit_hash = dataset_new_commit.oid
-    except HfHubHTTPError as err:
-        print("Failed to upload dataset to HuggingFace Hub.\n" +
-              "Is 'write' permission associated to " +
-              "the HF_TOKEN you use ?\n" +
-              f"On the `{repo_id.split('/')[0]}` namespace ?",
-              file=sys.stderr)
-        print(''.join(traceback.format_exception(
-                    type(err), err, err.__traceback__)))
-        return None
-
-    return dataset_new_commit_hash
-
-
 def push_dataset_version_to_hub(
     repo_id: str,
     dataset_dict: DatasetDict,
@@ -923,10 +799,11 @@ def push_dataset_version_to_hub(
     print(commit_message)
 
     dataset_version_commit_hash = \
-        _local_dataset_folder_to_hub(
+        local_repo_folder_to_hub(
             repo_id=repo_id,
             local_folder=tmp_dir,
             commit_message=commit_message,
+            repo_type="dataset",
             hf_token=hf_token
         )
 

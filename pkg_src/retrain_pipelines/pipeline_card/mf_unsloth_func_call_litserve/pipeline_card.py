@@ -95,10 +95,10 @@ def get_html(
     else:
         hyperparameters_table = DEFAULT_HTML_STR
 
-    # training_plt_fig = copy.copy(params['training_plt_fig'])
-    # # Set the RGBA background white color with partial transparency
-    # training_plt_fig.patch.set_facecolor((1.0, 1.0, 1.0, 0.6))
-    # training_curve = fig_to_base64(training_plt_fig)
+    cpt_log_history_fig = copy.copy(params['cpt_log_history_fig'])
+    # Set the RGBA background white color with partial transparency
+    cpt_log_history_fig.patch.set_facecolor((1.0, 1.0, 1.0, 0.6))
+    cpt_log_history_fig = fig_to_base64(cpt_log_history_fig)
 
     # target_class_figs = params['target_class_figs']
     target_class_curves = {}
@@ -267,7 +267,10 @@ def get_html(
 
                 ###################################
 
-                # training_curve=training_curve,
+                # model training =>               #
+                dataset_repo_id=params['dataset_repo_id'],
+                dataset_commit_hash=params['dataset_commit_hash'],
+                cpt_log_history_fig=cpt_log_history_fig,
                 # target_class_curves=target_class_curves,
                 # buckets_table=indent(buckets_table, ' '*52),
                 # hyperparameters_table=indent(hyperparameters_table, ' '*56),

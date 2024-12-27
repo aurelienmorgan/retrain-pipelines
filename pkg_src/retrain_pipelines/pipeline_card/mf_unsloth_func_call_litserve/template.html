@@ -421,6 +421,9 @@
                 });
             });
         </script>
+        <h2 style="color: white">!! <code>retrain-pipelines</code> pipeline card </h2>
+        <h2 style="color: white">&nbsp; &nbsp; template under construction !!</h2>
+        <h2 style="color: white"><em>more to come soon</em></h2>
         <h1 style="padding-left: 30px;" class="shiny-gold-text">{{title}}</h1>
         <h2 style="background-color: #FFFFCC40; padding-left: 3px;
                    text-align: left; color:black;">
@@ -567,17 +570,22 @@
                                      aria-labelledby="innerHeadingOne"
                                      data-parent="#innerAccordion">
                                     <div class="card-body">
+                                        <font color="#C0C0C0">
+                                        training dataset &nbsp: {{dataset_repo_id}}
+                                        (<a href="https://hf.co/datasets/{{ dataset_repo_id }}/blob/{{ dataset_commit_hash }}/README.md"
+                                            target="_blank">{{ dataset_commit_hash[:7] }}</a>)
+                                        </font><br />
                                         <table style="border: none;
                                                       background: transparent;
                                                       align: center;">
                                             <tr style="all: initial !important;">
                                                 <td style="border: none;">
                                                     <img
-                                                     src="data:image/jpeg;base64,{{training_curve}}"
+                                                     src="data:image/jpeg;base64,{{cpt_log_history_fig}}"
                                                      style="padding-right: 10px;" />
                                                 </td>
                                                 <td style="border: none; vertical-align: bottom;">
-                                                    EXPLAINABILITY
+                                                    EXPLAINABILITY placeholder
                                                 </td>
                                             </tr>
                                         </table>
