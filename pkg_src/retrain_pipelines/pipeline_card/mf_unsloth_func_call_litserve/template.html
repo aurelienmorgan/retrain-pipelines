@@ -421,8 +421,8 @@
                 });
             });
         </script>
-        <h2 style="color: white">!! <code>retrain-pipelines</code> pipeline card </h2>
-        <h2 style="color: white">&nbsp; &nbsp; template under construction !!</h2>
+        <h2 style="color: white">!! <code>retrain-pipelines</code> pipeline card -</h2>
+        <h2 style="color: white">&nbsp; &nbsp; template under construction &nbsp; &nbsp;!!</h2>
         <h2 style="color: white"><em>more to come soon</em></h2>
         <h1 style="padding-left: 30px;" class="shiny-gold-text">{{title}}</h1>
         <h2 style="background-color: #FFFFCC40; padding-left: 3px;
@@ -509,8 +509,8 @@
                  data-parent="#accordion">
                     <div class="card-body">
                         <font color="#C0C0C0">
-                            {{dataset_version}}
-                            [<a href="{{dataset_hf_url}}"
+                            {{main_dataset_version_rich_str}}
+                            [<a href="{{main_dataset_hf_url}}"
                                 target="_blank">HuggingFace &#x1F917;</a>] -
                             {{records_count}} records&nbsp;:
                         </font><br />
@@ -571,9 +571,18 @@
                                      data-parent="#innerAccordion">
                                     <div class="card-body">
                                         <font color="#C0C0C0">
-                                        training dataset &nbsp: {{dataset_repo_id}}
+                                        training dataset&nbsp: <b>{{ dataset_repo_id }}
+                                        v{{ dataset_version_label }}</b>
                                         (<a href="https://hf.co/datasets/{{ dataset_repo_id }}/blob/{{ dataset_commit_hash }}/README.md"
-                                            target="_blank">{{ dataset_commit_hash[:7] }}</a>)
+                                            target="_blank">{{ dataset_commit_hash[:7] }}</a>
+                                         - {{ dataset_utc_timestamp_str }})
+                                        </font><br />
+                                        <font color="#C0C0C0">
+                                        model version&nbsp: <b>{{ model_repo_id }}
+                                        v{{ model_version_label }}</b>
+                                        (<a href="https://hf.co/{{ model_repo_id }}/blob/{{ model_commit_hash }}/README.md"
+                                            target="_blank">{{ model_commit_hash[:7] }}</a>
+                                         - {{ model_utc_timestamp_str }})
                                         </font><br />
                                         <table style="border: none;
                                                       background: transparent;
@@ -581,7 +590,7 @@
                                             <tr style="all: initial !important;">
                                                 <td style="border: none;">
                                                     <img
-                                                     src="data:image/jpeg;base64,{{cpt_log_history_fig}}"
+                                                     src="data:image/jpeg;base64,{{cpt_log_history_curve}}"
                                                      style="padding-right: 10px;" />
                                                 </td>
                                                 <td style="border: none; vertical-align: bottom;">

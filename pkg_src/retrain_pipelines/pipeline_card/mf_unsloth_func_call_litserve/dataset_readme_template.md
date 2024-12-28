@@ -85,7 +85,7 @@ Source datasets :
     {% endif -%}
     <br />
 
-The herein dataset has 2 configs : `continued_pretraining` and `supervised_finetuning`.<br />
+The herein dataset has 2 configs : `continued_pre_training` and `supervised_finetuning`.<br />
 The former serves for added intrinsic knowledge. Typical entries look like&nbsp;:<br />
 ```python
 {{ main_format_description }}

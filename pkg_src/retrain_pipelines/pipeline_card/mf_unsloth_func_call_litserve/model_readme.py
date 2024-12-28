@@ -10,18 +10,14 @@ from datasets import DatasetDict
 from huggingface_hub import whoami
 
 from retrain_pipelines import __version__
+
 from retrain_pipelines.dataset.hf_utils import \
-        get_latest_README_commit, get_size_category, \
-        dataset_dict_to_config_str
-from retrain_pipelines.utils.hf_utils import \
+        get_latest_README_commit, \
         get_arxiv_codes, get_license_label, \
-        get_pretty_name
+        get_pretty_name,
 
 
-def _dataset_readme_params(
-    hf_dataset_dict: dict,
-    hf_enrich_dataset_dict: dict,
-    dataset_dict: DatasetDict,
+def _model_readme_params(
     version_label: str,
     utc_timestamp_str: str,
     mf_flow_name: str,
@@ -30,23 +26,11 @@ def _dataset_readme_params(
 ) -> dict:
     """
     Populates the params dict to be used
-    to customize the dataset jinja template.
+    to customize the model jinja template.
 
-    Built on metadata from the source datasets.
+    Built on metadata from the base model.
 
     Params:
-        - hf_dataset_dict (dict):
-            - repo_id
-            - commit_hash
-            - commit_utc_date_str
-            - lazy_df
-        - hf_enrich_dataset_dict (dict)
-            - repo_id
-            - commit_hash
-            - commit_utc_date_str
-        - dataset_dict (DatasetDict):
-            the dataset version to be pushed
-            to the HF hub.
         - version_label (str):
             typical `retrain-pipelines`
             version label are of format "major.minor"
@@ -61,84 +45,32 @@ def _dataset_readme_params(
         - (dict)
     """
 
-    pretty_name = "retrain-pipelines Function Calling"
+    pretty_name = "retrain-pipelines Function Caller"
 
-    records_count = \
-        dataset_dict["supervised_finetuning"]["train"].num_rows + \
-        dataset_dict["supervised_finetuning"]["validation"].num_rows
-    size_category = get_size_category(records_count)
-
-    main_commit_hash, main_commit_utc_date_str = \
+    base_commit_hash, base_commit_utc_date_str = \
         get_latest_README_commit(
             repo_id=hf_dataset_dict["repo_id"],
             target_commit_hash=hf_dataset_dict["commit_hash"]
         )
-    enrich_commit_hash, enrich_commit_utc_date_str = \
-        get_latest_README_commit(
-            repo_id=hf_enrich_dataset_dict["repo_id"],
-            target_commit_hash=\
-                hf_enrich_dataset_dict["commit_hash"]
-        )
 
-    main_pretty_name = get_pretty_name(
+    base_pretty_name = get_pretty_name(
         repo_id=hf_dataset_dict["repo_id"],
-        repo_type="dataset",
-        commit_hash=main_commit_hash
-    )
-    enrich_pretty_name = get_pretty_name(
-        repo_id=hf_enrich_dataset_dict["repo_id"],
-        repo_type="dataset",
-        commit_hash=enrich_commit_hash
+        commit_hash=base_commit_hash
     )
 
-    main_arxiv_codes = get_arxiv_codes(
+    base_arxiv_codes = get_arxiv_codes(
         repo_id=hf_dataset_dict["repo_id"],
-        repo_type="dataset",
-        commit_hash=main_commit_hash
-    )
-    enrich_arxiv_codes = get_arxiv_codes(
-        repo_id=hf_enrich_dataset_dict["repo_id"],
-        repo_type="dataset",
-        commit_hash=enrich_commit_hash
+        commit_hash=base_commit_hash
     )
 
-    main_license_label = get_license_label(
+    base_license_label = get_license_label(
         repo_id=hf_dataset_dict["repo_id"],
-        repo_type="dataset",
-        commit_hash=main_commit_hash
+        commit_hash=base_commit_hash
     )
-    enrich_license_label = get_license_label(
-        repo_id=hf_enrich_dataset_dict["repo_id"],
-        repo_type="dataset",
-        commit_hash=enrich_commit_hash
-    )
-    license_label = \
-        (main_license_label or enrich_license_label) \
-        if main_license_label == enrich_license_label or \
-           not (main_license_label and enrich_license_label) \
-        else None
-    if not license_label:
-        license_label = "unknown"
-
-    first_record_df = \
-        hf_dataset_dict["lazy_df"].limit(1) \
-        .collect(engine=engine)[0]
-    tool_0_0 = literal_eval(first_record_df["tools"][0])[0]
-    main_format_description = "attributes : \n"
-    def _build_keys(d, parent='', output_str=''):
-        for k, v in d.items():
-            new_key = f"{parent}.{k}" if parent else k
-            output_str += f" - {new_key}\n"
-            if isinstance(v, dict):
-                output_str = _build_keys(v, new_key, output_str)
-        return output_str
-    main_format_description = _build_keys(
-        tool_0_0, output_str=main_format_description)
-    main_format_description += "\none example : \n"
-    main_format_description += json.dumps(tool_0_0, indent=4)
+    if not base_license_label:
+        base_license_label = "unknown"
 
     return {
-            "configs": dataset_dict_to_config_str(dataset_dict),
             "new_version_label": version_label,
             "utc_timestamp": utc_timestamp_str,
 

@@ -41,9 +41,10 @@ def get_html(
             cards.get_cards(previous_blessed_model_card_task,
                             id='custom', type='html')[0]
 
-        current_blessed_run_finished = params['current_blessed_run'] \
-                                        .finished_at.astimezone(pytz.utc) \
-                                        .strftime('%A %b %d %Y %I:%M:%S %p %Z')
+        current_blessed_run_finished = \
+            params['current_blessed_run'] \
+            .finished_at.astimezone(pytz.utc) \
+            .strftime('%A %b %d %Y %I:%M:%S %p %Z')
         previsous_blessed_card_href = '/flows/' + \
             previous_blessed_custom_card.path[
                 :previous_blessed_custom_card.path.rfind("/")+1] + \
@@ -59,8 +60,9 @@ def get_html(
     ##########################
     #          EDA           #
     ##########################
-    dataset_version = params['dataset_version']
-    dataset_hf_url = params['dataset_hf_url']
+    main_dataset_version_rich_str = \
+        params['main_dataset_version_rich_str']
+    main_dataset_hf_url = params['main_dataset_hf_url']
     records_count = "{:,}".format(params['records_count'])
     data_schema_table = params['data_schema'].to_html(escape=False,
                                                       index = False)
@@ -98,7 +100,7 @@ def get_html(
     cpt_log_history_fig = copy.copy(params['cpt_log_history_fig'])
     # Set the RGBA background white color with partial transparency
     cpt_log_history_fig.patch.set_facecolor((1.0, 1.0, 1.0, 0.6))
-    cpt_log_history_fig = fig_to_base64(cpt_log_history_fig)
+    cpt_log_history_curve = fig_to_base64(cpt_log_history_fig)
 
     # target_class_figs = params['target_class_figs']
     target_class_curves = {}
@@ -223,9 +225,12 @@ def get_html(
     return template.render(
                 bootstrap_js_dependencies=bootstrap_js_dependencies,
                 title=params['title'], subtitle=params['subtitle'],
-                blessed_color="#008000" if model_version_blessed else "#811331",
-                blessed_background="#7CFC00" if model_version_blessed else "#FF3131",
-                model_version_blessed="" if model_version_blessed else "NOT ",
+                blessed_color="#008000" if model_version_blessed \
+                              else "#811331",
+                blessed_background="#7CFC00" if model_version_blessed \
+                                   else "#FF3131",
+                model_version_blessed="" if model_version_blessed \
+                                      else "NOT ",
 
                 # if model version not blessed => #
                 current_blessed_run_id=(
@@ -258,8 +263,9 @@ def get_html(
                 ###################################
 
                 # EDA =>                          #
-                dataset_version=dataset_version,
-                dataset_hf_url=dataset_hf_url,
+                main_dataset_version_rich_str=\
+                    main_dataset_version_rich_str,
+                main_dataset_hf_url=main_dataset_hf_url,
                 records_count=records_count,
                 data_schema_table=indent(data_schema_table, ' '*36),
                 answers_tools_count_curve=answers_tools_count_curve,
@@ -269,8 +275,17 @@ def get_html(
 
                 # model training =>               #
                 dataset_repo_id=params['dataset_repo_id'],
+                dataset_version_label=params['dataset_version_label'],
+                dataset_utc_timestamp_str=\
+                    params['dataset_utc_timestamp_str'],
                 dataset_commit_hash=params['dataset_commit_hash'],
-                cpt_log_history_fig=cpt_log_history_fig,
+
+                model_repo_id="",
+                model_commit_hash="       ",
+                model_version_label="",
+                model_utc_timestamp_str="",
+
+                cpt_log_history_curve=cpt_log_history_curve,
                 # target_class_curves=target_class_curves,
                 # buckets_table=indent(buckets_table, ' '*52),
                 # hyperparameters_table=indent(hyperparameters_table, ' '*56),
