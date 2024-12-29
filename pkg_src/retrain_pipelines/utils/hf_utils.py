@@ -4,12 +4,194 @@ import sys
 
 import re
 import traceback
+from datetime import datetime
 
 from requests.exceptions import ReadTimeout
 
+from huggingface_hub import list_repo_refs, \
+    list_repo_commits, list_repo_files, HfApi
 from huggingface_hub.utils import \
     RepositoryNotFoundError, HfHubHTTPError
-from huggingface_hub import HfApi
+
+
+def _repo_branch_commits_files(
+    repo_id: str,
+    repo_type: str = "model",
+    repo_branch: str = "main"
+) -> dict:
+    """
+    Params:
+        - repo_id (str):
+            Path to the HuggingFace dataset.
+        - repo_type (str):
+            can be "model", "dataset", "space".
+        - repo_branch (str):
+            Branch (of the repository  of interest)
+            to be considered.
+
+    Results:
+        - (dict)
+            'commit_hash', 'created_at',
+            'title', 'files'
+    """
+    commits = list_repo_commits(repo_id, revision=repo_branch,
+                                repo_type=repo_type,
+                                token=os.environ["HF_TOKEN"])
+    commits_dict = {}
+    for commit in commits:
+        files = list_repo_files(
+            repo_id, revision=commit.commit_id,
+            repo_type=repo_type,
+            token=os.environ["HF_TOKEN"])
+
+        commits_dict[commit.commit_id] = {
+            "created_at": commit.created_at.strftime(
+                "%Y-%m-%d %H:%M:%S UTC"),
+            "title": commit.title,
+            "files": files
+        }
+
+    return commits_dict
+
+
+def get_repo_branches_commits_files(
+    repo_id: str,
+    repo_type: str = "model"
+) -> dict:
+    """
+    Selection of metadata for (litterally)
+    all files of all commits of a given
+    HF repo.
+
+    Params:
+        - repo_id (str):
+            Path to the HuggingFace dataset.
+        - repo_type (str):
+            can be "model", "dataset", "space".
+
+    Results:
+        - (dict)
+            'branches'
+                (
+                    'branch_name', 'commits',
+                    (
+                        'commit_hash', 'created_at',
+                        'title', 'files'
+                    )
+                )
+    """
+
+    refs = list_repo_refs(repo_id, repo_type=repo_type,
+                          token=os.environ["HF_TOKEN"])
+
+    repo_branches = {
+        "repo_standard_branches": {},
+        "repo_convert_branches": {}
+    }
+    for repo_standard_branches in refs.branches:
+        repo_branches[
+            "repo_standard_branches"
+        ][repo_standard_branches.name] = {
+            "branch_name": repo_standard_branches.ref,
+            "commits": _repo_branch_commits_files(
+                repo_id, repo_type,
+                repo_standard_branches.ref)
+        }
+        
+    for repo_convert_branch in refs.converts:
+        repo_branches[
+            "repo_convert_branches"
+        ][repo_convert_branch.name] = {
+            "branch_name": repo_convert_branch.ref,
+            "commits": _repo_branch_commits_files(
+                repo_id, repo_type,
+                repo_convert_branch.ref)
+        }
+
+    return repo_branches
+
+
+def get_latest_README_commit(
+    repo_id: str,
+    target_commit_hash: str,
+    repo_type: str = "model",
+    verbose: bool = True
+) -> (str, datetime):
+    """
+    Using a given commit as a starting point,
+    look for the latest prior commit for which
+    there was a README.md file.
+
+    This is to address cases where
+        'the commit corresponding to this commit_hash
+         didn't include a README and
+         many entries are missing from
+         `HfApi().dataset_info`, `HfApi().model_info`,
+         `HfApi().space_info`..'.
+    for instance, typical of datasets 'auto-convert bot'
+    (think duckdb or parquet, 
+     @see https://huggingface.co/docs/dataset-viewer/en/parquet#conversion-to-parquet).
+
+    Params:
+        - repo_id (str):
+            Path to the HuggingFace repository.
+        - commit_hash (Optional, str):
+            particular "revision" of the repository
+            to scan.
+        - repo_type (str):
+            can be "model", "dataset", "space".
+        - verbose (bool):
+            whether or not to print commit
+            hash and date (target vs latest README)
+
+    Results:
+        - (str, datetime):
+            latest_README_commit_hash,
+            latest_README_commit_date
+    """
+    hf_repo_branches_commits_files = \
+        get_repo_branches_commits_files(
+            repo_id=repo_id, repo_type=repo_type)
+
+    target_date = None
+    for repo, repo_data in hf_repo_branches_commits_files.items():
+        for branch, branch_data in repo_data.items():
+            for commit_hash, commit_data in branch_data['commits'].items():
+                if commit_hash == target_commit_hash:
+                    target_date = datetime.strptime(
+                        commit_data['created_at'], '%Y-%m-%d %H:%M:%S UTC')
+                    break
+            if target_date:
+                break
+        if target_date:
+            break
+    if verbose:
+        print("target commit : ".ljust(25), target_commit_hash, target_date)
+
+    README_date = None
+    README_commit_hash = None
+    for repo, repo_data in hf_repo_branches_commits_files.items():
+        for branch, branch_data in repo_data.items():
+            for commit_hash, commit_data in branch_data['commits'].items():
+                if 'README.md' in commit_data['files']:
+                    commit_date = datetime.strptime(
+                        commit_data['created_at'], '%Y-%m-%d %H:%M:%S UTC')
+                    if commit_date <= target_date:
+                        README_date = datetime.strptime(
+                            commit_data['created_at'], '%Y-%m-%d %H:%M:%S UTC')
+                        README_commit_hash = commit_hash
+                        if verbose:
+                            print("lastest README commit : ".ljust(25),
+                                  README_commit_hash, README_date)
+                        break
+            else:
+                continue
+            break
+        else:
+            continue
+        break
+
+    return README_commit_hash, README_date
 
 
 def get_arxiv_codes(
@@ -142,7 +324,7 @@ def get_pretty_name(
                 type(err), err, err.__traceback__))
         print(stack_trace, file=sys.stderr)
     except Exception as err:
-        print(err, file=sys.stderr)
+        print(("get_pretty_name", err), file=sys.stderr)
 
     if not pretty_name:
         pretty_name = ' '.join(

@@ -96,7 +96,9 @@ Data-enrichment rate&nbsp;: +{{ (enrichment_rate * 100)|round(1) ~ '%' }}<br />
 
 <hr />
 Powered by
-<a target="_blank" href="https://pypi.org/project/retrain-pipelines/">retrain-pipelines {{ __version__ }}</a> - 
+<code><a target="_blank"
+         href="https://pypi.org/project/retrain-pipelines/">retrain-pipelines
+      {{ __version__ }}</a></code> - 
 <code>Run by <a target="_blank" href="https://huggingface.co/{{ run_user }}">{{ run_user }}</a></code> -
 <em><b>{{ mf_flow_name }}</b></em> - mf_run_id&nbsp;: <code>{{ mf_run_id }}</code>
 

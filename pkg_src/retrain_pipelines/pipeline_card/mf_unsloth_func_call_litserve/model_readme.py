@@ -11,18 +11,18 @@ from huggingface_hub import whoami
 
 from retrain_pipelines import __version__
 
-from retrain_pipelines.dataset.hf_utils import \
-        get_latest_README_commit, \
-        get_arxiv_codes, get_license_label, \
-        get_pretty_name,
+from retrain_pipelines.utils.hf_utils import \
+        get_latest_README_commit, get_arxiv_codes, \
+        get_license_label, get_pretty_name
 
 
 def _model_readme_params(
+    base_model_dict: dict,
+    training_dataset_dict: dict,
     version_label: str,
     utc_timestamp_str: str,
     mf_flow_name: str,
     mf_run_id: str,
-    engine:str = "cpu"
 ) -> dict:
     """
     Populates the params dict to be used
@@ -31,6 +31,12 @@ def _model_readme_params(
     Built on metadata from the base model.
 
     Params:
+        - base_model_dict (dict)
+        - training_dataset_dict (dict):
+            - repo_id
+            - commit_hash
+            - commit_utc_date_str
+            - 
         - version_label (str):
             typical `retrain-pipelines`
             version label are of format "major.minor"
@@ -38,8 +44,6 @@ def _model_readme_params(
             timestampt for the new dataset version.
         - mf_flow_name (str)
         - mf_run_id (str)
-        - engine (str):
-            Polars engine (can be "cpu", "gpu"..)
 
     Results:
         - (dict)
@@ -47,28 +51,29 @@ def _model_readme_params(
 
     pretty_name = "retrain-pipelines Function Caller"
 
-    base_commit_hash, base_commit_utc_date_str = \
+    base_model_commit_hash, base_model_commit_utc_date_str = \
         get_latest_README_commit(
-            repo_id=hf_dataset_dict["repo_id"],
-            target_commit_hash=hf_dataset_dict["commit_hash"]
+            repo_id=base_model_dict["repo_id"],
+            target_commit_hash=base_model_dict["commit_hash"],
+            repo_type="model"
         )
 
-    base_pretty_name = get_pretty_name(
-        repo_id=hf_dataset_dict["repo_id"],
-        commit_hash=base_commit_hash
+    base_model_pretty_name = get_pretty_name(
+        repo_id=base_model_dict["repo_id"],
+        commit_hash=base_model_commit_hash
     )
 
-    base_arxiv_codes = get_arxiv_codes(
-        repo_id=hf_dataset_dict["repo_id"],
-        commit_hash=base_commit_hash
+    base_model_arxiv_codes = get_arxiv_codes(
+        repo_id=base_model_dict["repo_id"],
+        commit_hash=base_model_commit_hash
     )
 
-    base_license_label = get_license_label(
-        repo_id=hf_dataset_dict["repo_id"],
-        commit_hash=base_commit_hash
+    base_model_license_label = get_license_label(
+        repo_id=base_model_dict["repo_id"],
+        commit_hash=base_model_commit_hash
     )
-    if not base_license_label:
-        base_license_label = "unknown"
+    if not base_model_license_label:
+        base_model_license_label = "unknown"
 
     return {
             "new_version_label": version_label,
@@ -76,31 +81,21 @@ def _model_readme_params(
 
             "pretty_name": pretty_name,
 
-            "main_repo_id": \
-                hf_dataset_dict["repo_id"],
-            "enrich_repo_id": \
-                hf_enrich_dataset_dict["repo_id"],
+            "dataset_repo_id": \
+                training_dataset_dict["repo_id"],
+            "dataset_version_label": \
+                training_dataset_dict["version_label"],
+            "dataset_commit_hash": \
+                training_dataset_dict["commit_hash"],
+            "dataset_utc_timestamp_str": \
+                training_dataset_dict["utc_timestamp_str"],
 
-            "main_commit_hash": main_commit_hash,
-            "enrich_commit_hash": enrich_commit_hash,
-
-            "main_commit_utc_date_str": \
-                main_commit_utc_date_str,
-            "enrich_commit_utc_date_str": \
-                enrich_commit_utc_date_str,
-
-            "main_pretty_name": main_pretty_name,
-            "enrich_pretty_name": enrich_pretty_name,
-
-            "size_category": size_category,
-
-            "main_arxiv_codes": main_arxiv_codes,
-            "enrich_arxiv_codes": enrich_arxiv_codes,
-
-            "main_license_label": main_license_label,
-            "enrich_license_label": enrich_license_label,
-
-            "main_format_description" : main_format_description,
+            "base_model_repo_id": base_model_dict["repo_id"],
+            "base_model_pretty_name": base_model_pretty_name,
+            "base_model_commit_hash": base_model_commit_hash,
+            "base_model_commit_utc_date_str": base_model_commit_utc_date_str,
+            "base_model_arxiv_codes": base_model_arxiv_codes,
+            "base_model_license_label": base_model_license_label,
 
             "__version__": __version__,
             "run_user": whoami()["name"],
@@ -109,16 +104,17 @@ def _model_readme_params(
         }
     
 
-def get_dataset_readme_content(
+def get_model_readme_content(
     template_folder: str,
-    hf_dataset_dict: dict,
-    hf_enrich_dataset_dict: dict,
-    dataset_dict: DatasetDict,
+
+    base_model_dict: dict,
+    training_dataset_dict: dict,
+
     version_label: str,
     utc_timestamp_str: str,
+
     mf_flow_name: str,
     mf_run_id: str,
-    engine:str = "cpu"
 ) -> str:
     """
 
@@ -132,18 +128,13 @@ def get_dataset_readme_content(
 
     Params:
         - template_folder (str)
-        - hf_dataset_dict (dict):
+        - base_model_dict (dict)
+            - repo_id
+            - commit_hash
+        - training_dataset_dict (dict)
             - repo_id
             - commit_hash
             - commit_utc_date_str
-            - lazy_df
-        - hf_enrich_dataset_dict (dict)
-            - repo_id
-            - commit_hash
-            - commit_utc_date_str
-        - dataset_dict (DatasetDict):
-            the dataset version to be pushed
-            to the HF hub.
         - version_label (str):
             typical `retrain-pipelines`
             version label are of format "major.minor"
@@ -151,17 +142,14 @@ def get_dataset_readme_content(
             timestampt for the new dataset version.
         - mf_flow_name (str)
         - mf_run_id (str)
-        - engine (str):
-            Polars engine (can be "cpu", gpu"..)
 
     Results:
         - (str)
     """
 
-    params = _dataset_readme_params(
-        hf_dataset_dict=hf_dataset_dict,
-        hf_enrich_dataset_dict=hf_enrich_dataset_dict,
-        dataset_dict=dataset_dict,
+    params = _model_readme_params(
+        base_model_dict=base_model_dict,
+        training_dataset_dict=training_dataset_dict,
         version_label=version_label,
         utc_timestamp_str=utc_timestamp_str,
         mf_flow_name=mf_flow_name,
@@ -169,7 +157,7 @@ def get_dataset_readme_content(
     )
 
     env = Environment(loader=FileSystemLoader(template_folder))
-    template = env.get_template("dataset_readme_template.md")
+    template = env.get_template("model_readme_template.md")
     readme_content = template.render(params)
 
     return readme_content

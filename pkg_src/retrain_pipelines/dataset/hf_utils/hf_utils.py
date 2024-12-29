@@ -12,108 +12,16 @@ import traceback
 import pandas as pd
 import polars as pl
 
-from datetime import datetime
-
 from typing import Optional, Callable, Iterator
 
-from huggingface_hub import list_repo_refs, list_repo_commits, \
-    list_repo_files, hf_hub_download, HfApi
 from huggingface_hub.utils import RevisionNotFoundError, \
     EntryNotFoundError, HfHubHTTPError
 
 from datasets import IterableDataset, DatasetDict
 
 from retrain_pipelines import __version__
-from retrain_pipelines.utils.hf_utils import local_repo_folder_to_hub
-
-
-def _dataset_repo_branch_commits_files(
-    repo_id: str,
-    repo_branch: str
-) -> dict:
-    """
-    Params:
-        - repo_id (str):
-            Path to the HuggingFace dataset.
-        - repo_branch (str):
-            Branch (of the repository  of interest)
-            to be considered.
-
-    Results:
-        - (dict)
-            'commit_hash', 'created_at',
-            'title', 'files'
-    """
-    commits = list_repo_commits(repo_id, revision=repo_branch,
-                                repo_type="dataset",
-                                token=os.environ["HF_TOKEN"])
-    commits_dict = {}
-    for commit in commits:
-        files = list_repo_files(
-            repo_id, revision=commit.commit_id,
-            repo_type="dataset",
-            token=os.environ["HF_TOKEN"])
-
-        commits_dict[commit.commit_id] = {
-            "created_at": commit.created_at.strftime(
-                "%Y-%m-%d %H:%M:%S UTC"),
-            "title": commit.title,
-            "files": files
-        }
-
-    return commits_dict
-
-
-def get_dataset_branches_commits_files(
-    repo_id: str
-) -> dict:
-    """
-    Selection of metadata for (litterally)
-    all files of all commits of a given
-    HF dataset repo.
-
-    Params:
-        - repo_id (str):
-            Path to the HuggingFace dataset.
-
-    Results:
-        - (dict)
-            'branches'
-                (
-                    'branch_name', 'commits',
-                    (
-                        'commit_hash', 'created_at',
-                        'title', 'files'
-                    )
-                )
-    """
-
-    refs = list_repo_refs(repo_id, repo_type="dataset",
-                          token=os.environ["HF_TOKEN"])
-
-    dataset_repo_branches = {
-        "repo_standard_branches": {},
-        "repo_convert_branches": {}
-    }
-    for repo_standard_branches in refs.branches:
-        dataset_repo_branches[
-            "repo_standard_branches"
-        ][repo_standard_branches.name] = {
-            "branch_name": repo_standard_branches.ref,
-            "commits": _dataset_repo_branch_commits_files(
-                repo_id, repo_standard_branches.ref)
-        }
-        
-    for repo_convert_branch in refs.converts:
-        dataset_repo_branches[
-            "repo_convert_branches"
-        ][repo_convert_branch.name] = {
-            "branch_name": repo_convert_branch.ref,
-            "commits": _dataset_repo_branch_commits_files(
-                repo_id, repo_convert_branch.ref)
-        }
-
-    return dataset_repo_branches
+from retrain_pipelines.utils.hf_utils import \
+    get_repo_branches_commits_files, local_repo_folder_to_hub
 
 
 def get_latest_commit(
@@ -140,7 +48,8 @@ def get_latest_commit(
     """
 
     dataset_repo_branches = \
-        get_dataset_branches_commits_files(repo_id)
+        get_repo_branches_commits_files(
+            repo_id=repo_id, repo_type="dataset")
 
     latest_matching_commit = None
     regex_pattern = re.compile(files_filter)
@@ -208,7 +117,8 @@ def get_commit(
         return matching_commit
     else:
         dataset_repo_branches = \
-            get_dataset_branches_commits_files(repo_id)
+            get_repo_branches_commits_files(
+                repo_id=repo_id, repo_type="dataset")
         for \
             branch_type, branches \
             in dataset_repo_branches.items() \
@@ -519,83 +429,6 @@ def dataset_dict_to_config_str(
             result += "      - split: train\n"
             result += f"        path: {config_name}/data.parquet\n"
     return result
-
-
-def get_latest_README_commit(
-    repo_id: str,
-    target_commit_hash: str,
-    verbose: bool = True
-) -> (str, datetime):
-    """
-    Using a given commit as a starting point,
-    look for the latest prior commit for which
-    there was a README.md file.
-
-    This is to address cases where
-        'the commit corresponding to this commit_hash
-         didn't include a README and
-         many entries are missing from `dataset_info`'.
-    for instance, typical of 'auto-convert bot'
-    (think duckdb or parquet, 
-     @see https://huggingface.co/docs/dataset-viewer/en/parquet#conversion-to-parquet).
-
-    Params:
-        - repo_id (str):
-            Path to the HuggingFace dataset.
-        - commit_hash (Optional, str):
-            particular "revision" of the dataset
-            to scan.
-        - verbose (bool):
-            whether or not to print commit
-            hash and date (target vs latest README)
-
-    Results:
-        - (str, datetime):
-            latest_README_commit_hash,
-            latest_README_commit_date
-    """
-    hf_dataset_branches_commits_files = \
-        get_dataset_branches_commits_files(repo_id=repo_id)
-
-    target_date = None
-    for repo, repo_data in hf_dataset_branches_commits_files.items():
-        for branch, branch_data in repo_data.items():
-            for commit_hash, commit_data in branch_data['commits'].items():
-                if commit_hash == target_commit_hash:
-                    target_date = datetime.strptime(
-                        commit_data['created_at'], '%Y-%m-%d %H:%M:%S UTC')
-                    break
-            if target_date:
-                break
-        if target_date:
-            break
-    if verbose:
-        print("target commit : ".ljust(25), target_commit_hash, target_date)
-
-    README_date = None
-    README_commit_hash = None
-    for repo, repo_data in hf_dataset_branches_commits_files.items():
-        for branch, branch_data in repo_data.items():
-            for commit_hash, commit_data in branch_data['commits'].items():
-                if 'README.md' in commit_data['files']:
-                    commit_date = datetime.strptime(
-                        commit_data['created_at'], '%Y-%m-%d %H:%M:%S UTC')
-                    if commit_date <= target_date:
-                        README_date = datetime.strptime(
-                            commit_data['created_at'], '%Y-%m-%d %H:%M:%S UTC')
-                        README_commit_hash = commit_hash
-                        if verbose:
-                            print("lastest README commit : ".ljust(25),
-                                  README_commit_hash, README_date)
-                        break
-            else:
-                continue
-            break
-        else:
-            continue
-        break
-
-    return README_commit_hash, README_date
 
 
 def push_dataset_version_to_hub(

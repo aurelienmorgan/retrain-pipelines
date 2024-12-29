@@ -85,7 +85,7 @@ def get_get_dataset_readme_content(
     pipeline_card_module_dir: str
 )  -> callable:
     """
-    Loads the "pipeline_card" module,
+    Loads the "dataset_readme" module,
     which can be user-provided
     (path given through flow
      "pipeline_card_module_dir" parameter)
@@ -105,6 +105,33 @@ def get_get_dataset_readme_content(
         )
 
     return get_dataset_readme_content
+
+
+def get_get_model_readme_content(
+    pipeline_card_module_dir: str
+)  -> callable:
+    """
+    Loads the "model_readme" module,
+    which can be user-provided
+    (path given through flow
+     "pipeline_card_module_dir" parameter)
+    and returns its "get_model_readme_content" function.
+    """
+
+    pipeline_card_module_path = \
+        os.path.realpath(os.path.join(pipeline_card_module_dir,
+                                      "model_readme.py"))
+
+    get_model_readme_content = \
+        _load_and_get_function(
+            pipeline_card_module_path,
+            f"retrain_pipelines.pipeline_card."+
+                f"{retrain_pipeline_type}.dataset_readme",
+            "get_model_readme_content"
+        )
+
+    return get_model_readme_content
+
 
 def get_get_html(
     pipeline_card_module_dir: str

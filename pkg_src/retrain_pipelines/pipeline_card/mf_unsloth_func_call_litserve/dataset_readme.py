@@ -11,11 +11,10 @@ from huggingface_hub import whoami
 
 from retrain_pipelines import __version__
 from retrain_pipelines.dataset.hf_utils import \
-        get_latest_README_commit, get_size_category, \
-        dataset_dict_to_config_str
+        get_size_category, dataset_dict_to_config_str
 from retrain_pipelines.utils.hf_utils import \
-        get_arxiv_codes, get_license_label, \
-        get_pretty_name
+        get_latest_README_commit, get_arxiv_codes, \
+        get_license_label, get_pretty_name
 
 
 def _dataset_readme_params(
@@ -80,13 +79,15 @@ def _dataset_readme_params(
     main_commit_hash, main_commit_utc_date_str = \
         get_latest_README_commit(
             repo_id=hf_dataset_dict["repo_id"],
-            target_commit_hash=hf_dataset_dict["commit_hash"]
+            target_commit_hash=hf_dataset_dict["commit_hash"],
+            repo_type="dataset"
         )
     enrich_commit_hash, enrich_commit_utc_date_str = \
         get_latest_README_commit(
             repo_id=hf_enrich_dataset_dict["repo_id"],
             target_commit_hash=\
-                hf_enrich_dataset_dict["commit_hash"]
+                hf_enrich_dataset_dict["commit_hash"],
+            repo_type="dataset"
         )
 
     main_pretty_name = get_pretty_name(
@@ -256,7 +257,8 @@ def get_dataset_readme_content(
         version_label=version_label,
         utc_timestamp_str=utc_timestamp_str,
         mf_flow_name=mf_flow_name,
-        mf_run_id=mf_run_id
+        mf_run_id=mf_run_id,
+        engine=engine
     )
 
     env = Environment(loader=FileSystemLoader(template_folder))
