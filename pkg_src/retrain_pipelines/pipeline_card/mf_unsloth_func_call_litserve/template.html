@@ -508,7 +508,12 @@
                         <font color="#C0C0C0">
                             <span style='font-size: large;'><b>{{ main_dataset_repo_id }}</b></span> -
                             commit {{ main_dataset_commit_hash[:7] }}
-                            ({{ main_dataset_commit_utc_date_str }})
+                            <span class="info-container">
+                                <span class="info-icon" style="background-color: #C0C0C0;">i</span>
+                                <span class="info-content" style="width: 190px; white-space: nowrap;">
+                                    {{ main_dataset_commit_utc_date_str }}
+                                </span>
+                            </span>
                             [<a href="https://huggingface.co/datasets/{{ main_dataset_repo_id }}/tree/{{ main_dataset_commit_hash }}"
                             target="_blank">HuggingFace &#x1F917;</a>] -
                             {{records_count}} records&nbsp;:
@@ -575,9 +580,12 @@
                                         <font color="#C0C0C0">
                                         training dataset&nbsp: <b>{{ dataset_repo_id }}
                                         v{{ dataset_version_label }}</b>
-                                        (<a href="https://hf.co/datasets/{{ dataset_repo_id }}/blob/{{ dataset_commit_hash }}/README.md"
-                                            target="_blank">{{ dataset_commit_hash[:7] }}</a>
-                                         - {{ dataset_utc_timestamp_str }})
+                                        <span class="info-container">
+                                            <span class="info-icon" style="background-color: #C0C0C0;">i</span>
+                                            <span class="info-content" style="width: 190px; white-space: nowrap;">{{ dataset_utc_timestamp_str }}</span>
+                                        </span>
+                                        [<a href="https://hf.co/datasets/{{ dataset_repo_id }}/blob/{{ dataset_commit_hash }}/README.md"
+                                        target="_blank">HuggingFace &#x1F917;</a>]
                                         </font><br />
                                         <font color="#C0C0C0">
                                         model version&nbsp: <b>{{ model_repo_id }}
