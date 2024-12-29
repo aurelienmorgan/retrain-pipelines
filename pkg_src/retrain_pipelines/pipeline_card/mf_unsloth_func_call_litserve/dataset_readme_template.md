@@ -94,6 +94,7 @@ The latter is a classic question/answer text dataset. Only tool calls are in the
 
 <hr />
 Powered by <code>retrain-pipelines v{{ __version__ }}</code> - 
+<a target="_blank" href="https://pypi.org/project/retrain-pipelines/"><code>retrain-pipelines {{ __version__ }}</code></a>
 <code>Run by <a target="_blank" href="https://huggingface.co/{{ run_user }}">{{ run_user }}</a></code> -
 <em><b>{{ mf_flow_name }}</b></em> - mf_run_id&nbsp;: <code>{{ mf_run_id }}</code>
 
