@@ -54,7 +54,7 @@ def get_arxiv_codes(
         print(stack_trace, file=sys.stderr)
         return []
     except Exception as err:
-        print((get_arxiv_codes, err), file=sys.stderr)
+        print(("get_arxiv_codes", err), file=sys.stderr)
         return []
 
     return arxiv_codes
@@ -99,7 +99,7 @@ def get_license_label(
         print(stack_trace, file=sys.stderr)
         return None
     except Exception as err:
-        print((get_license_label, err), file=sys.stderr)
+        print(("get_license_label", err), file=sys.stderr)
         return None
 
 

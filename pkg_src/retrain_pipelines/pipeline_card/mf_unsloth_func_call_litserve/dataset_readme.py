@@ -22,6 +22,8 @@ def _dataset_readme_params(
     hf_dataset_dict: dict,
     hf_enrich_dataset_dict: dict,
     dataset_dict: DatasetDict,
+    augmentation_rate: float,
+    enrichment_rate: float,
     version_label: str,
     utc_timestamp_str: str,
     mf_flow_name: str,
@@ -47,6 +49,13 @@ def _dataset_readme_params(
         - dataset_dict (DatasetDict):
             the dataset version to be pushed
             to the HF hub.
+        - augmentation_rate (float):
+            - proportion of the original dataset
+              that has been augmented.
+        - enrichment_rate (float):
+            - proportion of the original dataset
+              that has been added from
+              the enrichment dataset.
         - version_label (str):
             typical `retrain-pipelines`
             version label are of format "major.minor"
@@ -160,6 +169,9 @@ def _dataset_readme_params(
             "main_pretty_name": main_pretty_name,
             "enrich_pretty_name": enrich_pretty_name,
 
+            "augmentation_rate": augmentation_rate,
+            "enrichment_rate": enrichment_rate,
+
             "size_category": size_category,
 
             "main_arxiv_codes": main_arxiv_codes,
@@ -182,6 +194,8 @@ def get_dataset_readme_content(
     hf_dataset_dict: dict,
     hf_enrich_dataset_dict: dict,
     dataset_dict: DatasetDict,
+    augmentation_rate: float,
+    enrichment_rate: float,
     version_label: str,
     utc_timestamp_str: str,
     mf_flow_name: str,
@@ -212,6 +226,13 @@ def get_dataset_readme_content(
         - dataset_dict (DatasetDict):
             the dataset version to be pushed
             to the HF hub.
+        - augmentation_rate (float):
+            - proportion of the original dataset
+              that has been augmented.
+        - enrichment_rate (float):
+            - proportion of the original dataset
+              that has been added from
+              the enrichment dataset.
         - version_label (str):
             typical `retrain-pipelines`
             version label are of format "major.minor"
@@ -230,6 +251,8 @@ def get_dataset_readme_content(
         hf_dataset_dict=hf_dataset_dict,
         hf_enrich_dataset_dict=hf_enrich_dataset_dict,
         dataset_dict=dataset_dict,
+        augmentation_rate=augmentation_rate,
+        enrichment_rate=enrichment_rate,
         version_label=version_label,
         utc_timestamp_str=utc_timestamp_str,
         mf_flow_name=mf_flow_name,

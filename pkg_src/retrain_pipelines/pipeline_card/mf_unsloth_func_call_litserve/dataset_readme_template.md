@@ -91,10 +91,12 @@ The former serves for added intrinsic knowledge. Typical entries look like&nbsp;
 {{ main_format_description }}
 ```
 The latter is a classic question/answer text dataset. Only tool calls are in the answers. May be an empty list.<br />
+Data-augmentation rate&nbsp;: +{{ (augmentation_rate * 100)|round(1) ~ '%' }}<br />
+Data-enrichment rate&nbsp;: +{{ (enrichment_rate * 100)|round(1) ~ '%' }}<br />
 
 <hr />
-Powered by <code>retrain-pipelines v{{ __version__ }}</code> - 
-<a target="_blank" href="https://pypi.org/project/retrain-pipelines/"><code>retrain-pipelines {{ __version__ }}</code></a>
+Powered by
+<a target="_blank" href="https://pypi.org/project/retrain-pipelines/">retrain-pipelines {{ __version__ }}</a> - 
 <code>Run by <a target="_blank" href="https://huggingface.co/{{ run_user }}">{{ run_user }}</a></code> -
 <em><b>{{ mf_flow_name }}</b></em> - mf_run_id&nbsp;: <code>{{ mf_run_id }}</code>
 
