@@ -421,9 +421,6 @@
                 });
             });
         </script>
-        <h2 style="color: white">!! <code>retrain-pipelines</code> pipeline card -</h2>
-        <h2 style="color: white">&nbsp; &nbsp; template under construction &nbsp; &nbsp;!!</h2>
-        <h2 style="color: white"><em>more to come soon</em></h2>
         <h1 style="padding-left: 30px;" class="shiny-gold-text">{{title}}</h1>
         <h2 style="background-color: #FFFFCC40; padding-left: 3px;
                    text-align: left; color:black;">
@@ -509,9 +506,11 @@
                  data-parent="#accordion">
                     <div class="card-body">
                         <font color="#C0C0C0">
-                            {{main_dataset_version_rich_str}}
-                            [<a href="{{main_dataset_hf_url}}"
-                                target="_blank">HuggingFace &#x1F917;</a>] -
+                            <span style='font-size: large;'><b>{{ main_dataset_repo_id }}</b></span> -
+                            commit {{ main_dataset_commit_hash[:7] }}
+                            ({{ main_dataset_commit_utc_date_str }})
+                            [<a href="https://huggingface.co/datasets/{{ main_dataset_repo_id }}/tree/{{ main_dataset_commit_hash }}"
+                            target="_blank">HuggingFace &#x1F917;</a>] -
                             {{records_count}} records&nbsp;:
                         </font><br />
 {{data_schema_table}}
@@ -557,6 +556,9 @@
                     <div class="card-body">
                         <div id="innerAccordion">
                             <div class="card">
+                                <h2 style="color: white">!! <code>retrain-pipelines</code> pipeline card -</h2>
+                                <h2 style="color: white">&nbsp; &nbsp; template under construction &nbsp; &nbsp;!!</h2>
+                                <h2 style="color: white"><em>more to come soon</em></h2>
                                 <div class="card-sub-header" id="innerHeadingOne">
                                     <button class="btn btn-link" data-toggle="collapse"
                                             data-target="#innerCollapseOne" aria-expanded="true"

@@ -60,10 +60,6 @@ def get_html(
     ##########################
     #          EDA           #
     ##########################
-    main_dataset_version_rich_str = \
-        params['main_dataset_version_rich_str']
-    main_dataset_hf_url = params['main_dataset_hf_url']
-    records_count = "{:,}".format(params['records_count'])
     data_schema_table = params['data_schema'].to_html(escape=False,
                                                       index = False)
 
@@ -263,10 +259,12 @@ def get_html(
                 ###################################
 
                 # EDA =>                          #
-                main_dataset_version_rich_str=\
-                    main_dataset_version_rich_str,
-                main_dataset_hf_url=main_dataset_hf_url,
-                records_count=records_count,
+                main_dataset_repo_id=params['main_dataset_repo_id'],
+                main_dataset_commit_hash=\
+                    params['main_dataset_commit_hash'],
+                main_dataset_commit_utc_date_str=\
+                    params['main_dataset_commit_utc_date_str'],
+                records_count="{:,}".format(params['records_count']),
                 data_schema_table=indent(data_schema_table, ' '*36),
                 answers_tools_count_curve=answers_tools_count_curve,
                 words_count_curve=words_count_curve,
