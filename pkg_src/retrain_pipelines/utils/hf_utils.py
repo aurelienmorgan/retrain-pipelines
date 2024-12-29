@@ -46,11 +46,7 @@ def get_arxiv_codes(
         repo_info = api_info_method(
             repo_id=repo_id, revision=commit_hash
         )
-        arxiv_tags = [tag for tag in repo_info.tags
-                      if tag.startswith('arxiv:')]
-        for arxiv_tag in arxiv_tags:
-            arxiv_code = arxiv_tag.split(':')[1]
-            arxiv_codes.append(arxiv_code)
+        arxiv_codes = repo_info.card_data["arxiv"]
     except (ReadTimeout, HfHubHTTPError) as err:
         stack_trace = \
             ''.join(traceback.format_exception(
@@ -58,7 +54,7 @@ def get_arxiv_codes(
         print(stack_trace, file=sys.stderr)
         return []
     except Exception as err:
-        print(err, file=sys.stderr)
+        print((get_arxiv_codes, err), file=sys.stderr)
         return []
 
     return arxiv_codes
@@ -95,16 +91,7 @@ def get_license_label(
         repo_info = api_info_method(
             repo_id=repo_id, revision=commit_hash
         )
-        license_tag = next((tag
-                          for tag in repo_info.tags
-                          if tag.startswith('license:')),
-                         None)
-        
-        if license_tag:
-            license_label = license_tag.split(':')[1]
-            return license_label
-        else:
-            return None
+        return repo_info.card_data["license"]
     except (ReadTimeout, HfHubHTTPError) as err:
         stack_trace = \
             ''.join(traceback.format_exception(
@@ -112,7 +99,7 @@ def get_license_label(
         print(stack_trace, file=sys.stderr)
         return None
     except Exception as err:
-        print(err, file=sys.stderr)
+        print((get_license_label, err), file=sys.stderr)
         return None
 
 
