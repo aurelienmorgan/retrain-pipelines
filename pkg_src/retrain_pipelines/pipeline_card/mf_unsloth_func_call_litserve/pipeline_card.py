@@ -262,8 +262,8 @@ def get_html(
                 main_dataset_repo_id=params['main_dataset_repo_id'],
                 main_dataset_commit_hash=\
                     params['main_dataset_commit_hash'],
-                main_dataset_commit_utc_date_str=\
-                    params['main_dataset_commit_utc_date_str'],
+                main_dataset_commit_datetime=\
+                    params['main_dataset_commit_datetime'],
                 records_count="{:,}".format(params['records_count']),
                 data_schema_table=indent(data_schema_table, ' '*36),
                 answers_tools_count_curve=answers_tools_count_curve,
@@ -274,14 +274,14 @@ def get_html(
                 # model training =>               #
                 dataset_repo_id=params['dataset_repo_id'],
                 dataset_version_label=params['dataset_version_label'],
-                dataset_utc_timestamp_str=\
-                    params['dataset_utc_timestamp_str'],
+                dataset_commit_datetime=\
+                    params['dataset_commit_datetime'],
                 dataset_commit_hash=params['dataset_commit_hash'],
 
-                model_repo_id="",
-                model_commit_hash="       ",
-                model_version_label="",
-                model_utc_timestamp_str="",
+                model_repo_id=params['model_repo_id'],
+                model_commit_hash=params['model_commit_hash'],
+                model_version_label=params['model_version_label'],
+                model_commit_datetime=params['model_commit_datetime'],
 
                 cpt_log_history_curve=cpt_log_history_curve,
                 # target_class_curves=target_class_curves,

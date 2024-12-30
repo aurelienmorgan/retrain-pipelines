@@ -3,6 +3,7 @@ import os
 import json
 
 from ast import literal_eval
+from datetime import datetime
 
 from jinja2 import Environment, FileSystemLoader
 
@@ -20,7 +21,7 @@ def _model_readme_params(
     base_model_dict: dict,
     training_dataset_dict: dict,
     version_label: str,
-    utc_timestamp_str: str,
+    commit_datetime: datetime,
     mf_flow_name: str,
     mf_run_id: str,
 ) -> dict:
@@ -34,14 +35,14 @@ def _model_readme_params(
         - base_model_dict (dict)
         - training_dataset_dict (dict):
             - repo_id
+            - version_label
             - commit_hash
-            - commit_utc_date_str
-            - 
+            - commit_datetime
         - version_label (str):
             typical `retrain-pipelines`
             version label are of format "major.minor"
-        - utc_timestamp_str (str):
-            timestampt for the new dataset version.
+        - commit_datetime (datetime):
+            timestamp for the new model version.
         - mf_flow_name (str)
         - mf_run_id (str)
 
@@ -51,7 +52,7 @@ def _model_readme_params(
 
     pretty_name = "retrain-pipelines Function Caller"
 
-    base_model_commit_hash, base_model_commit_utc_date_str = \
+    base_model_commit_hash, base_model_commit_datetime = \
         get_latest_README_commit(
             repo_id=base_model_dict["repo_id"],
             target_commit_hash=base_model_dict["commit_hash"],
@@ -77,7 +78,7 @@ def _model_readme_params(
 
     return {
             "new_version_label": version_label,
-            "utc_timestamp": utc_timestamp_str,
+            "commit_datetime": commit_datetime,
 
             "pretty_name": pretty_name,
 
@@ -87,13 +88,13 @@ def _model_readme_params(
                 training_dataset_dict["version_label"],
             "dataset_commit_hash": \
                 training_dataset_dict["commit_hash"],
-            "dataset_utc_timestamp_str": \
-                training_dataset_dict["utc_timestamp_str"],
+            "dataset_commit_datetime": \
+                training_dataset_dict["commit_datetime"],
 
             "base_model_repo_id": base_model_dict["repo_id"],
             "base_model_pretty_name": base_model_pretty_name,
             "base_model_commit_hash": base_model_commit_hash,
-            "base_model_commit_utc_date_str": base_model_commit_utc_date_str,
+            "base_model_commit_datetime": base_model_commit_datetime,
             "base_model_arxiv_codes": base_model_arxiv_codes,
             "base_model_license_label": base_model_license_label,
 
@@ -111,7 +112,7 @@ def get_model_readme_content(
     training_dataset_dict: dict,
 
     version_label: str,
-    utc_timestamp_str: str,
+    commit_datetime: datetime,
 
     mf_flow_name: str,
     mf_run_id: str,
@@ -134,12 +135,12 @@ def get_model_readme_content(
         - training_dataset_dict (dict)
             - repo_id
             - commit_hash
-            - commit_utc_date_str
+            - commit_datetime
         - version_label (str):
             typical `retrain-pipelines`
             version label are of format "major.minor"
-        - utc_timestamp_str (str):
-            timestampt for the new dataset version.
+        - commit_datetime (datetime):
+            timestamp for the new dataset version.
         - mf_flow_name (str)
         - mf_run_id (str)
 
@@ -151,7 +152,7 @@ def get_model_readme_content(
         base_model_dict=base_model_dict,
         training_dataset_dict=training_dataset_dict,
         version_label=version_label,
-        utc_timestamp_str=utc_timestamp_str,
+        commit_datetime=commit_datetime,
         mf_flow_name=mf_flow_name,
         mf_run_id=mf_run_id
     )

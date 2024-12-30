@@ -43,7 +43,7 @@ def get_latest_commit(
 
     Results:
         - (dict):
-            'commit_hash', 'commit_date',
+            'commit_hash', 'commit_datetime',
             'branch_name', 'files'
     """
 
@@ -65,15 +65,15 @@ def get_latest_commit(
                       if regex_pattern.search(f)
                 ]
                 if matching_files:
-                    commit_date = commit_data["created_at"]
+                    commit_datetime = commit_data["created_at"]
                     if (
                         not latest_matching_commit
-                        or commit_date >
-                            latest_matching_commit["commit_date"]
+                        or commit_datetime >
+                            latest_matching_commit["commit_datetime"]
                     ):
                         latest_matching_commit = {
                             "commit_hash": commit_hash,
-                            "commit_date": commit_date,
+                            "commit_datetime": commit_datetime,
                             "branch_name": \
                                 branch_data["branch_name"],
                             "files": matching_files,
@@ -100,11 +100,12 @@ def get_commit(
             Particular "revision" of the dataset
             to scan.
         - files_filter (str):
-            Only consider files matching this regex pattern.
+            Only consider files matching
+            this regex pattern.
 
     Results:
         - (dict):
-            'commit_hash', 'commit_date',
+            'commit_hash', 'commit_datetime',
             'branch_name', 'files'
     """
 
@@ -137,7 +138,7 @@ def get_commit(
                         if len(matching_files) > 0:
                             matching_commit = {
                                 "commit_hash": commit_hash,
-                                "commit_date": \
+                                "commit_datetime": \
                                     branch_commit_data["created_at"],
                                 "branch_name": \
                                     branch_data["branch_name"],
@@ -200,9 +201,8 @@ def get_lazy_df(
             - commit_hash (str):
                 gets handy when no input value
                 is given as input.
-            - commit_date (str):
-                24hrs, UTC format.
-            - lazydf (pl.lazyframe.frame.LazyFrame):
+            - commit_datetime (datetime)
+            - lazydf (pl.lazyframe.frame.LazyFrame)
     """
 
     parquet_commit = get_commit(
@@ -234,7 +234,8 @@ def get_lazy_df(
     return {
             "repo_id": repo_id,
             "commit_hash": parquet_commit['commit_hash'],
-            "commit_utc_date_str": parquet_commit['commit_date'],
+            "commit_datetime": \
+                parquet_commit['commit_datetime'],
             "lazy_df": lazy_df
         }
 

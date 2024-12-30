@@ -10,7 +10,7 @@
 
 version: '{{ new_version_label }}'
 
-timestamp: {{ utc_timestamp }}
+timestamp: '{{ commit_datetime.strftime("%Y-%m-%d %H:%M:%S UTC") }}'
 
 pretty_name: {{ pretty_name }}
 
@@ -18,7 +18,7 @@ source_datasets:
 - {{ main_repo_id }}
 - {{ enrich_repo_id }}
 
-license: {{license_label}}
+license: {{ license_label }}
 
 language:
 - en
@@ -41,14 +41,15 @@ size_categories:
 
 # {{ pretty_name }}
 
-`version {{ new_version_label }}`  -  `{{ utc_timestamp }}`
+`version {{ new_version_label }}`  -  `{{ commit_datetime.strftime("%Y-%m-%d %H:%M:%S UTC") }}`
 
 Source datasets :
   - main&nbsp;:
     - <b>{{ main_pretty_name }}</b><br />
     `{{ main_repo_id }}`
     (<a href="https://huggingface.co/datasets/{{ main_repo_id }}/blob/{{ main_commit_hash }}/README.md"
-        target="_blank">{{ main_commit_hash[:7] }}</a> - {{ main_commit_utc_date_str }})
+        target="_blank">{{ main_commit_hash[:7] }}</a> -
+        {{ main_commit_datetime.strftime("%Y-%m-%d %H:%M:%S UTC") }})
     <br />
     license&nbsp;:
     {% if main_license_label -%}
@@ -68,7 +69,8 @@ Source datasets :
     - <b>{{ enrich_pretty_name }}</b><br />
     `{{ enrich_repo_id }}`
     (<a href="https://huggingface.co/datasets/{{ enrich_repo_id }}/blob/{{ enrich_commit_hash }}/README.md"
-        target="_blank">{{ enrich_commit_hash[:7] }}</a> - {{ enrich_commit_utc_date_str }})
+        target="_blank">{{ enrich_commit_hash[:7] }}</a> -
+        {{ enrich_commit_datetime.strftime("%Y-%m-%d %H:%M:%S UTC") }})
     <br />
     license&nbsp;:
     {% if enrich_license_label -%}

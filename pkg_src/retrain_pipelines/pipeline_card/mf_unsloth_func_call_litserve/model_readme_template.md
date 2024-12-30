@@ -4,7 +4,7 @@
 
 version: '{{ new_version_label }}'
 
-timestamp: {{ utc_timestamp }}
+timestamp: '{{ commit_datetime.strftime("%Y-%m-%d %H:%M:%S UTC") }}'
 
 model_name: {{ pretty_name }}
 
@@ -56,17 +56,21 @@ model-index:
 
 ---
 
-&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; !!! TEMPLATE UNDER CONSTRUCTION !!!
-
 # {{ pretty_name }}
 
-`version {{ new_version_label }}`  -  `{{ utc_timestamp }}`
+`version {{ new_version_label }}`  -  `{{ commit_datetime.strftime("%Y-%m-%d %H:%M:%S UTC") }}`
+(retraining
+<a target="_blank"
+   href="https://huggingface.co/retrain-pipelines/function_caller/tree/retrain-pipelines_source-code/{{ new_version_label }}">source-code</a> |
+<a target="_blank"
+   href="https://huggingface.co/retrain-pipelines/function_caller/tree/retrain-pipelines_pipeline-card/{{ new_version_label }}">pipeline-card</a>)
 
-Training dataset&nbsp:
+Training dataset&nbsp;:
 &nbsp; &nbsp; <code>{{ dataset_repo_id }}
 v{{ dataset_version_label }}</code>
 (<a href="https://huggingface.co/datasets/{{ dataset_repo_id }}/blob/{{ dataset_commit_hash }}/README.md"
-    target="_blank">{{ dataset_commit_hash[:7] }}</a> - {{ dataset_utc_timestamp_str }})
+    target="_blank">{{ dataset_commit_hash[:7] }}</a> -
+    {{ dataset_commit_datetime.strftime("%Y-%m-%d %H:%M:%S UTC") }})
 
 Base model&nbsp;:
 {% if base_model_arxiv_codes -%}
@@ -77,14 +81,14 @@ arxiv&nbsp;:<br />
 {% endfor -%}
 {% endif -%}
 
-Source code&nbsp;:
-https://huggingface.co/retrain-pipelines/function_caller/tree/retrain-pipelines_source-code/{{ new_version_label }}
 
-Pipeline-card&nbsp;:
-https://huggingface.co/retrain-pipelines/function_caller/tree/retrain-pipelines_pipeline-card/{{ new_version_label }}
-
-
-
+<br />
+<br />
+<br />
+&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; !! Section on Eval goes here !!
+<br />
+<br />
+<br />
 
 <hr />
 Powered by

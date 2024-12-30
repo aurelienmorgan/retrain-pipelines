@@ -1,4 +1,5 @@
 <!doctype html>
+<!doctype html>
 <html id="pageTop">
     <head>
         <meta charset="UTF-8">
@@ -510,8 +511,8 @@
                             commit {{ main_dataset_commit_hash[:7] }}
                             <span class="info-container">
                                 <span class="info-icon" style="background-color: #C0C0C0;">i</span>
-                                <span class="info-content" style="width: 190px; white-space: nowrap;">
-                                    {{ main_dataset_commit_utc_date_str }}
+                                <span class="info-content" style="width: 175px; white-space: nowrap;">
+                                    {{ main_dataset_commit_datetime.strftime("%Y-%m-%d %H:%M:%S UTC") }}
                                 </span>
                             </span>
                             [<a href="https://huggingface.co/datasets/{{ main_dataset_repo_id }}/tree/{{ main_dataset_commit_hash }}"
@@ -582,7 +583,7 @@
                                         v{{ dataset_version_label }}</b>
                                         <span class="info-container">
                                             <span class="info-icon" style="background-color: #C0C0C0;">i</span>
-                                            <span class="info-content" style="width: 190px; white-space: nowrap;">{{ dataset_utc_timestamp_str }}</span>
+                                            <span class="info-content" style="width: 175px; white-space: nowrap;">{{ dataset_commit_datetime.strftime("%Y-%m-%d %H:%M:%S UTC") }}</span>
                                         </span>
                                         [<a href="https://hf.co/datasets/{{ dataset_repo_id }}/blob/{{ dataset_commit_hash }}/README.md"
                                         target="_blank">HuggingFace &#x1F917;</a>]
@@ -592,7 +593,7 @@
                                         v{{ model_version_label }}</b>
                                         (<a href="https://hf.co/{{ model_repo_id }}/blob/{{ model_commit_hash }}/README.md"
                                             target="_blank">{{ model_commit_hash[:7] }}</a>
-                                         - {{ model_utc_timestamp_str }})
+                                         - {{ model_commit_datetime.strftime("%Y-%m-%d %H:%M:%S UTC") }})
                                         </font><br />
                                         <table style="border: none;
                                                       background: transparent;

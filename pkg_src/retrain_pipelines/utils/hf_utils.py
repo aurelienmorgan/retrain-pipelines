@@ -45,8 +45,7 @@ def _repo_branch_commits_files(
             token=os.environ["HF_TOKEN"])
 
         commits_dict[commit.commit_id] = {
-            "created_at": commit.created_at.strftime(
-                "%Y-%m-%d %H:%M:%S UTC"),
+            "created_at": commit.created_at,
             "title": commit.title,
             "files": files
         }
@@ -158,8 +157,7 @@ def get_latest_README_commit(
         for branch, branch_data in repo_data.items():
             for commit_hash, commit_data in branch_data['commits'].items():
                 if commit_hash == target_commit_hash:
-                    target_date = datetime.strptime(
-                        commit_data['created_at'], '%Y-%m-%d %H:%M:%S UTC')
+                    target_date = commit_data['created_at']
                     break
             if target_date:
                 break
@@ -174,11 +172,9 @@ def get_latest_README_commit(
         for branch, branch_data in repo_data.items():
             for commit_hash, commit_data in branch_data['commits'].items():
                 if 'README.md' in commit_data['files']:
-                    commit_date = datetime.strptime(
-                        commit_data['created_at'], '%Y-%m-%d %H:%M:%S UTC')
+                    commit_date = commit_data['created_at']
                     if commit_date <= target_date:
-                        README_date = datetime.strptime(
-                            commit_data['created_at'], '%Y-%m-%d %H:%M:%S UTC')
+                        README_date = commit_data['created_at']
                         README_commit_hash = commit_hash
                         if verbose:
                             print("lastest README commit : ".ljust(25),

@@ -3,6 +3,7 @@ import os
 import json
 
 from ast import literal_eval
+from datetime import datetime
 
 from jinja2 import Environment, FileSystemLoader
 
@@ -24,7 +25,7 @@ def _dataset_readme_params(
     augmentation_rate: float,
     enrichment_rate: float,
     version_label: str,
-    utc_timestamp_str: str,
+    commit_datetime: datetime,
     mf_flow_name: str,
     mf_run_id: str,
     engine:str = "cpu"
@@ -39,12 +40,12 @@ def _dataset_readme_params(
         - hf_dataset_dict (dict):
             - repo_id
             - commit_hash
-            - commit_utc_date_str
+            - commit_datetime
             - lazy_df
         - hf_enrich_dataset_dict (dict)
             - repo_id
             - commit_hash
-            - commit_utc_date_str
+            - commit_datetime
         - dataset_dict (DatasetDict):
             the dataset version to be pushed
             to the HF hub.
@@ -58,8 +59,8 @@ def _dataset_readme_params(
         - version_label (str):
             typical `retrain-pipelines`
             version label are of format "major.minor"
-        - utc_timestamp_str (str):
-            timestampt for the new dataset version.
+        - commit_datetime (datetime):
+            timestamp for the new dataset version.
         - mf_flow_name (str)
         - mf_run_id (str)
         - engine (str):
@@ -76,13 +77,13 @@ def _dataset_readme_params(
         dataset_dict["supervised_finetuning"]["validation"].num_rows
     size_category = get_size_category(records_count)
 
-    main_commit_hash, main_commit_utc_date_str = \
+    main_commit_hash, main_commit_datetime = \
         get_latest_README_commit(
             repo_id=hf_dataset_dict["repo_id"],
             target_commit_hash=hf_dataset_dict["commit_hash"],
             repo_type="dataset"
         )
-    enrich_commit_hash, enrich_commit_utc_date_str = \
+    enrich_commit_hash, enrich_commit_datetime = \
         get_latest_README_commit(
             repo_id=hf_enrich_dataset_dict["repo_id"],
             target_commit_hash=\
@@ -150,7 +151,7 @@ def _dataset_readme_params(
     return {
             "configs": dataset_dict_to_config_str(dataset_dict),
             "new_version_label": version_label,
-            "utc_timestamp": utc_timestamp_str,
+            "commit_datetime": commit_datetime,
 
             "pretty_name": pretty_name,
 
@@ -162,10 +163,10 @@ def _dataset_readme_params(
             "main_commit_hash": main_commit_hash,
             "enrich_commit_hash": enrich_commit_hash,
 
-            "main_commit_utc_date_str": \
-                main_commit_utc_date_str,
-            "enrich_commit_utc_date_str": \
-                enrich_commit_utc_date_str,
+            "main_commit_datetime": \
+                main_commit_datetime,
+            "enrich_commit_datetime": \
+                enrich_commit_datetime,
 
             "main_pretty_name": main_pretty_name,
             "enrich_pretty_name": enrich_pretty_name,
@@ -198,7 +199,7 @@ def get_dataset_readme_content(
     augmentation_rate: float,
     enrichment_rate: float,
     version_label: str,
-    utc_timestamp_str: str,
+    commit_datetime: datetime,
     mf_flow_name: str,
     mf_run_id: str,
     engine:str = "cpu"
@@ -218,12 +219,12 @@ def get_dataset_readme_content(
         - hf_dataset_dict (dict):
             - repo_id
             - commit_hash
-            - commit_utc_date_str
+            - commit_datetime
             - lazy_df
         - hf_enrich_dataset_dict (dict)
             - repo_id
             - commit_hash
-            - commit_utc_date_str
+            - commit_datetime
         - dataset_dict (DatasetDict):
             the dataset version to be pushed
             to the HF hub.
@@ -237,8 +238,8 @@ def get_dataset_readme_content(
         - version_label (str):
             typical `retrain-pipelines`
             version label are of format "major.minor"
-        - utc_timestamp_str (str):
-            timestampt for the new dataset version.
+        - commit_datetime (datetime):
+            timestamp for the new dataset version.
         - mf_flow_name (str)
         - mf_run_id (str)
         - engine (str):
@@ -255,7 +256,7 @@ def get_dataset_readme_content(
         augmentation_rate=augmentation_rate,
         enrichment_rate=enrichment_rate,
         version_label=version_label,
-        utc_timestamp_str=utc_timestamp_str,
+        commit_datetime=commit_datetime,
         mf_flow_name=mf_flow_name,
         mf_run_id=mf_run_id,
         engine=engine
