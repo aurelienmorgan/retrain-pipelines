@@ -79,12 +79,6 @@ def get_html(
     ##########################
     #     model training     #
     ##########################
-    if not params['buckets_dict']:
-        buckets_table = NONE_HTML_STR
-    else:
-        buckets_table = pd.DataFrame(
-            [params['buckets_dict']]).to_html(classes='wide',
-                                              escape=False, index = False)
     if params['hyperparameters_dict']:
         hyperparameters_table = \
             pd.DataFrame([params['hyperparameters_dict']]
@@ -277,6 +271,8 @@ def get_html(
                 dataset_commit_datetime=\
                     params['dataset_commit_datetime'],
                 dataset_commit_hash=params['dataset_commit_hash'],
+                dataset_augmentation_rate=params['dataset_augmentation_rate'],
+                dataset_enrichment_rate=params['dataset_enrichment_rate'],
 
                 model_repo_id=params['model_repo_id'],
                 model_commit_hash=params['model_commit_hash'],

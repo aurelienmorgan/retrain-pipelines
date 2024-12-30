@@ -61,16 +61,19 @@ def _model_readme_params(
 
     base_model_pretty_name = get_pretty_name(
         repo_id=base_model_dict["repo_id"],
+        repo_type="model",
         commit_hash=base_model_commit_hash
     )
 
     base_model_arxiv_codes = get_arxiv_codes(
         repo_id=base_model_dict["repo_id"],
+        repo_type="model",
         commit_hash=base_model_commit_hash
     )
 
     base_model_license_label = get_license_label(
         repo_id=base_model_dict["repo_id"],
+        repo_type="model",
         commit_hash=base_model_commit_hash
     )
     if not base_model_license_label:

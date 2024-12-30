@@ -10,7 +10,7 @@
 
 version: '{{ new_version_label }}'
 
-timestamp: '{{ commit_datetime.strftime("%Y-%m-%d %H:%M:%S UTC") }}'
+timestamp: {{ commit_datetime.strftime('%Y%m%d_%H%M%S') ~ '%03d'|format(commit_datetime.microsecond // 1000) ~ '_UTC' }}
 
 pretty_name: {{ pretty_name }}
 
@@ -29,10 +29,13 @@ task_categories:
 - reinforcement-learning
 
 tags:
+- retrain-pipelines
 - function-calling
 - LLM Agent
 - code
 - synthetic
+
+thumbnail: https://cdn-avatars.huggingface.co/v1/production/uploads/651e93137b2a2e027f9e55df/96hzBved0YMjCq--s0kad.png
 
 size_categories:
 - {{ size_category }}

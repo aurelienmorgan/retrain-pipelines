@@ -578,23 +578,73 @@
                                      aria-labelledby="innerHeadingOne"
                                      data-parent="#innerAccordion">
                                     <div class="card-body">
-                                        <font color="#C0C0C0">
-                                        training dataset&nbsp: <b>{{ dataset_repo_id }}
-                                        v{{ dataset_version_label }}</b>
-                                        <span class="info-container">
-                                            <span class="info-icon" style="background-color: #C0C0C0;">i</span>
-                                            <span class="info-content" style="width: 175px; white-space: nowrap;">{{ dataset_commit_datetime.strftime("%Y-%m-%d %H:%M:%S UTC") }}</span>
-                                        </span>
-                                        [<a href="https://hf.co/datasets/{{ dataset_repo_id }}/blob/{{ dataset_commit_hash }}/README.md"
-                                        target="_blank">HuggingFace &#x1F917;</a>]
-                                        </font><br />
-                                        <font color="#C0C0C0">
-                                        model version&nbsp: <b>{{ model_repo_id }}
-                                        v{{ model_version_label }}</b>
-                                        (<a href="https://hf.co/{{ model_repo_id }}/blob/{{ model_commit_hash }}/README.md"
-                                            target="_blank">{{ model_commit_hash[:7] }}</a>
-                                         - {{ model_commit_datetime.strftime("%Y-%m-%d %H:%M:%S UTC") }})
-                                        </font><br />
+                                        <table style="border: none;
+                                                      background: transparent;
+                                                      margin: 0 auto 0 0;">
+                                            <tr style="all: initial !important;
+                                                       display: table-row !important;
+                                                       color: #C0C0C0 !important;">
+                                                <td style="border: none; text-align: left;
+                                                           padding-bottom: 0;">
+                                                    training dataset&nbsp;:
+                                                </td>
+                                                <td style="border: none; text-align: left;
+                                                           padding-bottom: 0;">
+                                                    <b>{{ dataset_repo_id }} &nbsp;
+                                                      v{{ dataset_version_label }}</b>
+                                                    <span class="info-container">
+                                                        <span style="background-color: #C0C0C0;"
+                                                              class="info-icon">i</span>
+                                                        <span style="width: 175px; white-space: nowrap;"
+                                                              class="info-content">{{ dataset_commit_datetime.strftime("%Y-%m-%d %H:%M:%S UTC") }}</span>
+                                                    </span>
+                                                </td>
+                                                <td style="border: none; text-align: left;
+                                                           padding-bottom: 0;">
+                                                    [<a href="https://hf.co/datasets/{{ dataset_repo_id }}/blob/{{ dataset_commit_hash }}/README.md"
+                                                        target="_blank">HuggingFace &#x1F917;</a>]
+                                                </td>
+                                            </tr>
+                                            <tr style="all: initial !important;
+                                                      display: table-row !important;
+                                                      color: #C0C0C0 !important;;">
+                                                <td colspan="3"
+                                                    style="border: none; font-style: italic; 
+                                                           text-align: left; font-size: smaller;
+                                                           padding-top: 0;">
+                                                    Data-augmentation rate&nbsp;:
+                                                    +{{ (dataset_augmentation_rate * 100)|round(1) ~ '%' }},
+                                                    Data-enrichment rate&nbsp;:
+                                                    +{{ (dataset_enrichment_rate * 100)|round(1) ~ '%' }}
+                                                </td>
+                                            </tr>
+                                            <tr style="all: initial !important;
+                                                       display: table-row !important;
+                                                       color: #C0C0C0 !important;">
+                                                <td style="border: none; text-align: left;
+                                                           padding-top: 0;">
+                                                    model version&nbsp;:
+                                                </td>
+                                                <td style="border: none; text-align: left;
+                                                           padding-top: 0;">
+                                                    <b>{{ model_repo_id }} &nbsp;
+                                                      v{{ model_version_label }}</b>
+                                                    <span class="info-container">
+                                                        <span style="background-color: #C0C0C0;"
+                                                              class="info-icon">i</span>
+                                                        <span style="width: 175px; white-space: nowrap;"
+                                                              class="info-content">{{ model_commit_datetime.strftime("%Y-%m-%d %H:%M:%S UTC") }}</span>
+                                                    </span>
+                                                </td>
+                                                <td style="border: none; text-align: left;
+                                                           padding-top: 0;">
+                                                    [<a href="https://hf.co/{{ model_repo_id }}/blob/{{ model_commit_hash }}/README.md"
+                                                    target="_blank">HuggingFace &#x1F917;</a>]
+                                                </td>
+                                            </tr>
+                                        </table>
+                                        <hr style="width: 50%; border: none;
+                                                   border-top: 1px solid lightgrey;">
                                         <table style="border: none;
                                                       background: transparent;
                                                       align: center;">
@@ -609,11 +659,6 @@
                                                 </td>
                                             </tr>
                                         </table>
-                                        <br />
-                                        <h3 style="color:#FFD700;">
-                                            Features bucketization&nbsp;:
-                                        </h3>
-{{buckets_table}}
                                         <br />
                                         <h3 style="color:#FFD700;">
                                             Hyperparameters set&nbsp;:

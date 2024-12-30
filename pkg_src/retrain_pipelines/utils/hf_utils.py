@@ -313,7 +313,9 @@ def get_pretty_name(
         repo_info = api_info_method(
             repo_id=repo_id, revision=commit_hash
         )
-        pretty_name = repo_info.card_data["pretty_name"]
+        pretty_name = repo_info.card_data[
+            "model_name" if "model" == repo_type
+            else "pretty_name"]
     except (ReadTimeout, HfHubHTTPError) as err:
         stack_trace = \
             ''.join(traceback.format_exception(
@@ -462,6 +464,19 @@ def _create_repo_if_not_exists(
                     repo_type="model",
                     token=os.environ["HF_TOKEN"]
                 )
+            except HfHubHTTPError as err:
+                if (
+                    f"Reference already exists: refs/heads/{branch_name}"
+                    != err.server_message.strip()
+                ):
+                    print(f"Failed to create branch {branch_name} for " +
+                          f"{repo_type} `{repo_id.split('/')[1]}` "+
+                          f"under the `{repo_id.split('/')[0]}` namespace " +
+                          "on the HuggingFace Hub.",
+                          file=sys.stderr)
+                    print(''.join(traceback.format_exception(
+                                type(err), err, err.__traceback__)))
+                    return False
             except Exception as err:
                 print(f"Failed to create branch {branch_name} for " +
                       f"{repo_type} `{repo_id.split('/')[1]}` "+
@@ -484,6 +499,15 @@ def local_repo_folder_to_hub(
 ) -> str:
     """
     Upload all files in a single commit.
+
+    Note : We do not go the "run_as_future" way
+           (for asynchronous upload) despite
+           it being Advisable when publishing
+           models to the HF hub (since usually
+           models with many params are slow to upload).
+           We do rely on commit_hash and need it
+           to continue the documentation process
+           for the `retrain-pipelines` run.
 
     Params:
         - repo_id (str):

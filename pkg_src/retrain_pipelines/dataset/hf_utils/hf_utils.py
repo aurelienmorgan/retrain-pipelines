@@ -3,7 +3,6 @@ import os
 import re
 import sys
 import json
-import yaml
 import random
 import shutil
 import tempfile
@@ -434,6 +433,8 @@ def dataset_dict_to_config_str(
 
 def push_dataset_version_to_hub(
     repo_id: str,
+    version_label: str,
+    timestamp_str: str,
     dataset_dict: DatasetDict,
     dataset_readme_content: str,
     hf_token: str = None,
@@ -446,7 +447,7 @@ def push_dataset_version_to_hub(
     Custom `retrain-pipelines` README.
 
     Uploaded dataset version superseeds entirely
-    any existing version (any previously file
+    any existing version (any previous file
     not anymore present is excluded from
     new remote dataset snapshot).
 
@@ -454,6 +455,12 @@ def push_dataset_version_to_hub(
         - repo_id (str):
             Path to the HuggingFace dataset version
             (is created if needed and if authorized).
+        - version_label (str):
+            value associated to the version
+            to be published on the HF hub.
+        - timestamp_str (str):
+            value associated to the version
+            to be published on the HF hub
         - dataset_dict (DatasetDict):
             The new version to be pushed.
         - dataset_readme_content (str):
@@ -492,13 +499,10 @@ def push_dataset_version_to_hub(
               "w") as f:
         f.write(dataset_readme_content)
 
-    data = yaml.safe_load(
-        dataset_readme_content.split('---')[1])
-    version, timestamp = data['version'], data['timestamp']
-    commit_message = f"v{version} - {timestamp} - " + \
-                     f"retrain-pipelines v{__version__} - "+ \
-                      "Upload multi-table dataset "+ \
-                      "with README."
+    commit_message = \
+        f"v{version_label} - {timestamp_str} - " + \
+        f"retrain-pipelines v{__version__} - "+ \
+        "Upload multi-table dataset with README."
     print(commit_message)
 
     dataset_version_commit_hash = \
