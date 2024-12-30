@@ -1142,7 +1142,7 @@ class LightGbmHpCvWandbFlow(FlowSpec):
         """
         placeholder for the serving SDK deploy call
         (on the target production platform).
-        Include any artifact you want, consider including the model card !
+        consider including the portable pipelione-card itself !
         """
 
         if self.model_version_blessed and (self.local_serve_is_ready == 1):
