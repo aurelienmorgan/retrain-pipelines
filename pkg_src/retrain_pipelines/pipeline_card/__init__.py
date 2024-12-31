@@ -40,6 +40,8 @@ elif "mf_unsloth_func_call_litserve" == retrain_pipeline_type:
 
     from .mf_unsloth_func_call_litserve.dataset_readme import \
                 get_dataset_readme_content
+    from .mf_unsloth_func_call_litserve.model_readme import \
+                get_model_readme_content
     from .mf_unsloth_func_call_litserve.pipeline_card import \
                 get_html
 

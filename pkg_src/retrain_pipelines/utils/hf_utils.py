@@ -1,17 +1,21 @@
 
 import os
-import sys
-
 import re
+import sys
+import shutil
+import tempfile
 import traceback
+import subprocess
 from datetime import datetime
-
 from requests.exceptions import ReadTimeout
 
 from huggingface_hub import list_repo_refs, \
     list_repo_commits, list_repo_files, HfApi
 from huggingface_hub.utils import \
     RepositoryNotFoundError, HfHubHTTPError
+
+from retrain_pipelines.utils import \
+    create_requirements
 
 
 def _repo_branch_commits_files(
@@ -557,4 +561,97 @@ def local_repo_folder_to_hub(
         return None
 
     return repository_new_commit_hash
+
+
+def push_files_to_hub_repo_branch(
+    repo_id: str,
+    branch_name: str,
+    file_fullnames: list,
+    include_requirements_txt: bool = False,
+
+    path_in_repo: str = "",
+    commit_message: str = "new commit",
+    repo_type: str = "model",
+    hf_token:str = os.getenv("HF_TOKEN", None)
+) -> str:
+    """
+    pushes files to single parent folder
+    on a HF Hub repo branch.
+
+    Note :
+        Fails silently, in that sense that
+        if any of the listed file
+        does not exist, it moves on.
+
+    Params:
+        - repo_id (str):
+            Path to the target HuggingFace
+            repository.
+        - branch_name (str):
+            Name of the target branch
+            on the HuggingFace repository.
+        - file_fullnames (List[str]):
+            list of local fullpaths to
+            files to be uploaded
+        - include_requirements_txt (bool):
+            whether to includ a snapshot of
+            the env installed librairies
+            in the folder upload.
+        - path_in_repo (str):
+            subdir of the targetted branch
+            to upload files into.
+            If it exists on the remote repo,
+            its content is overriden
+            (i.e. any file present there will be
+             excluded from the snapshot
+             after the herein commit).
+        - commit_message (str):
+            the message associated to the 'push_to_hub'
+            commit.
+        - repo_type (str):
+            can be "model", "dataset", "space".
+        - hf_token (Optional, str):
+            "create on namespace" permission required.
+
+    Results:
+        - (str):
+            commit_hash
+    """
+
+    tmp_src_dir = tempfile.mkdtemp()
+    print(tmp_src_dir)
+
+    for file_fullname in file_fullnames:
+        if (
+            os.path.isabs(file_fullname) and
+            os.path.exists(file_fullname)
+        ):
+            shutil.copy(
+                file_fullname,
+                os.path.join(
+                    tmp_src_dir,
+                    os.path.basename(file_fullname)
+                )
+            )
+
+    if include_requirements_txt:
+        create_requirements(tmp_src_dir)
+
+    api = HfApi()
+    folder_branch_commit = api.upload_folder(
+        repo_id=repo_id,
+        revision=branch_name,
+        path_in_repo=path_in_repo,
+        folder_path=tmp_src_dir,
+        delete_patterns=["**"],
+        commit_message=commit_message,
+        repo_type=repo_type,
+        token=hf_token
+    )
+    folder_branch_commit_hash = \
+        folder_branch_commit.oid
+
+    shutil.rmtree(tmp_src_dir, ignore_errors=True)
+
+    return folder_branch_commit_hash
 
