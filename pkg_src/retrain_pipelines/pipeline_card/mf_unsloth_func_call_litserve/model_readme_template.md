@@ -28,7 +28,7 @@ tags:
 - function-calling
 - LLM Agent
 - code
-- Unsloth
+- unsloth
 
 thumbnail: https://cdn-avatars.huggingface.co/v1/production/uploads/651e93137b2a2e027f9e55df/96hzBved0YMjCq--s0kad.png
 
@@ -104,7 +104,7 @@ arxiv&nbsp;:<br />
 <hr />
 Powered by
 <code><a target="_blank"
-         href="https://pypi.org/project/retrain-pipelines/">retrain-pipelines
+         href="https://github.com/aurelienmorgan/retrain-pipelines">retrain-pipelines
       {{ __version__ }}</a></code> - 
 <code>Run by <a target="_blank" href="https://huggingface.co/{{ run_user }}">{{ run_user }}</a></code> -
 <em><b>{{ mf_flow_name }}</b></em> - mf_run_id&nbsp;: <code>{{ mf_run_id }}</code>
