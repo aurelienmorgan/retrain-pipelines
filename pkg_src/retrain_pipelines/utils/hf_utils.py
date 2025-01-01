@@ -85,7 +85,7 @@ def get_repo_branches_commits_files(
     """
 
     refs = list_repo_refs(repo_id, repo_type=repo_type,
-                          token=os.environ["HF_TOKEN"])
+                          token=os.getenv("HF_TOKEN", None))
 
     repo_branches = {
         "repo_standard_branches": {},
@@ -352,6 +352,9 @@ def get_new_repo_minor_version(
     We here retrieve the latest value and
     return it minor-incremented.
 
+    Note : We look into last commit
+           of all branches.
+
     Params:
         - repo_id (str):
             Path to the HuggingFace repository.
@@ -366,43 +369,44 @@ def get_new_repo_minor_version(
         - (str):
             new version label
     """
-    api = HfApi()
 
-    repo_info = None
-    new_version = None
+    refs = list_repo_refs(
+        repo_id=repo_id,
+        repo_type=repo_type,
+        token=hf_token
+    )
+
+    api = HfApi()
     api_info_method = \
         api.model_info if "model" == repo_type \
         else api.dataset_info if "dataset" == repo_type \
         else api.space_info # if "space" == repo_type
 
-    try:
-        repo_info = api_info_method(
-            repo_id=repo_id, revision=None,
+    latest_version_major = 0
+    latest_version_minor = 0
+    for branch in refs.branches:
+        branch_model_info = api_info_method(
+            repo_id=repo_id,
+            revision=branch.target_commit,
             token=hf_token
         )
-    except RepositoryNotFoundError as err:
-        print(f"repo {repo_id} not found.\n" +
-              "If you are trying to access a " +
-              "private or gated repo, " +
-              "make sure you are authenticated " +
-              "and your credentials allow it.",
-              file=sys.stderr)
-        print(err, file=sys.stderr)
+        branch_card_data = branch_model_info.card_data
+        if branch_card_data and "version" in branch_card_data:
+            branch_version_label = \
+                branch_card_data["version"]
+            branch_major, branch_minor =  \
+                map(int, branch_version_label.split('.'))
+            if branch_major > latest_version_major:
+                latest_version_major, latest_version_minor = \
+                    branch_major, branch_minor
+            elif branch_minor > latest_version_minor:
+                latest_version_major, latest_version_minor = \
+                    branch_major, branch_minor
+    #         print(branch_card_data["version"])
 
-    if (
-        repo_info is not None and
-        "version" in repo_info.card_data
-    ):
-        last_version = \
-            str(repo_info.card_data.get("version", {}))
-        new_version = \
-            last_version.split('=')[-1].strip('"').rsplit('.', 1)[0] + \
-            '.' + \
-            str(int(last_version.rsplit('.', 1)[-1].strip('"')) + 1)
-    else:
-        new_version = "0.1"
-
-    return new_version
+    new_version_label = f"{branch_major}.{branch_minor+1}"
+    
+    return new_version_label
 
 
 def _create_repo_if_not_exists(
@@ -458,6 +462,7 @@ def _create_repo_if_not_exists(
 
     if "model" == repo_type:
         for branch_name in [
+            "retrain-pipelines_not-blessed",
             "retrain-pipelines_source-code",
             "retrain-pipelines_pipeline-card"
         ]:
@@ -498,6 +503,7 @@ def local_repo_folder_to_hub(
     repo_id: str,
     local_folder: str,
     commit_message: str = "new commit",
+    branch_name: str = "main",
     repo_type: str = "model",
     hf_token: str = None,
 ) -> str:
@@ -522,6 +528,9 @@ def local_repo_folder_to_hub(
         - commit_message (str):
             the message associated to the 'push_to_hub'
             commit.
+        - branch_name (str):
+            The repo-branch on which to publish.
+            Defaults to 'main'.
         - repo_type (str):
             can be "model", "dataset", "space".
         - hf_token (Optional, str):
@@ -543,6 +552,7 @@ def local_repo_folder_to_hub(
         repository_new_commit = api.upload_folder(
             repo_id=repo_id,
             repo_type=repo_type,
+            revision=branch_name,
             path_in_repo="",
             folder_path=local_folder,
             delete_patterns=["**"],
@@ -619,7 +629,7 @@ def push_files_to_hub_repo_branch(
     """
 
     tmp_src_dir = tempfile.mkdtemp()
-    print(tmp_src_dir)
+    # print(tmp_src_dir)
 
     for file_fullname in file_fullnames:
         if (
