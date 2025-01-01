@@ -437,9 +437,12 @@
         {% if current_blessed_run_id is not none %}
         <font color="#C0C0C0">Last blessed run&nbsp;:
             run_id {{current_blessed_run_id}} ({{current_blessed_run_finished}})
+            [<a id="blessed_run_link" style="color: orange;" target="_blank"
+               href="{{previsous_blessed_card_href}}">here</a>]
+            or
+            [<a href="https://huggingface.co/{{ model_repo_id }}/blob/{{ previous_blessed_model_commit_hash }}/README.md"
+                target="_blank">HuggingFace &#x1F917;</a>]
         </font>
-        <a id="blessed_run_link" style="color: orange;" target="_blank"
-           href="{{previsous_blessed_card_href}}">here</a>
         <script language="javascript">
             window.onload = function() {
                 var link = document.getElementById("blessed_run_link");
@@ -590,8 +593,10 @@
                                                 </td>
                                                 <td style="border: none; text-align: left;
                                                            padding-bottom: 0;">
-                                                    <b>{{ dataset_repo_id }} &nbsp;
-                                                      v{{ dataset_version_label }}</b>
+                                                    <b>{{ dataset_repo_id }}</b>
+                                                </td>
+                                                <td style="border: none; padding-bottom: 0;">
+                                                    <b>v{{ dataset_version_label }}</b>
                                                     <span class="info-container">
                                                         <span style="background-color: #C0C0C0;"
                                                               class="info-icon">i</span>
@@ -608,7 +613,7 @@
                                             <tr style="all: initial !important;
                                                       display: table-row !important;
                                                       color: #C0C0C0 !important;;">
-                                                <td colspan="3"
+                                                <td colspan="4"
                                                     style="border: none; font-style: italic; 
                                                            text-align: left; font-size: smaller;
                                                            padding-top: 0;">
@@ -625,10 +630,11 @@
                                                            padding-top: 0;">
                                                     model version&nbsp;:
                                                 </td>
+                                                <td style="border: none; padding-top: 0;">
+                                                    <b>{{ model_repo_id }}</b>
                                                 <td style="border: none; text-align: left;
-                                                           padding-top: 0;">
-                                                    <b>{{ model_repo_id }} &nbsp;
-                                                      v{{ model_version_label }}</b>
+                                                           padding-bottom: 0;">
+                                                    <b>v{{ model_version_label }}</b>
                                                     <span class="info-container">
                                                         <span style="background-color: #C0C0C0;"
                                                               class="info-icon">i</span>

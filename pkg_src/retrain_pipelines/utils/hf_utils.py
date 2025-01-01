@@ -370,41 +370,54 @@ def get_new_repo_minor_version(
             new version label
     """
 
-    refs = list_repo_refs(
-        repo_id=repo_id,
-        repo_type=repo_type,
-        token=hf_token
-    )
-
-    api = HfApi()
-    api_info_method = \
-        api.model_info if "model" == repo_type \
-        else api.dataset_info if "dataset" == repo_type \
-        else api.space_info # if "space" == repo_type
-
-    latest_version_major = 0
-    latest_version_minor = 0
-    for branch in refs.branches:
-        branch_model_info = api_info_method(
+    refs = None
+    new_version_label = "0.1"
+    try:
+        refs = list_repo_refs(
             repo_id=repo_id,
-            revision=branch.target_commit,
+            repo_type=repo_type,
             token=hf_token
         )
-        branch_card_data = branch_model_info.card_data
-        if branch_card_data and "version" in branch_card_data:
-            branch_version_label = \
-                branch_card_data["version"]
-            branch_major, branch_minor =  \
-                map(int, branch_version_label.split('.'))
-            if branch_major > latest_version_major:
-                latest_version_major, latest_version_minor = \
-                    branch_major, branch_minor
-            elif branch_minor > latest_version_minor:
-                latest_version_major, latest_version_minor = \
-                    branch_major, branch_minor
-    #         print(branch_card_data["version"])
+    except RepositoryNotFoundError as err:
+        print(f"repo {repo_id} not found.\n" +
+              "If you are trying to access a " +
+              "private or gated repo, " +
+              "make sure you are authenticated " +
+              "and your credentials allow it.",
+              file=sys.stderr)
+        print(err, file=sys.stderr)
 
-    new_version_label = f"{branch_major}.{branch_minor+1}"
+    if refs:
+        api = HfApi()
+        api_info_method = \
+            api.model_info if "model" == repo_type \
+            else api.dataset_info if "dataset" == repo_type \
+            else api.space_info # if "space" == repo_type
+
+        latest_version_major = 0
+        latest_version_minor = 0
+        for branch in refs.branches:
+            branch_model_info = api_info_method(
+                repo_id=repo_id,
+                revision=branch.target_commit,
+                token=hf_token
+            )
+            branch_card_data = branch_model_info.card_data
+            if branch_card_data and "version" in branch_card_data:
+                branch_version_label = \
+                    branch_card_data["version"]
+                branch_major, branch_minor =  \
+                    map(int, branch_version_label.split('.'))
+                if branch_major > latest_version_major:
+                    latest_version_major, latest_version_minor = \
+                        branch_major, branch_minor
+                elif branch_minor > latest_version_minor:
+                    latest_version_major, latest_version_minor = \
+                        branch_major, branch_minor
+        #         print(branch_card_data["version"])
+
+        new_version_label = \
+            f"{latest_version_major}.{latest_version_minor+1}"
     
     return new_version_label
 

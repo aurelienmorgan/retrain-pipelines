@@ -39,6 +39,7 @@ widget:
   output:
       text: "Hello my name is Julien"
 
+mf_run_id: '{{ mf_run_id }}'
 
 # @see https://huggingface.co/docs/huggingface_hub/guides/model-cards#include-evaluation-results
 model-index:
@@ -49,11 +50,7 @@ model-index:
     dataset:
       name: Beans
       type: beans
-    metrics:
-    - type: accuracy
-      value: 0.7
-    - type: f1
-      value: 0.65
+{{ perf_metrics }}
 
 ---
 

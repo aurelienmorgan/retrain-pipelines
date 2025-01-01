@@ -1,6 +1,7 @@
 
 import os
 import json
+import textwrap
 
 from ast import literal_eval
 from datetime import datetime
@@ -22,6 +23,7 @@ def _model_readme_params(
     training_dataset_dict: dict,
     version_label: str,
     commit_datetime: datetime,
+    perf_metrics: dict,
     mf_flow_name: str,
     mf_run_id: str,
 ) -> dict:
@@ -43,6 +45,9 @@ def _model_readme_params(
             version label are of format "major.minor"
         - commit_datetime (datetime):
             timestamp for the new model version.
+        - perf_metrics (dict):
+            metric_name/metric_value as
+            key/value pairs.
         - mf_flow_name (str)
         - mf_run_id (str)
 
@@ -79,6 +84,13 @@ def _model_readme_params(
     if not base_model_license_label:
         base_model_license_label = "unknown"
 
+    perf_metrics_yaml = textwrap.indent(
+        "  metrics:\n" + "\n".join(
+            [f"    - type: {key}\n      value: {value}"
+             for key, value in perf_metrics.items()])
+        , '  '
+    )
+
     return {
             "new_version_label": version_label,
             "commit_datetime": commit_datetime,
@@ -101,6 +113,8 @@ def _model_readme_params(
             "base_model_arxiv_codes": base_model_arxiv_codes,
             "base_model_license_label": base_model_license_label,
 
+            "perf_metrics": perf_metrics_yaml,
+
             "__version__": __version__,
             "run_user": whoami()["name"],
             "mf_flow_name": mf_flow_name,
@@ -116,6 +130,7 @@ def get_model_readme_content(
 
     version_label: str,
     commit_datetime: datetime,
+    perf_metrics: dict,
 
     mf_flow_name: str,
     mf_run_id: str,
@@ -144,6 +159,9 @@ def get_model_readme_content(
             version label are of format "major.minor"
         - commit_datetime (datetime):
             timestamp for the new dataset version.
+        - perf_metrics (dict):
+            metric_name/metric_value as
+            key/value pairs.
         - mf_flow_name (str)
         - mf_run_id (str)
 
@@ -156,6 +174,7 @@ def get_model_readme_content(
         training_dataset_dict=training_dataset_dict,
         version_label=version_label,
         commit_datetime=commit_datetime,
+        perf_metrics=perf_metrics,
         mf_flow_name=mf_flow_name,
         mf_run_id=mf_run_id
     )

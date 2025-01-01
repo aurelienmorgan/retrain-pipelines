@@ -232,9 +232,12 @@ def get_html(
                 previsous_blessed_card_href=(
                     None if model_version_blessed
                     else previsous_blessed_card_href),
-                previsous_blessed_card_url =(
+                previsous_blessed_card_url=(
                     None if model_version_blessed
                     else previsous_blessed_card_url),
+                previous_blessed_model_commit_hash=(
+                    None if model_version_blessed
+                    else params['current_blessed_model_commit_hash']),
                 ###################################
 
                 # infra validation status =>      #
