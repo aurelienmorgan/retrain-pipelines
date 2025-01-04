@@ -1,0 +1,4 @@
+
+flask
+huggingface-hub===0.26.2
+
