@@ -1,5 +1,6 @@
 
 import os
+import logging
 
 from huggingface_hub import list_repo_files, list_repo_commits, \
     hf_hub_download
@@ -19,6 +20,9 @@ def handle_exception(error):
     # status code, default to 500
     status_code = getattr(error, 'code', 500)
     error_msg = str(error) or 'An unknown error occurred.'
+    app.logger.error(
+        f"{request.remote_addr} - Exception occurred: {error_msg}",
+        exc_info=error)
 
     return render_template(ERROR_PAGE, error_msg=error_msg), \
            status_code
@@ -29,12 +33,16 @@ def preview_html():
     model_repo_id = request.args.get('model_repo_id')
     if not model_repo_id:
         error_msg="Please provide a \"model_repo_id\" parameter"
+        app.logger.error(f"{request.remote_addr} - {error_msg}",
+                         exc_info=False)
         return render_template(
                     ERROR_PAGE, error_msg=error_msg), \
                400
     subfolder = request.args.get('subfolder')
     if not subfolder:
         error_msg="Please provide a \"subfolder\" parameter"
+        app.logger.error(f"{request.remote_addr} - {error_msg}",
+                         exc_info=False)
         return render_template(
                     ERROR_PAGE, error_msg=error_msg), \
                400
@@ -59,6 +67,8 @@ def preview_html():
         return render_template_string(content)
     except Exception as e:
         error_msg = f"Error fetching pipeline-card: {str(e)}"
+        app.logger.error(f"{request.remote_addr} - {error_msg}",
+                         exc_info=False)
         return render_template(
                     ERROR_PAGE, error_msg=error_msg), \
                500
