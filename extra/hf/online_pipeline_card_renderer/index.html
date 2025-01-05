@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link href="https://fonts.googleapis.com/css2?family=Lobster&display=swap" rel="stylesheet">
+    <style>
+        body {
+          margin: 0;
+          height: 100vh;
+          position: relative;
+          background: rgb(11, 15, 25);
+          font-family: roboto, arial;
+          color: #C0C0C0;
+        }
+        .background-right {
+          position: fixed;
+          bottom: 0;
+          right: 0;
+          width: 853px;
+          height: 295px;
+          background: url('https://github.com/user-attachments/assets/bfe28b34-aa05-437c-b070-2339505d5745') no-repeat bottom right;
+          background-size: cover;
+          z-index: -2;
+        }
+        .background-left {
+          position: fixed;
+          bottom: 0;
+          left: 0;
+          width: 853px;
+          height: 295px;
+          background: url('https://github.com/user-attachments/assets/bfe28b34-aa05-437c-b070-2339505d5745') no-repeat bottom left;
+          background-size: cover;
+          transform: scaleX(-1);
+          z-index: -2;
+        }
+        .overlay {
+          position: fixed;
+          top: 0;
+          left: 0;
+          width: 100%;
+          height: 100%;
+          background: rgba(11, 15, 25, 0.8);
+          z-index: -1;
+        }
+
+        .shiny-silver-text {
+            font-weight: bold;
+            font-size: 14px;
+            background: linear-gradient(
+                90deg, #ffffff, #f0c6d0, 
+                #c0c0c0, #f0c6d0, #ffffff
+            );
+            background-size: 200%;
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+            text-shadow: 
+                1px 1px 3px rgba(0, 0, 0, 0.4),
+                0 0 8px rgba(255, 255, 255, 0.7);
+            animation: shiny 2s linear infinite;
+            padding: 0 4px;
+            white-space: nowrap;
+        }
+        @keyframes shiny {
+            0% {
+                background-position: 200%;
+            }
+            100% {
+                background-position: -200%;
+            }
+        }
+        .footer {
+            position: fixed;
+            left: 4px;
+            bottom: 0px;
+            right: 4px;
+            width: 100%;
+            background: linear-gradient(to top, 
+                                        rgba(11, 15, 25, 1) 0%, 
+                                        rgba(11, 15, 25, 0.6) 50%, 
+                                        rgba(11, 15, 25, 0.6) 50%, 
+                                        rgba(11, 15, 25, 0) 100%);
+        }
+    </style>
+</head>
+<body>
+    <div class="background-right"></div>
+    <div class="background-left"></div>
+    <div class="overlay"></div>
+    <div style="padding: 50 50 50 50;">
+        <span style="font-size: xxx-large; display: inline-block; padding: 20px 10px;">Online <b>pipeline-card</b> renderer</span>
+    </div>
+
+    <br />
+    <textarea style="
+                    width: 80%;
+                    height: 30px;
+                    border: none;
+                    background-color: transparent;
+                    resize: both;
+                    font-family: roboto, sans-serif;
+                    color: #C0C0C0;
+                    display: block;
+                    margin: auto;
+                    padding: 5px;
+                    box-shadow: 
+                      inset -3px -3px 5px rgba(255, 255, 255, 0.2), /* Inner top highlight */
+                      inset 3px 3px 5px rgba(0, 0, 0, 0.4),        /* Inner shadow */
+                      3px 3px 8px rgba(0, 0, 0, 0.6),             /* Outer shadow bottom */
+                      -3px -3px 8px rgba(255, 255, 255, 0.1);     /* Outer shadow top */
+                    border-radius: 10px; /* Smooth corners for a modern 3D feel */
+                    backdrop-filter: blur(5px); /* Optional: Frosted glass effect */
+                    text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.5); /* Slight text depth */
+                  readonly: true;"
+    >{{ error_msg }}</textarea>
+
+    <p><span style="text-shadow: 3px 3px 6px rgba(0, 0, 0, 0.7), -3px -3px 6px rgba(0, 0, 0, 0.7); background: rgb(11, 15, 25); color: #C0C0C0; font-size: 24px; font-weight: bold;">
+        This <b>Space</b> serves as an API endpoint to render repo-hosted
+        <em>pipeline-card</em> items.
+        It complements model-versions that the <span style="font-family: 'Lobster';"><a target="_blank"
+                       href="https://github.com/aurelienmorgan/retrain-pipelines"
+                       style="text-decoration: none; color: #C0C0C0;">retrain-pipelines</a></span> library generates and publishes on the Hub !
+    </span></p>
+    <div style="margin-bottom: 10px;">Browse model cards and click <em>"retraining pipeline-card"</em> links there&nbsp;:</div>
+    <center><img src="https://github.com/user-attachments/assets/1111ee84-a9ab-473f-8e93-79f55c65edb1" /></center>
+
+    <footer class="footer">
+        <hr style="border-color: #555;">
+        <p style="margin-top: 8px; margin-bottom: 8px;
+                  display: flex; justify-content: space-between; align-items: center;">
+            <small>
+                <font color="white">
+                    2023-<script>document.write(new Date().getFullYear());</script>
+                    &nbsp; - &nbsp;
+                    <a target="_blank"
+                       href="https://github.com/aurelienmorgan/retrain-pipelines"
+                       style="text-decoration: none;"><code class="shiny-silver-text">retrain-pipelines</code></a>
+                    &nbsp; - &nbsp;
+                    Open&nbsp;Source&nbsp;FTW&nbsp;!
+                </font>
+            </small>
+        </p>
+    </footer>
+</body>
+</html>

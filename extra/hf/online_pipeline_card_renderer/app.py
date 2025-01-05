@@ -7,48 +7,60 @@ from huggingface_hub import list_repo_files, list_repo_commits, \
 from flask import Flask, request, render_template_string, \
     render_template
 
-app = Flask(__name__)
-banch_name = "retrain-pipelines_pipeline-card"
-hf_token = os.getenv("HF_TOKEN", None)
+
+BRANCH_NAME = "retrain-pipelines_pipeline-card"
+HF_TOKEN = os.getenv("HF_TOKEN", None)
+ERROR_PAGE = "index.html"
+
+app = Flask(__name__, template_folder='/app')
 
 @app.errorhandler(Exception)
 def handle_exception(error):
-    # Get the HTTP status code (default to 500 if not available)
+    # status code, default to 500
     status_code = getattr(error, 'code', 500)
-    return "titi", status_code # render_template('error.html', error_code=status_code), status_code
+    error_msg = str(error) or 'An unknown error occurred.'
+
+    return render_template(ERROR_PAGE, error_msg=error_msg), \
+           status_code
 
 
 @app.route('/', methods=['GET'])
 def preview_html():
     model_repo_id = request.args.get('model_repo_id')
     if not model_repo_id:
-        return "Please provide a \"model_repo_id\" parameter", \
-                400
+        error_msg="Please provide a \"model_repo_id\" parameter"
+        return render_template(
+                    ERROR_PAGE, error_msg=error_msg), \
+               400
     subfolder = request.args.get('subfolder')
     if not subfolder:
-        return "Please provide a \"subfolder\" parameter", \
+        error_msg="Please provide a \"subfolder\" parameter"
+        return render_template(
+                    ERROR_PAGE, error_msg=error_msg), \
                400
 
     try:
         pipeline_card_filename = get_pipeline_card_filename(
             model_repo_id=model_repo_id,
-            banch_name=banch_name,
+            banch_name=BRANCH_NAME,
             subfolder=subfolder,
-            hf_token=hf_token
+            hf_token=HF_TOKEN
         )
 
         content = open(hf_hub_download(
                 repo_id=model_repo_id,
                 repo_type="model",
-                revision=banch_name,
+                revision=BRANCH_NAME,
                 subfolder=subfolder,
                 filename=pipeline_card_filename,
-                token=hf_token,
+                token=HF_TOKEN,
                 # cache_dir="/usr/local/.cache"
             )).read()
         return render_template_string(content)
     except Exception as e:
-        return f"Error fetching pipeline-card: {str(e)}", \
+        error_msg = f"Error fetching pipeline-card: {str(e)}"
+        return render_template(
+                    ERROR_PAGE, error_msg=error_msg), \
                500
 
 
@@ -59,10 +71,11 @@ def get_pipeline_card_filename(
     hf_token: str
 ) -> str:
     """
-    There can be more than one html file per model version
-    since run can be 'resumed', for instance at the
-    'pipeline_card' step itself.
-    In such cases, we take the latest
+    There can be more than one pipeline-card
+    portable html file per model version
+    since run can be 'resumed', for instance
+    at the 'pipeline_card' step itself.
+    In such cases, we consider the latest.
     """
     
     files = list_repo_files(
@@ -106,6 +119,6 @@ def get_pipeline_card_filename(
 
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=7860)
+    app.run(debug=True, host='0.0.0.0', port=7860)
 
 
