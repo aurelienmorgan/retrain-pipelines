@@ -38,9 +38,9 @@ def preview_html():
         return render_template(
                     ERROR_PAGE, error_msg=error_msg), \
                400
-    subfolder = request.args.get('subfolder')
-    if not subfolder:
-        error_msg="Please provide a \"subfolder\" parameter"
+    version_id = request.args.get('version_id')
+    if not version_id:
+        error_msg="Please provide a \"version_id\" parameter"
         app.logger.error(f"{request.remote_addr} - {error_msg}",
                          exc_info=False)
         return render_template(
@@ -51,7 +51,7 @@ def preview_html():
         pipeline_card_filename = get_pipeline_card_filename(
             model_repo_id=model_repo_id,
             banch_name=BRANCH_NAME,
-            subfolder=subfolder,
+            subfolder=version_id,
             hf_token=HF_TOKEN
         )
 
@@ -59,7 +59,7 @@ def preview_html():
                 repo_id=model_repo_id,
                 repo_type="model",
                 revision=BRANCH_NAME,
-                subfolder=subfolder,
+                subfolder=version_id,
                 filename=pipeline_card_filename,
                 token=HF_TOKEN,
                 # cache_dir="/usr/local/.cache"
