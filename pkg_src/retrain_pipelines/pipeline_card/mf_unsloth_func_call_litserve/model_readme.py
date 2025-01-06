@@ -19,6 +19,7 @@ from retrain_pipelines.utils.hf_utils import \
 
 
 def _model_readme_params(
+    model_repo_id: str,
     base_model_dict: dict,
     training_dataset_dict: dict,
     version_label: str,
@@ -92,6 +93,7 @@ def _model_readme_params(
     )
 
     return {
+            "model_repo_id": model_repo_id,
             "new_version_label": version_label,
             "commit_datetime": commit_datetime,
 
@@ -125,6 +127,7 @@ def _model_readme_params(
 def get_model_readme_content(
     template_folder: str,
 
+    model_repo_id: str,
     base_model_dict: dict,
     training_dataset_dict: dict,
 
@@ -147,6 +150,7 @@ def get_model_readme_content(
 
     Params:
         - template_folder (str)
+        - model_repo_id (str)
         - base_model_dict (dict)
             - repo_id
             - commit_hash
@@ -170,6 +174,7 @@ def get_model_readme_content(
     """
 
     params = _model_readme_params(
+        model_repo_id=model_repo_id,
         base_model_dict=base_model_dict,
         training_dataset_dict=training_dataset_dict,
         version_label=version_label,
