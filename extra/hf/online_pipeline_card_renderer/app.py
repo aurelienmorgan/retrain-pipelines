@@ -1,6 +1,5 @@
 
 import os
-import logging
 
 from huggingface_hub import list_repo_files, list_repo_commits, \
     hf_hub_download
