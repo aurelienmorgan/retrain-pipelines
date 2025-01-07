@@ -10,7 +10,8 @@ from datetime import datetime
 from requests.exceptions import ReadTimeout
 
 from huggingface_hub import list_repo_refs, \
-    list_repo_commits, list_repo_files, HfApi
+    list_repo_commits, list_repo_files, HfApi, \
+    hf_hub_download
 from huggingface_hub.utils import \
     RepositoryNotFoundError, HfHubHTTPError
 
@@ -203,6 +204,16 @@ def get_arxiv_codes(
     Retrieve all arXiv codes associated with
     a given repository on the HFHub.
 
+    Note: The "info" api is quite unstable server-side.
+          The response structure is evolving a lot.
+          For the same library version, we get
+          different responses from one day to the next.
+          @see https://discuss.huggingface.co/t/133438
+          We go "best-effort" mode on this :
+            - look into repo_info.card_data
+            - fallback to looking into repo_info.tags
+            - fallback to looking into readme content
+
     Params:
         - repo_id (str):
             Path to the HuggingFace repository.
@@ -237,7 +248,34 @@ def get_arxiv_codes(
         return []
     except Exception as err:
         print(("get_arxiv_codes", err), file=sys.stderr)
-        return []
+
+    if 0 == len(arxiv_codes):
+        try:
+            arxiv_tags = [tag for tag in repo_info.tags
+                          if tag.startswith('arxiv:')]
+            for arxiv_tag in arxiv_tags:
+                arxiv_code = arxiv_tag.split(':')[1]
+                arxiv_codes.append(arxiv_code)
+        except Exception as err:
+            print(("get_arxiv_codes", err), file=sys.stderr)
+
+    if 0 == len(arxiv_codes):
+        file_path = hf_hub_download(
+            repo_id=repo_id, revision=commit_hash,
+            repo_type=repo_type, filename="README.md")
+        # arXiv:2406.18518
+        # https://huggingface.co/papers/2406.18518
+        # https://arxiv.org/abs/2406.18518
+        # https://arxiv.org/pdf/2406.18518
+        with open(file_path, 'r') as file:
+            content = file.read()
+        arxiv_references = re.findall(
+            r'arXiv:(\d{4}\.\d{5})|https://(?:(huggingface|hf)\.(co|com)/papers|arxiv\.org/(?:abs|pdf))/(\d{4}\.\d{5})',
+            content
+        )
+        arxiv_codes = list(set(
+            [ref for ref_pair in arxiv_references
+             for ref in ref_pair if ref]))
 
     return arxiv_codes
 

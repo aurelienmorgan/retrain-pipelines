@@ -61,7 +61,7 @@ model-index:
 <a target="_blank"
    href="https://huggingface.co/{{ model_repo_id }}/tree/retrain-pipelines_source-code/v{{ new_version_label }}_{{ timestamp_str }}">source-code</a> |
 <a target="_blank"
-   href="https://huggingface.co/spaces/retrain-pipelines/online_pipeline_card_renderer/?model_repo_id={{  }}&version_id=v{{ new_version_label }}_{{ timestamp_str }}">pipeline-card</a>)
+   href="https://huggingface.co/spaces/retrain-pipelines/online_pipeline_card_renderer/?model_repo_id={{ model_repo_id }}&version_id=v{{ new_version_label }}_{{ timestamp_str }}">pipeline-card</a>)
 
 Training dataset&nbsp;:
 - <code>{{ dataset_repo_id }} v{{ dataset_version_label }}</code>
@@ -77,8 +77,8 @@ Base model&nbsp;:
 {% if base_model_arxiv_codes -%}
 arxiv&nbsp;:<br />
 {%- for base_model_arxiv_code in base_model_arxiv_codes %}
-  - <a href="https://huggingface.co/papers/{{ base_model_arxiv_code }}"
-       target="_blank">https://huggingface.co/papers/{{ base_model_arxiv_code }}</a><br />
+  - <code><a href="https://huggingface.co/papers/{{ base_model_arxiv_code }}"
+             target="_blank">{{ base_model_arxiv_code }}</a></code><br />
 {% endfor -%}
 {% endif -%}
 
