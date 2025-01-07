@@ -205,9 +205,13 @@ def plot_model_versions_history(
         main_min, main_max = \
             min(main_metric_vals), max(main_metric_vals)
         other_metric_norm = [
-            (x - other_min) / (other_max - other_min) *
-            (main_max - main_min) + main_min
-            for x in other_metric_vals]
+            (
+                (x - other_min) / (other_max - other_min) *
+                (main_max - main_min) + main_min
+            ) if (other_max - other_min) > 0
+            else 0
+            for x in other_metric_vals
+        ]
 
         # plotting on same "ax1" instance
         # so they share the same zorder system
@@ -222,8 +226,10 @@ def plot_model_versions_history(
         ax2 = ax1.twinx()
         ax2.set_ylim(other_min, other_max)
         darker_skyblue = (0.4, 0.7, 0.8)
-        ax2.set_ylabel(other_metric_name, color=darker_skyblue)
-        ax2.tick_params(axis='y', labelcolor=darker_skyblue)
+        ax2.set_ylabel(other_metric_name,
+                       color=darker_skyblue)
+        ax2.tick_params(axis='y',
+                        labelcolor=darker_skyblue)
         plt.legend([line1, line2],
                    [main_metric_name, other_metric_name],
                    loc='upper left')
