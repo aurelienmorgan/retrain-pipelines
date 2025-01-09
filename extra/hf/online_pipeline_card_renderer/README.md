@@ -17,7 +17,7 @@ tags:
 thumbnail: https://cdn-avatars.huggingface.co/v1/production/uploads/651e93137b2a2e027f9e55df/96hzBved0YMjCq--s0kad.png
 ---
 
-<img src="https://github.com/user-attachments/assets/35cd2424-7794-411e-8367-bb82e3b96624" />
+<img src="https://github.com/user-attachments/assets/82709377-2a46-460e-b2d6-45e6b0be98d7" />
 
 
 This Space serves as an API endpoint to render repo-hosted `pipeline-card` items. It complements model-versions trained with the <code><a target="_blank" href="https://github.com/aurelienmorgan/retrain-pipelines">retrain-pipelines</a></code> library, which publishes them on the Hub!
