@@ -73,7 +73,7 @@ Base model&nbsp;:
 - <code>{{ base_model_repo_id }}</code>
 (<a href="https://huggingface.co/{{ base_model_repo_id }}/blob/{{ base_model_commit_hash }}/README.md"
     target="_blank">{{ base_model_commit_hash[:7] }}</a> -
-    {{ base_model_commit_datetime.strftime("%Y-%m-%d %H:%M:%S UTC") }})
+    {{ base_model_commit_datetime.strftime("%Y-%m-%d %H:%M:%S UTC") }})<br />
 {% if base_model_arxiv_codes -%}
 arxiv&nbsp;:<br />
 {%- for base_model_arxiv_code in base_model_arxiv_codes %}

@@ -207,8 +207,11 @@ def get_arxiv_codes(
     Note: The "info" api is quite unstable server-side.
           The response structure is evolving a lot.
           For the same library version, we get
-          different responses from one day to the next.
+          different responses from one request to the next.
           @see https://discuss.huggingface.co/t/133438
+          (even upgrading lib didn't fix it,
+           contraryli to what we first  observed
+           and reported).
           We go "best-effort" mode on this :
             - look into repo_info.card_data
             - fallback to looking into repo_info.tags
