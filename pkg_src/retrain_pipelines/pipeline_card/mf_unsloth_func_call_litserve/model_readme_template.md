@@ -1,6 +1,7 @@
 ---
 # @see https://github.com/huggingface/hub-docs/blob/main/modelcard.md
 # @see https://huggingface.co/docs/huggingface_hub/guides/model-cards#update-metadata
+# @see https://huggingface.co/docs/hub/model-cards#model-card-metadata
 
 {% set timestamp_str = commit_datetime.strftime('%Y%m%d_%H%M%S') ~ '%03d'|format(commit_datetime.microsecond // 1000) ~ '_UTC' -%}
 
@@ -11,6 +12,7 @@ timestamp: '{{ timestamp_str }}'
 model_name: {{ pretty_name }}
 
 base_model: {{ base_model_repo_id }}
+base_model_relation: finetune
 library_name: peft
 datasets:
 - {{ dataset_repo_id }}
