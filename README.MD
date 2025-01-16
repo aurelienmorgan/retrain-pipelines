@@ -10,7 +10,7 @@
 The package is designed to remove the complexity of building end-to-end ML retraining pipelines, allowing users to focus on their data and model-architecture. 
 With pre-built, highly adaptable pipeline examples that work out of the box, users can easily integrate their own data and begin retraining models with minimal-to-no setup. 
 
-### Key features of retrain-pipelines include:
+### Key features of retrain-pipelines include&nbsp;:
 - **Model version blessing**: Automatically compare the performance of retrained models against previous best versions to ensure only superior models are deployed.
 - **Infrastructure validation**: Each retraining pipeline includes inference pipeline packaging, local Docker container deployment, and request/response validation to ensure that models are production-ready.
 - **Comprehensive documentation**: Every retraining pipeline is fully documented with sections covering Exploratory Data Analysis (EDA), hyperparameter tuning, retraining steps, model performance metrics, and key commands for retrieving training artifacts. 
@@ -20,9 +20,9 @@ In essence, <b>retrain-pipelines</b> offers a seamless solution: "Come with your
 
 ### Customizability & Adaptability
 <b>retrain-pipelines</b> offers a high degree of flexibility, allowing users to tailor the pre-shipped pipelines to their specific needs:
-- **Custom Preprocessing Functions**: Users can provide their own Python functions for custom data preprocessing. For example, some built-in pipelines for tabular data allow optional bucketization of numerical features by name, but you can easily modify or extend these preprocessing steps to suit your dataset and feature requirements.
-- **Custom Pipeline Card Generation**: You can specify custom Python functions to generate pipeline cards, such as including specific performance charts or metrics relevant to your use case.
-- **Custom HTML Templates**: For further personalization, retrain-pipelines supports customizable HTML templates, enabling you to adjust formatting, insert specific charts, change page colors, or even add your company's logo to documentation pages. 
+- **Custom Preprocessing Functions**&nbsp;: Users can provide their own Python functions for custom data preprocessing. For example, some built-in pipelines for tabular data allow optional bucketization of numerical features by name, but you can easily modify or extend these preprocessing steps to suit your dataset and feature requirements.
+- **Custom Pipeline Card Generation**&nbsp;: You can specify custom Python functions to generate pipeline cards, such as including specific performance charts or metrics relevant to your use case.
+- **Custom HTML Templates**&nbsp;: For further personalization, `retrain-pipelines` supports customizable HTML templates, enabling you to adjust formatting, insert specific charts, change page colors, or even add your company's logo to documentation pages. 
 
 <b>retrain-pipelines</b> doesn't just streamline the retraining process, it empowers teams to innovate faster, iterate smarter, and deploy more robust models with confidence. Whether you're looking for an out-of-the-box solution or a highly customizable pipeline, <b>retrain-pipelines</b> is your ultimate companion for continuous model improvement.
 
