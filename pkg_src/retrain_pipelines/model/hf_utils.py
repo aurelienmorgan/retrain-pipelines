@@ -1,7 +1,11 @@
 
 import os
 import sys
+import numpy as np
 from datetime import datetime
+
+import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
 
 from huggingface_hub import HfApi
 from huggingface_hub.utils import RepositoryNotFoundError
@@ -150,3 +154,97 @@ def current_blessed_model_version_dict(
 
     return None
 
+
+def plot_log_history(
+    log_history: list,
+    title: str,
+    sliding_window_size: int = 10
+) -> Figure:
+    """
+    Dual y-axis plot for training logs
+    with no validation datapoints.
+    Tripple y-axis otherwise
+    (training loss, validation lossand learning rate).
+
+    Note: for the training loss curve, a smoothed version
+    is overlayed on top of partially transparent
+    actual measurements.
+
+    Params:
+        - log_history (list):
+            as provided by
+            `transformers.Trainer.state.log_history`
+        - title (str):
+            the figute title.
+        - sliding_window_size (int):
+            size of the sliding window used
+            for training loss curve smoothing.
+
+    Results:
+        - (Figure)
+    """
+
+    training_data = [d for d in log_history
+                     if all(k in d for k
+                            in ["loss", "epoch", "step",
+                                "learning_rate"])]
+    validation_data = [(log["epoch"], log["eval_loss"])
+                       for log in log_history
+                       if "eval_loss" in log]
+
+    loss_values = [d["loss"] for d in training_data]
+    epochs = [d["epoch"] for d in training_data]
+    learning_rates = [d["learning_rate"] for d in training_data]
+    validation_epochs, validation_losses = \
+        zip(*validation_data) if validation_data else ([], [])
+
+    moving_avg = [
+        np.mean(
+            loss_values[max(0, i-(sliding_window_size-1)):i+1])
+        for i in range(len(loss_values))]
+
+    fig, ax1 = plt.subplots(figsize=(10, 5))
+
+    ax1.plot(epochs, loss_values, "c-", linewidth=0.5, alpha=0.4)
+    ax1.plot(epochs, moving_avg, "c-", linewidth=2, alpha=1.0)
+    ax1.set_xlabel("Epoch")
+    ax1.set_ylabel("Training Loss", color="c")
+    ax1.tick_params(axis="y", labelcolor="c")
+    ax1.set_xticks(np.arange(0, max(epochs) + 1))
+    ax1.grid(color="lightgrey", linestyle="-", linewidth=0.5)
+
+    if validation_data:
+        ax2 = ax1.twinx()
+        ax2.plot(validation_epochs, validation_losses, 'b--',
+                 linewidth=1, alpha=.8)
+        ax2.set_ylabel("Validation Loss", color="b")
+        ax2.tick_params(axis="y", labelcolor="b")
+
+        ax3 = ax1.twinx()
+        ax3.spines["right"].set_position(("outward", 60))
+        ax3.plot(epochs, learning_rates, "m--",
+                 linewidth=1.5, alpha=1.0)
+        ax3.set_ylabel("Learning Rate", color="m")
+        ax3.tick_params(axis="y", labelcolor="m")
+        ax3.yaxis.set_major_formatter(plt.FuncFormatter(
+            lambda x, _: f"{x:.2e}"))
+
+    else:
+        ax2 = ax1.twinx()
+        ax2.plot(epochs, learning_rates, "m--",
+                 linewidth=1.5, alpha=1.0)
+        ax2.set_ylabel("Learning Rate", color="m")
+        ax2.tick_params(axis="y", labelcolor="m")
+        ax2.yaxis.set_major_formatter(plt.FuncFormatter(
+            lambda x, _: f"{x:.2e}"))
+
+    ax1.set_title(title)
+    ax1.spines["top"].set_visible(False)
+    ax2.spines["top"].set_visible(False)
+    if "ax3" in locals():
+        ax3.spines["top"].set_visible(False)
+
+    fig.tight_layout()
+    plt.close(fig)
+
+    return fig
