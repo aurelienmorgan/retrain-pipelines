@@ -235,7 +235,7 @@ find us @ https://pypi.org/project/retrain-pipelines/
 <br />
 <hr />
 
-[![GitHub Stars](https://img.shields.io/github/stars/aurelienmorgan/retrain-pipelines.svg?style=social&label=-%C2%A0retrain-pipelines%C2%A0-&maxAge=2592000)](https://github.com/aurelienmorgan/retrain-pipelines/stargazers)<br />
+[![GitHub Stars](https://img.shields.io/github/stars/aurelienmorgan/retrain-pipelines.svg?style=social&label=-%C2%A0retrain-pipelines%C2%A0-&maxAge=172800)](https://github.com/aurelienmorgan/retrain-pipelines/stargazers)<br />
 Please consider dropping us a star ! ⭐
 <br />
 <hr />
