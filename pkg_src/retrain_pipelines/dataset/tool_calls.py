@@ -6,6 +6,8 @@ import numpy as np
 
 import polars as pl
 
+from ast import literal_eval
+
 from typing import Dict, List
 
 import matplotlib.pyplot as plt
