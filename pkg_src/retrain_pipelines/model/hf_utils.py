@@ -164,7 +164,7 @@ def plot_log_history(
     Dual y-axis plot for training logs
     with no validation datapoints.
     Tripple y-axis otherwise
-    (training loss, validation lossand learning rate).
+    (training loss, validation loss and learning rate).
 
     Note: for the training loss curve, a smoothed version
     is overlayed on top of partially transparent
