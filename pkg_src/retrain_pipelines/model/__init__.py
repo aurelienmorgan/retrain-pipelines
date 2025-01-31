@@ -35,8 +35,8 @@ elif "mf_lightgbm_regress_tempo" == retrain_pipeline_type:
                 tempo_wait_ready, tempo_predict
 
 elif "mf_unsloth_func_call_litserve" == retrain_pipeline_type:
-    from .mf_unsloth_func_call_litserve.trainer import \
-                plot_training_loss
+    from .mf_unsloth_func_call_litserve.eval import \
+                compute_counts_n_metrics
 
 else:
     raise ValueError(f"retrain_pipeline_type {retrain_pipeline_type}" +
