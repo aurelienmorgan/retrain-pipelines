@@ -155,6 +155,13 @@ def current_blessed_model_version_dict(
     return None
 
 
+def _mpl_scientific_format_func(value, tick_number):
+    """Must be declared outside calling function
+    for returned objects to be 'pickelable'.
+    plt.FuncFormatter(lambda x, _: f"{x:.2e}")
+    scientific notation with two decimal places"""
+    return f"{value:.2e}"
+
 def plot_log_history(
     log_history: list,
     title: str,
@@ -175,7 +182,7 @@ def plot_log_history(
             as provided by
             `transformers.Trainer.state.log_history`
         - title (str):
-            the figute title.
+            the figure title.
         - sliding_window_size (int):
             size of the sliding window used
             for training loss curve smoothing.
@@ -227,7 +234,7 @@ def plot_log_history(
         ax3.set_ylabel("Learning Rate", color="m")
         ax3.tick_params(axis="y", labelcolor="m")
         ax3.yaxis.set_major_formatter(plt.FuncFormatter(
-            lambda x, _: f"{x:.2e}"))
+            _mpl_scientific_format_func))
 
     else:
         ax2 = ax1.twinx()
@@ -236,7 +243,7 @@ def plot_log_history(
         ax2.set_ylabel("Learning Rate", color="m")
         ax2.tick_params(axis="y", labelcolor="m")
         ax2.yaxis.set_major_formatter(plt.FuncFormatter(
-            lambda x, _: f"{x:.2e}"))
+            _mpl_scientific_format_func))
 
     ax1.set_title(title)
     ax1.spines["top"].set_visible(False)
@@ -248,3 +255,4 @@ def plot_log_history(
     plt.close(fig)
 
     return fig
+
