@@ -76,6 +76,7 @@ def _parse_tools(
 
 def get_unique_tools(
     lazy_df: pl.LazyFrame,
+    tools_attr_name: str,
     struct_schema: pl.Struct
 ) -> pl.LazyFrame:
     """
@@ -85,6 +86,9 @@ def get_unique_tools(
 
     Params:
         - lazy_df (pl.lazyframe.frame.LazyFrame):
+            
+        - tools_attr_name (str):
+            
         - struct_schema (pl.Struct):
             The schema tools are abiding to.
             We expect tool declaration with
@@ -96,7 +100,7 @@ def get_unique_tools(
     return (
         lazy_df
         .with_columns([
-            pl.col("tools")
+            pl.col(tools_attr_name)
             .map_elements(
                 _parse_tools,
                 return_dtype=pl.List(struct_schema))
