@@ -1,9 +1,130 @@
 
 import re
+import csv
 import json
 
 import polars as pl
+from tqdm.auto import tqdm
 from collections import Counter
+
+import torch
+
+import datasets
+import transformers
+
+
+def infer_validation(
+    tokenizer: transformers.PreTrainedTokenizer |
+               transformers.PreTrainedTokenizerFast,
+    model: transformers.PreTrainedModel,
+    validation_data: datasets.Dataset,
+    prompt_template: str,
+    batch_size: int = 32,
+    queries_attr_name: str = "query",
+    answers_attr_name: str = "answers",
+    max_new_tokens: int = 400,
+    device: str = "cuda"
+) -> list:
+    """
+    Generates inference on the validation dataset.
+    Also provides input (incl. prompt_template)
+    and new tokens count.
+
+    Params:
+        - tokenizer (transformers.PreTrainedTokenizer |
+                     transformers.PreTrainedTokenizerFast):
+        - model (transformers.PreTrainedModel);
+        - validation_data (datasets.Dataset);
+        - prompt_template (str):
+        - batch_size (int):
+        - queries_attr_name (str):
+        - answers_attr_name (int):
+        - max_new_tokens (int):
+            maximum number of tokens the model
+            can generate, excluding the input prompt.
+            Note that larger values consume more
+            computational resources
+            (memory, processing time).
+        - device (str):
+            e.g. "cuda"
+
+    Results:
+        - list(dict):
+            query,
+            input_tokens_count
+                Note : accounts for length
+                of prompt_template.
+            answer:
+                Truth label (list of golden tool-calls).
+                Passed-through from input validation data.
+            completion:
+                Inferred list of tool-calls
+            new_tokens_count
+    """
+
+    torch.cuda.empty_cache()
+    gc.collect()
+
+    eos_token_id = tokenizer.all_special_ids[
+        tokenizer.all_special_tokens.index(tokenizer.eos_token)]
+
+    max_new_tokens_count = 0
+    results = []
+
+    for i in tqdm(range(0, len(validation_data), batch_size)):
+        batch = validation_data[i:i + batch_size]
+        queries = batch[queries_attr_name]
+        formatted_inputs = [
+            prompt.format(query, "") for query in queries]
+        answers = batch[answers_attr_name]
+
+        inputs = tokenizer(
+            formatted_inputs, padding=True,
+            truncation=True, return_tensors="pt"
+        ).to(device)
+
+        input_tokens_count_list = [
+            tokens.ne(tokenizer.pad_token_id).sum().item()
+            for tokens in inputs["input_ids"]]
+
+        outputs = model.generate(
+            input_ids=inputs["input_ids"],
+            attention_mask=inputs["attention_mask"],
+            max_new_tokens=max_new_tokens,
+            use_cache=True
+        )
+        decoded_outputs = tokenizer.batch_decode(
+            outputs, skip_special_tokens=True)
+
+        new_tokens_count_list = [
+            ((output_tokens != tokenizer.pad_token_id) &
+             (output_tokens != eos_token_id)).sum().item() + 1 \
+            - input_tokens_count
+            for input_tokens_count, output_tokens
+            in zip(input_tokens_count_list, outputs)
+        ]
+        max_new_tokens_count = \
+            max(max_new_tokens_count, max(new_tokens_count_list))
+
+        batch_results = [
+            {
+                "query": query,
+                "input_tokens_count": input_tokens_count,
+                "answer": answer,
+                "completion": output[len(formatted_input):].strip(),
+                "new_tokens_count": new_tokens_count
+            }
+            for query, answer, formatted_input, output,
+            new_tokens_count, input_tokens_count
+            in zip(queries, answers, formatted_inputs,
+                   decoded_outputs, new_tokens_count_list,
+                   input_tokens_count_list)
+        ]
+        results.extend(batch_results)
+
+    print(f"observed max_new_tokens_count : {max_new_tokens_count}\n")
+
+    return results
 
 
 def _calculate_metrics(
@@ -135,6 +256,11 @@ def _compute_metrics_per_row(
     by a tool-calling model, provided
     prediction vs. ground-truth.
 
+    Every tool-call is accounted for
+    and target main metric is jaccard
+    for proper intersection over union
+    consideration.
+
     Example usage :
         ```python
         test_eval_df = pl.DataFrame({
@@ -200,6 +326,11 @@ def compute_counts_n_metrics(
     Computes counts and performance metrics
     of an evaluation dataset by a tool-calling
     model, provided prediction vs. ground-truth.
+
+    Every tool-call is accounted for
+    and target main metric is jaccard
+    for proper intersection over union
+    consideration.
 
     Params:
         eval_df (pl.LazyFrame) :

@@ -36,7 +36,7 @@ elif "mf_lightgbm_regress_tempo" == retrain_pipeline_type:
 
 elif "mf_unsloth_func_call_litserve" == retrain_pipeline_type:
     from .mf_unsloth_func_call_litserve.eval import \
-                compute_counts_n_metrics
+                infer_validation, compute_counts_n_metrics
 
 else:
     raise ValueError(f"retrain_pipeline_type {retrain_pipeline_type}" +
