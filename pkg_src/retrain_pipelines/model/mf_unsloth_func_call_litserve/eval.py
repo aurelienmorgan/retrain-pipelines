@@ -3,6 +3,7 @@ import re
 import csv
 import json
 
+import numpy as np
 import polars as pl
 from tqdm.auto import tqdm
 from collections import Counter
@@ -11,6 +12,9 @@ import torch
 
 import datasets
 import transformers
+
+import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
 
 
 def infer_validation(
@@ -397,4 +401,184 @@ def compute_counts_n_metrics(
                    return_dtype=pl.Float32
                ).alias("jaccard")
         ).select(pl.exclude("metrics"))
+
+
+def _plot_bars(
+    ax: plt.Axes,
+    grouped: pl.DataFrame,
+    xlabel: str,
+    subtitle: str,
+    max_x: int,
+    show_legend: bool = True
+) -> None:
+    """
+    100% stacked bar plots of correct/incorrect
+    tool-calls completions, per tool-calls count.
+
+    Overlayed in grey (bottom third of subplot)
+    is total records count for each category.
+
+    Note: for x-shared consistency between suplots
+    in calling context, we ensure that
+    their are as many tool-call counbt groups
+    as "max_x".
+
+    Params:
+        - ax (plt.Axes)
+        - grouped (pl.DataFrame)
+        - xlabel (str)
+        - subtitle (str)
+        - max_x (int)
+        - show_legend (bool)
+    """
+
+    # fill in with zeros to ensure shared x-axis
+    # shows xticklabels for up to max_x
+    zeros = pl.DataFrame({
+        xlabel: pl.Series(range(max_x + 1),
+                          dtype=pl.Int8),
+        "correct_count": pl.Series([0] * (max_x + 1),
+                                   dtype=pl.UInt32),
+        "total_count": pl.Series([0] * (max_x + 1),
+                                 dtype=pl.UInt32),
+        "incorrect_count": pl.Series([0] * (max_x + 1),
+                                     dtype=pl.UInt32)
+    }).filter(pl.col(xlabel).is_in(grouped[xlabel]).not_())
+    grouped = pl.concat([grouped, zeros]).sort(xlabel)
+
+    total_counts = grouped["total_count"]
+    correct_percent = (
+        grouped["correct_count"] / 
+        np.where(total_counts == 0, 1, total_counts))
+    incorrect_percent = (
+        grouped["incorrect_count"] / 
+        np.where(total_counts == 0, 1, total_counts))
+    ax.bar(grouped[xlabel], correct_percent,
+           color="lightblue", label="Correct")
+    ax.bar(grouped[xlabel], incorrect_percent,
+           color="salmon", bottom=correct_percent,
+           label="Incorrect")
+    ax.set_xlabel(xlabel.replace("_", " ").title())
+    ax.set_ylabel("Completions")
+    ax.set_title(f"({subtitle})", fontsize=10,
+                 pad=5, loc='right')
+    ax.set_yscale("linear")
+    ax.set_xticks(range(max_x + 1))
+    ax.set_xticklabels(range(max_x + 1), fontsize=8)
+    ax.set_yticks(np.arange(0, 1.1, 0.2))
+    ax.set_yticklabels([f'{x*100:.0f}%'
+                        for x in np.arange(0, 1.1, 0.2)],
+                       fontsize=8)
+
+    if show_legend:
+        ax.legend(
+            loc='upper left', bbox_to_anchor=(0, 0.92),
+            frameon=True, handletextpad=0.5,
+            borderpad=0.2, labelspacing=0.2, fontsize=8)
+
+    for i, (correct, incorrect, total) \
+    in enumerate(zip(correct_percent, incorrect_percent,
+                     total_counts)):
+        if total > 0:
+            ax.text(i, (correct + incorrect) / 2,
+                    f'{total:,.0f}', ha="center",
+                    va="center", color="gray",
+                    fontsize=9, rotation=90)
+            ax.text(i, correct + incorrect - 0.03,
+                    f'{int(incorrect_percent[i]*100)}%',
+                    ha="center", va="top", color="black",
+                    fontsize=8)
+
+    ax2 = ax.twinx()
+    ax2.set_ylabel("Records Count (log scale)",
+                   rotation=270, labelpad=16,
+                   loc="center", color="gray",
+                   fontsize=8)
+    ax2.set_yscale("log")
+    max_y = max([x for x in total_counts if x > 0])
+    log_max_y = np.log10(max_y)
+    ax2.set_ylim(.9, 1_000_000_000_000)
+    ax2.bar(grouped[xlabel], total_counts,
+            color="gray", alpha=0.3, width=0.2)
+    yticks = [
+        int(
+            np.round(i*10**-(len(str(int(i)))-1))
+            *10**(len(str(int(i)))-1)
+        )
+        for i in np.logspace(0, log_max_y, num=4)]
+    ax2.set_yticks(yticks)
+    ax2.set_yticklabels([f'{int(i):,}'
+                         for i in yticks],
+                        color="gray", fontsize=8)
+    ax2.tick_params(axis='y', colors="gray")
+    ax.margins(x=0)
+    ax2.margins(x=0)
+
+
+def plot_validation_completions(
+    eval_metrics_df: pl.LazyFrame,
+    engine: str = "gpu"
+) -> Figure:
+    """
+    100% stacked bar plots of correct/incorrect
+    tool-calls completions, per tool-calls count.
+
+    Overlayed in grey (bottom third of each subplot)
+    is total records count for each category.
+
+    Params:
+        - eval_metrics_df (pl.LazyFrame):
+            The result of `compute_counts_n_metrics`.
+            Mandatory attributes being :
+                - jaccard (float)
+                - ground_truth_tool_calls (int)
+                - predicted_tool_calls (int)
+        - engine (str):
+            Polars' engine (cpu or gpu).
+
+    Results:
+        - (Figure)
+    """
+
+    grouped_gt = eval_metrics_df.with_columns(
+        correct=(pl.col("jaccard") == 1).alias("correct")
+    ).group_by("ground_truth_tool_calls").agg(
+        pl.sum("correct").alias("correct_count"),
+        pl.len().alias("total_count")
+    ).with_columns(
+        incorrect_count=(pl.col("total_count") -
+                         pl.col("correct_count"))
+    ).collect(engine=engine)
+
+    grouped_pred = eval_metrics_df.with_columns(
+        correct=(pl.col("jaccard") == 1).alias("correct")
+    ).group_by("predicted_tool_calls").agg(
+        pl.sum("correct").alias("correct_count"),
+        pl.len().alias("total_count")
+    ).with_columns(
+        incorrect_count=(pl.col("total_count") -
+                         pl.col("correct_count"))
+    ).collect(engine=engine)
+
+    max_x = max(max(grouped_gt["ground_truth_tool_calls"]),
+                max(grouped_pred["predicted_tool_calls"]))
+
+    fig, (ax_top, ax_bottom) = plt.subplots(
+        2, 1, figsize=(6, 4), sharex=True,
+        gridspec_kw={'hspace': 0.3})
+
+    fig.suptitle(
+        "Distribution of Completions on Validation Records",
+        fontsize=12, fontweight="bold", y=0.97)
+    _plot_bars(
+        ax_top, grouped_gt, "ground_truth_tool_calls",
+        "per Ground Truth count", max_x)
+    _plot_bars(
+        ax_bottom, grouped_pred, "predicted_tool_calls",
+        "per Predicted count", max_x, show_legend=False)
+
+    fig.tight_layout()
+    plt.close(fig)
+
+    return fig
 
