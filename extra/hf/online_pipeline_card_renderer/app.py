@@ -117,7 +117,7 @@ def get_pipeline_card_filename(
     
     pipeline_card_files = [f for f in files if f.startswith(f"{subfolder}/")]
     if 0 == len(pipeline_card_files):
-        raise Exception(f"No pipeline-card exists for \"subfolder\".")
+        raise Exception(f"No pipeline-card exists for \"{subfolder}\".")
     elif 1 < len(pipeline_card_files):
         commits = list_repo_commits(
             repo_id=model_repo_id,
