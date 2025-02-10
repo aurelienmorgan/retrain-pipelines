@@ -1,4 +1,5 @@
 
+import gc
 import re
 import csv
 import json
@@ -79,7 +80,7 @@ def infer_validation(
         batch = validation_data[i:i + batch_size]
         queries = batch[queries_attr_name]
         formatted_inputs = [
-            prompt.format(query, "") for query in queries]
+            prompt_template.format(query, "") for query in queries]
         answers = batch[answers_attr_name]
 
         inputs = tokenizer(
