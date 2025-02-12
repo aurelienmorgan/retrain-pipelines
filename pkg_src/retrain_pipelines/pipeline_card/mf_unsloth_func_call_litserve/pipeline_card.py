@@ -23,11 +23,6 @@ def get_html(
     at runtime for the flow run being executed.
     """
 
-    NONE_HTML_STR = \
-        "<center><font color=white><em>None</em></font></center>"
-    DEFAULT_HTML_STR = \
-        "<center><font color=white><em>Default</em></font></center>"
-
     ##########################
     # model version blessing #
     ##########################
@@ -79,96 +74,34 @@ def get_html(
     ##########################
     #     model training     #
     ##########################
-    if params['hyperparameters_dict']:
-        hyperparameters_table = \
-            pd.DataFrame([params['hyperparameters_dict']]
-                        ).to_html(classes='wide', escape=False,
-                                  index = False)
-    else:
-        hyperparameters_table = DEFAULT_HTML_STR
+    pipeline_parameters_table = \
+        pd.DataFrame([params['pipeline_parameters_dict']]
+                    ).to_html(classes='wide', escape=False,
+                              index = False)
 
     cpt_log_history_fig = copy.copy(params['cpt_log_history_fig'])
     # Set the RGBA background white color with partial transparency
     cpt_log_history_fig.patch.set_facecolor((1.0, 1.0, 1.0, 0.6))
     cpt_log_history_curve = fig_to_base64(cpt_log_history_fig)
 
-    # target_class_figs = params['target_class_figs']
-    target_class_curves = {}
-    # for target_class, target_class_masks_fig in target_class_figs.items():
-        # if target_class_masks_fig is not None:
-            # target_class_masks_fig = copy.copy(target_class_masks_fig)
-            # # Set the RGBA background white color with partial transparency
-            # target_class_masks_fig.patch.set_facecolor((1.0, 1.0, 1.0, 0.6))
-            # target_class_curves[target_class] = \
-                # fig_to_base64(target_class_masks_fig, extra_tight=True)
-        # else:
-            # target_class_curves[target_class] = None
-
-    # classes_weighted_metrics_df = pd.DataFrame(
-        # [params['classes_weighted_metrics_dict']])
-    # classes_weighted_metrics_df = classes_weighted_metrics_df.map(
-        # lambda x: '{:.3f}'.format(x).rstrip('0').rstrip('.'))
-    # classes_weighted_metrics_table = classes_weighted_metrics_df.to_html(
-        # classes='wide', escape=False, index = False)
-
-    # if params['sliced_perf_metrics_dict'] is None:
-        # slice_feature_name = None
-        # styled_sliced_perf_metrics_table = None
-    # else:
-        # slice_feature_name = params['slice_feature_name']
-        # sliced_perf_metrics_df = \
-            # pd.DataFrame.from_dict(
-                # params['sliced_perf_metrics_dict'],
-                # orient='index'
-            # ).sort_index(ascending=True)
-        # styled_sliced_perf_metrics_table = \
-            # highlight_min_max_cells(sliced_perf_metrics_df)
+    sft_log_history_fig = copy.copy(params['sft_log_history_fig'])
+    # Set the RGBA background white color with partial transparency
+    sft_log_history_fig.patch.set_facecolor((1.0, 1.0, 1.0, 0.6))
+    sft_log_history_curve = fig_to_base64(sft_log_history_fig)
     ##########################
 
     ##########################
-    # hyperparameter tunning #
+    #     sft performance    #
     ##########################
+    validation_completions_fig = copy.copy(params['validation_completions_fig'])
+    # Set the RGBA background white color with partial transparency
+    validation_completions_fig.patch.set_facecolor((1.0, 1.0, 1.0, 0.6))
+    validation_completions_curve = fig_to_base64(validation_completions_fig)
 
-    # if params['pipeline_hp_grid_dict']:
-        # hp_grid_table = pd.DataFrame(
-                # [params['pipeline_hp_grid_dict']]
-            # ).to_html(classes='wide', escape=False, index = False)
-
-        # hp_perfs_df = pd.DataFrame(params['hp_perfs_list']
-                                  # ).sort_values(by='accuracy', ascending=False)
-
-        # hp_perfs_curve = parallel_coord_plot(hp_perfs_df)
-
-        # hp_perfs_table = hp_perfs_df.to_html(classes='wide', escape=False,
-                                             # index = False)
-        # def add_fixed_column_class(html_string):
-            # """
-            # Add "class" tag with value "fixed-column"
-            # to "th" and "td" tags of the last column (accuracy value)
-            # so it always shows despite table possibly being
-            # wider than the page.
-            # """
-            # from bs4 import BeautifulSoup
-            # soup = BeautifulSoup(html_string, 'html.parser')
-            # table = soup.find('table')
-            # if table:
-                # for row in table.find_all(['tr']):
-                    # last_cell = row.find_all(['th', 'td'])[-1]
-                    # last_cell['class'] = last_cell.get('class', []) + \
-                                         # ['fixed-column']
-            
-            # return str(soup)
-
-        # hp_perfs_table = add_fixed_column_class(hp_perfs_table)
-    # else:
-        # # case "no hyperparameter search space
-        # #       given as retraining pipeline input"
-        # hp_grid_table = None
-        # hp_perfs_curve = None
-        # hp_perfs_table = None
-
+    metrics_table = pd.DataFrame(
+            [params['metrics_dict']]).to_html(classes='wide',
+                                              escape=False, index = False)
     ##########################
-
 
     bootstrap_js_dependencies = [
         # 'https://code.jquery.com/jquery-3.2.1.slim.min.js',
@@ -283,31 +216,21 @@ def get_html(
                 model_commit_datetime=params['model_commit_datetime'],
 
                 cpt_log_history_curve=cpt_log_history_curve,
-                # target_class_curves=target_class_curves,
-                # buckets_table=indent(buckets_table, ' '*52),
-                # hyperparameters_table=indent(hyperparameters_table, ' '*56),
-                # classes_weighted_metrics_table= \
-                    # indent(classes_weighted_metrics_table, ' '*52),
-                # slice_feature_name=slice_feature_name,
-                # styled_sliced_perf_metrics_table=(
-                    # None if styled_sliced_perf_metrics_table is None else
-                    # indent(styled_sliced_perf_metrics_table, ' '*52)
-                # ),
+                sft_log_history_curve=sft_log_history_curve,
 
-                # hp_grid_table=indent(hp_grid_table, ' '*56) \
-                              # if hp_grid_table is not None else None,
-                # cv_folds=str(params['cv_folds']),
-                # hp_perfs_curve=indent(hp_perfs_curve, ' '*60) \
-                               # if hp_perfs_curve is not None else None,
-                # hp_perfs_table=indent(hp_perfs_table, ' '*56) \
-                               # if hp_perfs_table is not None else None,
+                ###################################
 
-                # wandb_project_ui_url=params['wandb_project_ui_url'],
-                # wandb_filter_run_id=params['wandb_filter_run_id'],
-                # wandb_need_sync_dir=params['wandb_need_sync_dir'],
+                pipeline_parameters_table=indent(pipeline_parameters_table, ' '*28),
 
-                # task_obj_python_cmd= \
-                    # apply_args_color_format(params['task_obj_python_cmd']),
+                # validation perf =>              #
+                validation_completions_curve=validation_completions_curve,
+                metrics_table=indent(metrics_table, ' '*28),
+
+                ###################################
+
+                task_obj_python_cmd= \
+                    apply_args_color_format(params['task_obj_python_cmd']),
                 dag_svg=indent(params['dag_svg'], ' '*40),
                 __version__=__version__
             )
+

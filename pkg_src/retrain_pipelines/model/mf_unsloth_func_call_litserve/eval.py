@@ -483,7 +483,7 @@ def _plot_bars(
         if total > 0:
             ax.text(i, (correct + incorrect) / 2,
                     f'{total:,.0f}', ha="center",
-                    va="center", color="gray",
+                    va="center", color="#808080",
                     fontsize=9, rotation=90)
             ax.text(i, correct + incorrect - 0.03,
                     f'{int(incorrect_percent[i]*100)}%',
@@ -493,14 +493,14 @@ def _plot_bars(
     ax2 = ax.twinx()
     ax2.set_ylabel("Records Count (log scale)",
                    rotation=270, labelpad=16,
-                   loc="center", color="gray",
+                   loc="center", color="#666666",
                    fontsize=8)
     ax2.set_yscale("log")
     max_y = max([x for x in total_counts if x > 0])
     log_max_y = np.log10(max_y)
     ax2.set_ylim(.9, 1_000_000_000_000)
     ax2.bar(grouped[xlabel], total_counts,
-            color="gray", alpha=0.3, width=0.2)
+            color="#808080", alpha=0.3, width=0.2)
     yticks = [
         int(
             np.round(i*10**-(len(str(int(i)))-1))
@@ -508,10 +508,10 @@ def _plot_bars(
         )
         for i in np.logspace(0, log_max_y, num=4)]
     ax2.set_yticks(yticks)
-    ax2.set_yticklabels([f'{int(i):,}'
+    ax2.set_yticklabels([f'{int(i):,}' 
                          for i in yticks],
-                        color="gray", fontsize=8)
-    ax2.tick_params(axis='y', colors="gray")
+                        color="#CCAD00", fontsize=8)
+    ax2.tick_params(axis='y', colors="#737373")
     ax.margins(x=0)
     ax2.margins(x=0)
 

@@ -210,7 +210,7 @@ def plot_log_history(
             loss_values[max(0, i-(sliding_window_size-1)):i+1])
         for i in range(len(loss_values))]
 
-    fig, ax1 = plt.subplots(figsize=(10, 5))
+    fig, ax1 = plt.subplots(figsize=(7, 3.45))
 
     ax1.plot(epochs, loss_values, "c-", linewidth=0.5, alpha=0.4)
     ax1.plot(epochs, moving_avg, "c-", linewidth=2, alpha=1.0)
