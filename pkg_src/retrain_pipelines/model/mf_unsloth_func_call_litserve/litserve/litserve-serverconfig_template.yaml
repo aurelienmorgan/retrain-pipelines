@@ -1,0 +1,24 @@
+
+port: {{ port }}
+
+max_seq_length: {{ max_seq_length }}
+max_new_token: {{ max_new_token }}
+
+base_model:
+    {%- if base_model.path %}
+    path: {{ base_model.path }}
+    {%- else %}
+    repo_id: {{ base_model.repo_id }}
+    {% if base_model.revision %}revision: {{ base_model.revision }}{% endif %}
+    {%- endif %}
+
+adapters:
+    {%- for adapter in adapters %}
+    - name: {{ adapter.name }}
+      {%- if adapter.path %}
+      path: {{ adapter.path }}
+      {%- else %}
+      repo_id: {{ adapter.repo_id }}
+      {% if adapter.revision %}revision: {{ adapter.revision }}{% endif -%}
+      {% endif -%}
+    {% endfor -%}
