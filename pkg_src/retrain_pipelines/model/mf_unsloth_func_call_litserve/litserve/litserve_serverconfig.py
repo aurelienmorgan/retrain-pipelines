@@ -28,7 +28,7 @@ class Config:
     """
     print(f"Start Time : {time.strftime('%H:%M:%S')}")
 
-    with open("litserve-model.yaml", "r") as file:
+    with open("litserve_serverconfig.yaml", "r") as file:
         yaml_config = yaml.safe_load(file)
 
     BASE_MODEL_PATH = (
