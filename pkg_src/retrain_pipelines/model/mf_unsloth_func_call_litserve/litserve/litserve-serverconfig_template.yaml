@@ -9,7 +9,7 @@ base_model:
     path: {{ base_model.path }}
     {%- else %}
     repo_id: {{ base_model.repo_id }}
-    {% if base_model.revision %}revision: {{ base_model.revision }}{% endif %}
+    {% if base_model.revision %}revision: {{ base_model.revision }}{% endif -%}
     {%- endif %}
 
 adapters:
