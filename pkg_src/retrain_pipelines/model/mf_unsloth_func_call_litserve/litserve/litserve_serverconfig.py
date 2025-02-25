@@ -56,11 +56,10 @@ class Config:
     adapters = {}
     if (yaml_adapters:=yaml_config.get("adapters")) is not None:
         for adapter in yaml_adapters:
-            adapter_path = (
-                os.path.realpath(os.path.expanduser(BASE_MODEL_PATH))
-                if (BASE_MODEL_PATH:=adapter.get("path")) is not None
-                else None)
-            if adapter_path is not None:
+            adapter_path = adapter.get("path")
+            if (adapter_path) is not None:
+                adapter_path = os.path.realpath(os.path.expanduser(
+                    adapter_path))
                 adapters[adapter["name"]] = {
                     "path": adapter_path}
             else:

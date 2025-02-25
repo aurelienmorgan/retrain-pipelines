@@ -49,7 +49,8 @@ class UnslothLitAPI(ls.LitAPI):
 
     def setup(self, device):
         start_time = time.time()
-        print("Loading weights. May take a small while.")
+        print("Loading weights. May take a small while.",
+              flush=True)
 
         # load specific version of base-model
         model, self.tokenizer = \
@@ -96,7 +97,8 @@ class UnslothLitAPI(ls.LitAPI):
                     token=os.getenv("HF_TOKEN", None)
                 )
 
-        print(f"Load time : {time.time()-start_time:.2f} seconds")
+        print(f"Load time : {time.time()-start_time:.2f} seconds",
+              flush=True)
 
         print("---")
         for adapter_name, config in self.model.peft_config.items():
@@ -107,7 +109,7 @@ class UnslothLitAPI(ls.LitAPI):
             print(f"target_modules : {config.target_modules}")
             print("---")
         print(f"base_model : {self.model.base_model.name_or_path}")
-        print("---")
+        print("---", flush=True)
 
 
     def decode_request(self, request) -> Request:
@@ -119,7 +121,7 @@ class UnslothLitAPI(ls.LitAPI):
 
         request_obj = Request(
             adapter_name=adapter_name, queries_batch=queries)
-        print(f"request_obj : {request_obj}")
+        print(f"request_obj : {request_obj}", flush=True)
 
         return request_obj
 
@@ -187,7 +189,8 @@ class UnslothLitAPI(ls.LitAPI):
             for input_tokens_count, output_tokens
             in zip(input_tokens_count_list, outputs)
         ]
-        print(f"Max new tokens : {max(new_tokens_count_list)}")
+        print(f"Max new tokens : {max(new_tokens_count_list)}",
+              flush=True)
 
         batch_results = [
             QueryOutput(
