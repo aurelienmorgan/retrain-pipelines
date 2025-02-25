@@ -196,7 +196,8 @@ def _create_requirements_from_conda(
             Where the "requirements.txt" file
             shall be placed.
         - exclude (list[str]):
-            Names of packages to be excluded
+            Regex patterns for names of
+            packages to be excluded
             from the resulting file
             if present in the active environement.
     """
@@ -253,7 +254,9 @@ def _create_requirements_from_conda(
     for line in pip_freeze_output_lines:
         if '==' in line:
             pkg_name, pip_version = line.split('==')
-            if pkg_name in exclude:
+            if any(re.fullmatch(pattern, pkg_name)
+                   for pattern in exclude
+            ):
                 logger.info(f"excluding package '{pkg_name}' "+
                             f"from generated requirements.txt")
                 continue
@@ -291,7 +294,8 @@ def _create_requirements_from_pip(
             Where the "requirements.txt" file
             shall be placed.
         - exclude (list[str]):
-            Names of packages to be excluded
+            Regex patterns for names of
+            packages to be excluded
             from the resulting file
             if present in the active environement.
     """
@@ -300,8 +304,11 @@ def _create_requirements_from_pip(
     result = subprocess.run(
         command, capture_output=True, text=True)
     entries = result.stdout.splitlines()
-    filtered_entries = [entry for entry in entries
-                        if re.split(r'(==| @ )', entry)[0] not in exclude]
+    filtered_entries = [
+        entry for entry in entries
+        if not any(re.fullmatch(pattern, re.split(r'(==| @ )', entry)[0])
+                   for pattern in exclude)
+    ]
     with open(os.path.join(target_dir, 'requirements.txt')
               , 'w') as f:
         f.write('\n'.join(filtered_entries) + '\n')
@@ -316,7 +323,8 @@ def create_requirements(
             Where the "requirements.txt" file
             shall be placed.
         - exclude (list[str]):
-            Names of packages to be excluded
+            Regex patterns for names of
+            packages to be excluded
             from the resulting file
             if present in the active environement.
     """
