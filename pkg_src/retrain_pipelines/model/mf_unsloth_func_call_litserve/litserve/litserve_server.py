@@ -16,7 +16,7 @@ import litserve as ls
 from litserve_serverconfig import Config
 
 
-class RequestObj(BaseModel):
+class Request(BaseModel):
     adapter_name: str
     queries_batch: List[str]
 
@@ -87,13 +87,13 @@ class UnslothLitAPI(ls.LitAPI):
                 revision=adapter_revision,
                 adapter_name=adapter_name,
                 #offload_folder=,
-                token = os.getenv("HF_TOKEN", None)
+                token=os.getenv("HF_TOKEN", None)
             )
             self.adapter_tokenizers[adapter_name] = \
                 AutoTokenizer.from_pretrained(
                     pretrained_model_name_or_path=adapter_repo_id,
                     revision=adapter_revision,
-                    token = os.getenv("HF_TOKEN", None)
+                    token=os.getenv("HF_TOKEN", None)
                 )
 
         print(f"Load time : {time.time()-start_time:.2f} seconds")
@@ -110,21 +110,21 @@ class UnslothLitAPI(ls.LitAPI):
         print("---")
 
 
-    def decode_request(self, request) -> RequestObj:
+    def decode_request(self, request) -> Request:
         adapter_name = request.get("adapter_name") or ""
         try:
             queries = ast.literal_eval(request["queries"])
         except Exception as e:
             return {"error": str(e)}, 500
 
-        request_obj = RequestObj(
+        request_obj = Request(
             adapter_name=adapter_name, queries_batch=queries)
         print(f"request_obj : {request_obj}")
 
         return request_obj
 
 
-    def predict(self, request: RequestObj) -> Response:
+    def predict(self, request: Request) -> Response:
 
         if (
             request.adapter_name in get_model_status(
@@ -156,13 +156,6 @@ class UnslothLitAPI(ls.LitAPI):
             self.model.disable_adapters()
             print("active_adapters : None")
             tokenizer = self.tokenizer
-
-        inputs = tokenizer(
-            request.queries_batch,
-            padding=True,
-            truncation=True,
-            return_tensors="pt"
-        ).to("cuda")
 
         formatted_inputs = [(tokenizer.chat_template or "{}").format(query, "")
                             for query in request.queries_batch]
