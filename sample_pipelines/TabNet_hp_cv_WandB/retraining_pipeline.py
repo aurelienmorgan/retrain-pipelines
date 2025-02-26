@@ -989,7 +989,10 @@ class TabNetHpCvWandbFlow(FlowSpec):
             serving_container = build_and_run_docker(
                 image_name="tabnet_serve", image_tag="1.0",
                 build_path=self.serving_artifacts_local_folder,
-                dockerfile="Dockerfile.torchserve"
+                dockerfile="Dockerfile.torchserve",
+                ports_publish_dict={
+                    '8080/tcp': 9080, '8081/tcp': 9081,
+                    '8082/tcp': 9082}
             )
             if not serving_container:
                 print("failed spinning the TorchServe container",

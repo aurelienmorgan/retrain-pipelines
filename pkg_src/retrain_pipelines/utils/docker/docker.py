@@ -2,6 +2,7 @@
 import sys
 import time
 import subprocess
+from datetime import datetime
 
 import docker
 
@@ -25,7 +26,10 @@ def build_and_run_docker(
     image_name: str,
     image_tag: str,
     build_path: str = ".",
-    dockerfile: str = "Dockerfile"
+    dockerfile: str = "Dockerfile",
+    ports_publish_dict: dict = {},
+    env_vars_dict = {},
+    volumes_dict = {}
 ) -> bool:
     """
     Spins a container from build path.
@@ -39,9 +43,33 @@ def build_and_run_docker(
             defaults to "."
         - dockerfile (str):
             defaults to "Dockerfile"
+        - ports_publish_dict (dict):
+            Docker run port publish param value.
+            Used to publish container's port(s)
+            to the host machine.
+            can for instance be {'8080/tcp': 8080}}
+        - env_vars_dict (dict):
+            Environment variables to set inside
+            the container.
+        - volumes_dict (dict):
+            Used to configure volumes mounted
+            inside the container.
+            The key is either the host path or a
+            volume name, and the value is
+            a dictionary with the keys:
+                - ``bind`` The path to mount the
+                  volume inside the container.
+                - ``mode`` Either ``rw`` to mount
+                  the volume read/write, or
+                  ``ro`` to mount it read-only.
+            Example :
+                {'/home/user1/': {'bind': '/mnt/vol2',
+                                  'mode': 'rw'},
+                 '/var/www': {'bind': '/mnt/vol1',
+                              'mode': 'ro'}}
 
     Results:
-        - bool:
+        - (bool):
             success/failure
     """
 
@@ -49,7 +77,8 @@ def build_and_run_docker(
     full_image_name = f"{image_name}:{image_tag}"
 
     # Build the Docker image
-    print("Building Docker image...")
+    timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+    print(f"{timestamp} Building Docker image...")
     build_success = True
     try:
         build_response = docker_client.api.build(
@@ -62,16 +91,17 @@ def build_and_run_docker(
             decode=True,
             network_mode="host"
         )
-        
+
         for chunk in build_response:
+            timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
             if 'stream' in chunk:
-                print(chunk['stream'].strip())
+                print(f"{timestamp} {chunk['stream'].strip()}")
             elif 'error' in chunk:
                 build_success = False
-                print(f"Error: {chunk['error']}")
+                print(f"{timestamp} Error: {chunk['error']}")
             elif 'aux' in chunk:
-                print(f"Auxiliary: {chunk['aux']}")
-                
+                print(f"{timestamp} Auxiliary: {chunk['aux']}")
+
     except docker.errors.BuildError as e:
         build_success = False
         print(f"BuildError: {e}")
@@ -86,13 +116,16 @@ def build_and_run_docker(
             return False
 
     # Run the Docker container
-    print("Running Docker container...")
+    timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+    print(f"{timestamp} Running Docker container...")
     try:
         container = docker_client.containers.run(
             full_image_name,
             remove=True,
             detach=True,
-            ports={'8080/tcp': 9080, '8081/tcp': 9081, '8082/tcp': 9082},
+            ports=ports_publish_dict,
+            environment=env_vars_dict,
+            volumes=volumes_dict,
             name=image_name,
             runtime='nvidia',
             # gpus='all'
@@ -109,7 +142,9 @@ def build_and_run_docker(
         container = docker_client.containers.list(
             all=True, filters={"name": image_name})[0]
         done_created = "created" != container.status.lower()
-    print(f"Docker container {image_name} started successfully ({container.status}).")
+    print(f"{timestamp} Docker container {image_name}" +
+          " started successfully " +
+          f"({container.id[:12]}, {container.status}).")
 
     return True
 
