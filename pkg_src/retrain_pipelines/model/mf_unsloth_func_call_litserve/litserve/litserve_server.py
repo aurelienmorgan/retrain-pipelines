@@ -8,28 +8,12 @@ from transformers import AutoTokenizer
 from peft import get_model_status
 from peft.utils import ModulesToSaveWrapper
 
-from pydantic import BaseModel
-from typing import List, Dict
-
 import litserve as ls
 
+from typing import List
+
 from litserve_serverconfig import Config
-
-
-class Request(BaseModel):
-    adapter_name: str
-    queries_batch: List[str]
-
-
-class QueryOutput(BaseModel):
-    query: str
-    input_tokens_count: int
-    completion: str
-    new_tokens_count: int
-
-
-class Response(BaseModel):
-    output: List[QueryOutput]
+from litserve_datamodel import Request, QueryOutput, Response
 
 
 class UnslothLitAPI(ls.LitAPI):

@@ -95,29 +95,33 @@ def build_and_run_docker(
         for chunk in build_response:
             timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
             if 'stream' in chunk:
-                print(f"{timestamp} {chunk['stream'].strip()}")
+                print(f"{timestamp} {chunk['stream'].strip()}",
+                      flush=True)
             elif 'error' in chunk:
                 build_success = False
-                print(f"{timestamp} Error: {chunk['error']}")
+                print(f"{timestamp} Error: {chunk['error']}",
+                      flush=True)
             elif 'aux' in chunk:
-                print(f"{timestamp} Auxiliary: {chunk['aux']}")
+                print(f"{timestamp} Auxiliary: {chunk['aux']}",
+                      flush=True)
 
     except docker.errors.BuildError as e:
         build_success = False
-        print(f"BuildError: {e}")
+        print(f"BuildError: {e}", flush=True)
     except docker.errors.APIError as e:
         build_success = False
-        print(f"APIError: {e}")
+        print(f"APIError: {e}", flush=True)
     except Exception as e:
         build_success = False
-        print(f"Unexpected error: {e}")
+        print(f"Unexpected error: {e}", flush=True)
 
     if not build_success:
             return False
 
     # Run the Docker container
     timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-    print(f"{timestamp} Running Docker container...")
+    print(f"{timestamp} Running Docker container...",
+          flush=True)
     try:
         container = docker_client.containers.run(
             full_image_name,
@@ -131,7 +135,7 @@ def build_and_run_docker(
             # gpus='all'
         )
     except Exception as ex:
-        print(ex)
+        print(ex, flush=True)
         return False
 
     # await
@@ -144,14 +148,16 @@ def build_and_run_docker(
         done_created = "created" != container.status.lower()
     print(f"{timestamp} Docker container {image_name}" +
           " started successfully " +
-          f"({container.id[:12]}, {container.status}).")
+          f"({container.id[:12]}, {container.status}).",
+          flush=True)
 
     return True
 
 
 def cleanup_docker(
     container_name: str,
-    image_name: str = None
+    image_name: str = None,
+    no_pruning: bool = False
 ):
     """
     Params:
@@ -159,6 +165,10 @@ def cleanup_docker(
         - image_name (str):
             Name of the image to remove from Docker
             (if specified).
+        - no_pruning (bool):
+            Whether or not any dangling intermediate layers
+            shall be removed when image is.
+            Ignored if "image_name" is None.
     """
 
     docker_client = docker.from_env()
@@ -166,7 +176,8 @@ def cleanup_docker(
     container = docker_client.containers.list(
         all=True, filters={"name": container_name})[0]
     if container is None:
-        print(f"no {container_name} container found.")
+        print(f"no {container_name} container found.",
+              flush=True)
     else:
         # Stop the Docker container
         print(f"Stopping Docker container {container.name}...")
@@ -180,11 +191,16 @@ def cleanup_docker(
             stopped = "running" != container.status.lower()
 
         print(f"Docker container {container.name} stopped.")
-        print(container)
+        print(container, flush=True)
 
     # Remove the Docker image
-    print(f"Removing Docker image {container_name}...")
     if image_name is not None:
-        subprocess.run(['docker', 'rmi', image_name], check=True)
-        print(f"Docker image {container_name} removed.")
+        print(f"Removing Docker image {container_name}...",
+              flush=True)
+        subprocess.run(["docker", "rmi",
+                        "--no-prune" if no_pruning else "",
+                        image_name],
+                       check=True)
+        print(f"Docker image {container_name} removed.",
+              flush=True)
 
