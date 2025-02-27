@@ -5,8 +5,6 @@ import requests
 import json
 import sys
 
-import docker
-
 from retrain_pipelines.utils.docker import \
         print_container_log_tail
 

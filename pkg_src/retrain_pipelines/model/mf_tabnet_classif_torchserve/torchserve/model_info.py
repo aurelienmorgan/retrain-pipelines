@@ -28,10 +28,11 @@ class ModelInfo(BaseModel):
 
 
 def fetch_model_info(
-    model_name: str
+    model_name: str,
+    port: int
 ) -> List[ModelInfo]:
     # TorchServe management API
-    api_url = f"http://localhost:9081/models/{model_name}"
+    api_url = f"http://localhost:{port}/models/{model_name}"
 
     response = requests.get(api_url)
     response.raise_for_status()
@@ -47,8 +48,9 @@ def fetch_model_info(
 
 
 def endpoint_still_starting(
-    model_name: str
-):
+    model_name: str,
+    port: int = 9081
+) -> bool:
     """
     all model workers still have "STARTING" status.
     """
@@ -59,7 +61,7 @@ def endpoint_still_starting(
     @see TorchServe warmup (loading/unloading) policy.
     """
 
-    model_info = fetch_model_info(model_name)
+    model_info = fetch_model_info(model_name, port)
 
     # print(f"endpoint_still_starting ? => {model_info.workers}")
     return all([worker.status.lower()
@@ -68,13 +70,14 @@ def endpoint_still_starting(
 
 
 def endpoint_is_ready(
-    model_name: str
-):
+    model_name: str,
+    port: int = 9081
+) -> bool:
     """
     At least model worker has "READY" status.
     """
 
-    model_info = fetch_model_info(model_name)
+    model_info = fetch_model_info(model_name, port)
 
     # Print the parsed model info
     is_ready = any(["ready" == worker.status.lower()
