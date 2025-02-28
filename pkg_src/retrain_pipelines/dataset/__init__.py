@@ -4,5 +4,3 @@ from .dataset import DatasetType, \
                      features_desc, \
                      features_distri_plot
 
-from .hf_utils import *
-

@@ -8,8 +8,6 @@ import shutil
 import tempfile
 from textwrap import dedent
 
-import pytest
-
 from retrain_pipelines.dataset import DatasetType, \
         pseudo_random_generate
 from retrain_pipelines.utils import find_env_python

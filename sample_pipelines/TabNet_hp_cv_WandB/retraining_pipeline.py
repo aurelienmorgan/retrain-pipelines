@@ -1140,7 +1140,7 @@ class TabNetHpCvWandbFlow(FlowSpec):
                 {
                     "name": "Normalization",
                     "description": "Standard scaling of numerical features"
-                }
+                },
                 {
                     "name": "One-Hot Encoding",
                     "description": "Transforming categorical features " + \
