@@ -32,12 +32,14 @@ def get_model_versions_history(
         - verbose (bool)
 
     Results:
-        - (list[dict])
-            - branch_name (str)
-            - commit_hash (str)
-            - commit_datetime (datetime)
-            - version_label (str)
-            - eval_results (dict)
+        - (dict):
+            - repo_id
+            - list[dict]
+                - branch_name (str)
+                - commit_hash (str)
+                - commit_datetime (datetime)
+                - version_label (str)
+                - eval_results (dict)
     """
 
     start = time.time()
@@ -64,10 +66,14 @@ def get_model_versions_history(
                 token=hf_token
             )
             revision_card_data = model_info.card_data
-            if revision_card_data and "version" in revision_card_data:
+            if (
+                revision_card_data and
+                "version" in revision_card_data
+            ):
                 eval_results_dict = {
                     m['type']: m['value']
-                    for m in model_info.model_index[0]['results'][0]['metrics']
+                    for m in model_info.model_index[0] \
+                                ['results'][0]['metrics']
                 }
                 if branch_commit.created_at not in model_versions:
                     model_versions[branch_commit.created_at] = {
@@ -79,18 +85,20 @@ def get_model_versions_history(
                     }
                 # print(model_versions[branch_commit.created_at])
 
-    sorted_dict = dict(sorted(model_versions.items(), key=lambda x: x[0], reverse=True))
+    sorted_dict = dict(sorted(model_versions.items(),
+                              key=lambda x: x[0],
+                              reverse=True))
     model_versions_history = list(sorted_dict.values())
 
     if verbose:
         print(f"{time.time() - start:.2f} seconds")
 
-    return model_versions_history
+    return {"model_repo_id": repo_id,
+            "model_versions_history": model_versions_history}
 
 
 def model_versions_history_html_table(
-    model_versions_history: list,
-    repo_id: str
+    model_versions_history: dict
 ) -> str:
     """
     turns a 'model_versions_history'
@@ -101,25 +109,27 @@ def model_versions_history_html_table(
     on the HuggingFace hub.
 
     Params:
-        - (list[dict])
-            - branch_name (str)
-            - commit_hash (str)
-            - commit_datetime (datetime)
-            - version_label (str)
-            - eval_results (dict)
-        - repo_id (str):
-            Path to the HuggingFace model version.
+        - model_versions_history (dict):
+            - model_repo_id (str)
+            - model_versions_history (list[dict])
+                - branch_name (str)
+                - commit_hash (str)
+                - commit_datetime (datetime)
+                - version_label (str)
+                - eval_results (dict)
 
     Results:
         - (str)
     """
 
-    df = pd.DataFrame(model_versions_history)
+    df = pd.DataFrame(model_versions_history[
+                        "model_versions_history"])
 
     df['commit_hash'] = df['commit_hash'].apply(
         lambda commit_hash:
-            f"<a href=\"https://hf.co/{repo_id}/blob/" +
-                      f"{commit_hash}/README.md\" " +
+            f"<a href=\"https://hf.co/" +
+                      model_versions_history["model_repo_id"] +
+                      f"/blob/{commit_hash}/README.md\" " +
                 "target=\"_blank\">" +
             f"{commit_hash[:7]}</a>"
     )
@@ -128,7 +138,7 @@ def model_versions_history_html_table(
 
 
 def plot_model_versions_history(
-    model_versions_history: list,
+    model_versions_history: dict,
     main_metric_name: str
 ) -> None:
     """
@@ -138,10 +148,14 @@ def plot_model_versions_history(
         (if any).
 
     Params:
-        - model_versions_history (list[dict]):
-            - version_label (str)
-            - branch_name (str)
-            - eval_results (dict)
+        - model_versions_history (dict):
+            - model_repo_id (str)
+            - model_versions_history (list[dict])
+                - branch_name (str)
+                - commit_hash (str)
+                - commit_datetime (datetime)
+                - version_label (str)
+                - eval_results (dict)
         - main_metric_name (str)
             The metric to be plotted on the left y-axis.
             This shall be the one used during retraining
@@ -152,16 +166,19 @@ def plot_model_versions_history(
              its best predecessor).
     """
 
+    versions_history = \
+        model_versions_history["model_versions_history"]
     eval_metrics = list(
-        model_versions_history[0]['eval_results'].keys())
+        versions_history[0]['eval_results'].keys())
 
     fig, ax1 = plt.subplots(figsize=(11, 4))
 
     versions = ["v"+entry['version_label']
-                for entry in model_versions_history][::-1]
+                for entry in versions_history] \
+               [::-1]
     main_metric_vals = [
         entry['eval_results'][main_metric_name]
-        for entry in model_versions_history][::-1]
+        for entry in versions_history][::-1]
 
     line1, = ax1.plot(versions, main_metric_vals,
                       marker='', linestyle='-',
@@ -170,7 +187,7 @@ def plot_model_versions_history(
 
     branch_colors = [
         '#98c998' if entry['branch_name'] == 'main'
-        else None for entry in model_versions_history][::-1]
+        else None for entry in versions_history][::-1]
     for i, (x, y) in enumerate(zip(versions,
                                    main_metric_vals)):
         if branch_colors[i]:
@@ -184,7 +201,7 @@ def plot_model_versions_history(
     ax1.set_xticks(versions)
     for i, label in enumerate(ax1.get_xticklabels()):
         if [entry['branch_name']
-        for entry in model_versions_history][::-1][i] == 'main':
+        for entry in versions_history][::-1][i] == 'main':
             label.set_color('#98c998')
             label.set_fontweight('bold')
         else:
@@ -198,7 +215,7 @@ def plot_model_versions_history(
             m for m in eval_metrics if m != main_metric_name)
         other_metric_vals = [
             entry['eval_results'][other_metric_name]
-            for entry in model_versions_history][::-1]
+            for entry in versions_history][::-1]
 
         other_min, other_max = \
             min(other_metric_vals), max(other_metric_vals)
@@ -253,7 +270,8 @@ def plot_model_versions_history(
             text.set_fontstyle('italic')
 
     ax1.grid(True, linestyle=':', alpha=0.5)
-    plt.title('Model Evaluation Metrics by Version')
+    plt.title(model_versions_history["model_repo_id"] +
+              "  -  Eval by Version")
     plt.show()
 
 
