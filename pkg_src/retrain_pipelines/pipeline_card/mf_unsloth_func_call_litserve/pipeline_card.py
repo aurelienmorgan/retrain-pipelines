@@ -180,17 +180,31 @@ def get_html(
                              == local_serve_is_ready)
                     else "#008000" if (LocalServeReadinessEnum.SUCCESS
                                        == local_serve_is_ready)
+                    else "#A34700" if (LocalServeReadinessEnum.FAILURE_NO_DOCKER
+                                       == local_serve_is_ready)
                     else "#811331"),
                 local_serve_background=(
-                    None if (-1 == local_serve_is_ready)
+                    None if (LocalServeReadinessEnum.NOT_APPLICABLE
+                             == local_serve_is_ready)
                     else "#7CFC00" if (LocalServeReadinessEnum.SUCCESS
+                                       == local_serve_is_ready)
+                    else "#FFA500" if (LocalServeReadinessEnum.FAILURE_NO_DOCKER
                                        == local_serve_is_ready)
                     else "#FF3131"),
                 local_serve_status=(
-                    None if (-1 == local_serve_is_ready)
-                    else 'Passed' if (LocalServeReadinessEnum.SUCCESS
+                    None if (LocalServeReadinessEnum.NOT_APPLICABLE
+                             == local_serve_is_ready)
+                    else "Passed" if (LocalServeReadinessEnum.SUCCESS
                                        == local_serve_is_ready)
-                    else 'Failed'),
+                    else "Skipped" if (LocalServeReadinessEnum.FAILURE_NO_DOCKER
+                                       == local_serve_is_ready)
+                    else "Failed"),
+                local_serve_reason=(
+                    "(docker missing on host)" if (
+                        LocalServeReadinessEnum.FAILURE_NO_DOCKER
+                        == local_serve_is_ready
+                    )
+                    else None),
                 ###################################
 
                 # EDA =>                          #

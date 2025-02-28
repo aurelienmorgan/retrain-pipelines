@@ -375,7 +375,7 @@
         <div style="color:{{blessed_color}}; height:100px; width:100%;
                     justify-content:center; align-items:center; display:flex;
                     background:{{blessed_background}};
-                    font-size:xxx-large; Font weight:black;">
+                    font-size:xxx-large; font-weight:bold;">
             Model Version {{model_version_blessed}}Blessed&nbsp;!
         </div>
         <!-- model version blessing status -->
@@ -428,15 +428,20 @@
         <!-- infra validation status -->
         <p></p>
         <div style="color:{{local_serve_color}}; height:100px; width:100%;
-                    justify-content:center; align-items:center; display:flex;
-                    background: {{local_serve_background}};
-                    font-size:xxx-large; Font weight:black;">
-            Model Version {{local_serve_status}} Infra Validation&nbsp;!
+                    display:flex; justify-content:center; align-items:center;
+                    background:{{local_serve_background}}; text-align:center;
+                    flex-direction:column;">
+            <div style="font-size:xxx-large; font-weight:bold;">
+                Model Version {{local_serve_status}} Infra Validation&nbsp;!
+            </div>
+    {% if local_serve_reason is not none %}
+            <div style="font-size:x-large;
+                        font-style:italic;">{{local_serve_reason}}</div>
+    {% endif %}
         </div>
         <br />
         <!-- END infra validation status -->
 {% endif %}
-{{local_serve_test_failed}}
         <br />
         <div id="accordion">
             <div class="card">
