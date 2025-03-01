@@ -1,7 +1,6 @@
 
 import os
 import sys
-import platform
 
 import json
 import shutil
@@ -10,14 +9,10 @@ from textwrap import dedent
 
 from retrain_pipelines.dataset import DatasetType, \
         pseudo_random_generate
-from retrain_pipelines.utils import find_env_python
+from retrain_pipelines.utils.pytest_utils import \
+        get_venv
 from retrain_pipelines.local_launcher import \
         retrain_pipelines_local
-
-abort_cmd = (
-    '("Command+." to abort)' if platform.system() == "Darwin"
-    else '("Ctrl+C" to abort)'
-)
 
 
 ##################################################
@@ -33,31 +28,11 @@ def test_mf_lightgbm_regress_tempo():
         f"{temp_dir}/synthetic_classif_tab_data_continuous.csv"
     data.to_csv(data_file_path, index=False)
 
-    # assumes the "requirement.txt" from the subdir
+    # assumes the "requirements.txt" from the subdir
     # of the herein "sample pipeline"
     # are installed in an env named "metaflow_lightgbm"
     # (would it be through conda or venv)
-    virtual_env_name = "metaflow_lightgbm"
-    print(f"Looking for virtual environment '{virtual_env_name}' " +
-          f"{abort_cmd}.. ", end="")
-    python_path = find_env_python(virtual_env_name)
-    assert python_path, \
-           "Virtual environment for this test is missing."
-    print("Found.")
-
-    env = os.environ.copy()
-    ############################################
-    #    replace default python bin in PATH    #
-    ############################################
-    # drop existing python bin directory from PATH
-    path_dirs = env['PATH'].split(os.pathsep)
-    path_dirs = [d for d in path_dirs
-                 if not os.path.exists(os.path.join(d, 'python'))]
-    # prepend current environment python bin directory to PATH
-    new_path = os.pathsep.join([os.path.dirname(python_path)] +
-                               path_dirs)
-    env['PATH'] = new_path
-    ############################################
+    env = get_venv(virtual_env_name="metaflow_lightgbm")
 
     pipeline_hp_grid = {
         "boosting_type": ["gbdt"],
@@ -98,31 +73,11 @@ def test_mf_tabnet_classif_torchserve():
         f"{temp_dir}/synthetic_classif_tab_data_4classes.csv"
     data.to_csv(data_file_path, index=False)
 
-    # assumes the "requirement.txt" from the subdir
+    # assumes the "requirements.txt" from the subdir
     # of the herein "sample pipeline"
     # are installed in an env named "metaflow_pytorch_1"
     # (would it be through conda or venv)
-    virtual_env_name = "metaflow_pytorch_1"
-    print(f"Looking for virtual environment '{virtual_env_name}' " +
-          f"{abort_cmd}.. ", end="")
-    python_path = find_env_python(virtual_env_name)
-    assert python_path, \
-           "Virtual environment for this test is missing."
-    print("Found.")
-
-    env = os.environ.copy()
-    ############################################
-    #    replace default python bin in PATH    #
-    ############################################
-    # drop existing python bin directory from PATH
-    path_dirs = env['PATH'].split(os.pathsep)
-    path_dirs = [d for d in path_dirs
-                 if not os.path.exists(os.path.join(d, 'python'))]
-    # prepend current environment python bin directory to PATH
-    new_path = os.pathsep.join([os.path.dirname(python_path)] +
-                               path_dirs)
-    env['PATH'] = new_path
-    ############################################
+    env = get_venv(virtual_env_name="metaflow_pytorch_1")
 
     pipeline_hp_grid = {
         "trainer": {

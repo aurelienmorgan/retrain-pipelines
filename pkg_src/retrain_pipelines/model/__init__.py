@@ -50,6 +50,6 @@ elif "mf_lightgbm_regress_tempo" == retrain_pipeline_type:
                 tempo_wait_ready, tempo_predict
 
 else:
-    raise ValueError(f"retrain_pipeline_type {retrain_pipeline_type}" +
-                      "not recognized.")
+    raise ValueError(f"retrain_pipeline_type {retrain_pipeline_type} " +
+                     " not recognized.")
 

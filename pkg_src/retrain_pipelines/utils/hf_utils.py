@@ -463,7 +463,7 @@ def get_new_repo_minor_version(
     return new_version_label
 
 
-def _create_repo_if_not_exists(
+def create_repo_if_not_exists(
     hf_api: HfApi,
     repo_id: str,
     repo_type: str = "model",
@@ -594,7 +594,7 @@ def local_repo_folder_to_hub(
     api = HfApi()
     repository_new_commit_hash = None
 
-    if not _create_repo_if_not_exists(
+    if not create_repo_if_not_exists(
         hf_api=api,
         repo_id=repo_id,
         repo_type=repo_type,
