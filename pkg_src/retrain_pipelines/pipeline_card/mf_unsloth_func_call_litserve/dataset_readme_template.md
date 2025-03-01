@@ -26,7 +26,7 @@ language:
 task_categories:
 - question-answering
 - text-generation
-- reinforcement-learning
+- text2text-generation
 
 tags:
 - retrain-pipelines

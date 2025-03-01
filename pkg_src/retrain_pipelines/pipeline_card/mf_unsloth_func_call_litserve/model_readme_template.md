@@ -23,7 +23,7 @@ language:
 - en
 
 task_categories:
-- question-answering
+- text2text-generation
 
 tags:
 - retrain-pipelines
@@ -36,22 +36,34 @@ thumbnail: https://cdn-avatars.huggingface.co/v1/production/uploads/651e93137b2a
 
 
 # @see https://huggingface.co/docs/hub/models-widgets#enabling-a-widget
+# @see https://huggingface.co/docs/hub/models-widgets-examples
 widget:
-- text: "Is this review positive or negative? Review: Best cast iron skillet you will ever buy."
-  output:
-      text: "Hello my name is Julien"
+  - text: >-
+      Hello
+    example_title: No function call
+    output:
+      text: '[]'
+  - text: >-
+      Is 49 a perfect square?
+    example_title: Perfect square
+    output:
+      text: '[{"name": "is_perfect_square", "arguments": {"num": 49}}]'
 
 mf_run_id: '{{ mf_run_id }}'
 
 # @see https://huggingface.co/docs/huggingface_hub/guides/model-cards#include-evaluation-results
+# @see https://huggingface.co/docs/huggingface_hub/main/en/package_reference/cards#huggingface_hub.EvalResult
 model-index:
 - name: {{ pretty_name }}
   results:
   - task:
-      type: question-answering
+      type: text2text-generation
+      name: Text2Text Generation
     dataset:
-      name: Beans
-      type: beans
+      name: {{ dataset_pretty_name }}
+      type: {{ dataset_repo_id }}
+      split: validation
+      revision: {{ dataset_commit_hash }}
 {{ perf_metrics }}
 
 ---
@@ -85,15 +97,6 @@ arxiv&nbsp;:<br />
 {% endif -%}
 
 
-<br />
-<br />
-<br />
-<br />
-<br />
-<br />
-&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; TODO<br />
-&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; Section on Eval goes here
-<br />
 <br />
 <br />
 <br />

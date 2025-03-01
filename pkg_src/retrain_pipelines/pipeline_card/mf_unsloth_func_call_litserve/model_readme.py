@@ -85,6 +85,12 @@ def _model_readme_params(
     if not base_model_license_label:
         base_model_license_label = "unknown"
 
+    dataset_pretty_name = get_pretty_name(
+        repo_id=training_dataset_dict["repo_id"],
+        repo_type="dataset",
+        commit_hash=training_dataset_dict["commit_hash"]
+    )
+
     perf_metrics_yaml = textwrap.indent(
         "  metrics:\n" + "\n".join(
             [f"    - type: {key}\n      value: {value}"
@@ -99,6 +105,7 @@ def _model_readme_params(
 
             "pretty_name": pretty_name,
 
+            "dataset_pretty_name": dataset_pretty_name,
             "dataset_repo_id": \
                 training_dataset_dict["repo_id"],
             "dataset_version_label": \
