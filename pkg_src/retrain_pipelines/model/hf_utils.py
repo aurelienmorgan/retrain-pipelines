@@ -12,7 +12,7 @@ from huggingface_hub.utils import RepositoryNotFoundError
 
 from retrain_pipelines import __version__
 from retrain_pipelines.utils.hf_utils import \
-    local_repo_folder_to_hub
+    local_repo_folder_to_hub, get_commit_created_at
 
 
 def push_model_version_to_hub(
@@ -100,6 +100,14 @@ def current_blessed_model_version_dict(
     None if no prior model version
     exists on the HF Hub.
 
+    Note: we look into the "main" branch of the model repo
+    because it's the `retrain-pipelines` branch
+    for blessed model versions.
+
+    Note : this method here is permissive to
+    non-`retrain-pipelines` trained prior model versions.
+    As long as they have reported eval results.
+
     Params:
         - repo_id (str):
             Path to the HuggingFace model.
@@ -115,8 +123,10 @@ def current_blessed_model_version_dict(
             - perf_metrics (dict)
     """
 
+    hf_api = HfApi()
+
     try:
-        model_info = HfApi().repo_info(
+        model_info = hf_api.repo_info(
             repo_id=repo_id,
             revision="main",
             token=hf_token
@@ -131,23 +141,36 @@ def current_blessed_model_version_dict(
         print(err, file=sys.stderr)
         return None
 
-    if model_info:
-        model_version_card_data = \
-            model_info.cardData
-        commit_datetime = datetime.strptime(
-            model_version_card_data["timestamp"],
-            "%Y%m%d_%H%M%S%f_%Z")
+    if (
+        model_info and
+        model_info.model_index and
+        "results" in model_info.model_index[0] and
+        # model_info.model_index[0]["results"] and
+        "metrics" in model_info.model_index[0]["results"][0]
+    ):
+        if "timestamp" in model_info.cardData:
+            # sign of a `retrain-pipelines` model card
+            commit_datetime = datetime.strptime(
+                model_info.cardData["timestamp"],
+                "%Y%m%d_%H%M%S%f_%Z")
+        else:
+            commit_datetime = get_commit_created_at(
+                hf_api=api, repo_id=repo_id,
+                revision="main",
+                repo_type="model",
+                hf_token=hf_token
+            )
 
         eval_results_dict = {
                 m['type']: m['value']
                 for m in model_info \
-                            .model_index[0]['results'][0]['metrics']
+                            .model_index[0]["results"][0]["metrics"]
             }
 
         return {
-            "mf_run_id": model_version_card_data["mf_run_id"],
+            "mf_run_id": model_info.cardData["mf_run_id"],
             "commit_hash": model_info.sha,
-            "version_label": model_version_card_data["version"],
+            "version_label": model_info.cardData["version"],
             "commit_datetime": commit_datetime,
             "perf_metrics": eval_results_dict
         }

@@ -1,15 +1,18 @@
 
 import os
+import json
 
 from huggingface_hub import HfApi, repo_exists
 """
 Top-leavel env for pytest has
 dependency with 'huggingface_hub' !
 """
-from retrain_pipelines.utils.pytest_utils import \
-        get_venv
 from retrain_pipelines.utils.hf_utils import \
         create_repo_if_not_exists
+from retrain_pipelines.utils.pytest_utils import \
+        get_venv
+from retrain_pipelines.local_launcher import \
+        retrain_pipelines_local
 
 
 def delete_repo_safe_if_exists(
@@ -68,11 +71,9 @@ def test_mf_unsloth_func_call_litserve():
         ):
             pytest_dataset_repo_id = potential_repo_id
             break
-    if not pytest_dataset_repo_id:
-        raise HfHubHTTPError(f"Failed to create dataset repo " +
-                             f"\"{pytest_dataset_repo_shortname}\".")
-    else:
-        print(f"Using dataset repo : {pytest_dataset_repo_id}")
+    assert pytest_dataset_repo_id, f"Failed to create dataset repo " + \
+                                   f"\"{pytest_dataset_repo_shortname}\"."
+    print(f"Using dataset repo : {pytest_dataset_repo_id}")
 
     pytest_model_repo_id = None
     pytest_model_repo_shortname = "unsloth_litserve_pytest"
@@ -86,16 +87,42 @@ def test_mf_unsloth_func_call_litserve():
         ):
             pytest_model_repo_id = potential_repo_id
             break
-    if not pytest_model_repo_id:
-        raise HfHubHTTPError(f"Failed to create model repo " +
-                             f"\"{pytest_model_repo_shortname}\".")
-    else:
-        print(f"Using model repo : {pytest_model_repo_id}")
+    assert pytest_model_repo_id, f"Failed to create model repo " + \
+                                 f"\"{pytest_model_repo_shortname}\"."
+    print(f"Using model repo : {pytest_model_repo_id}")
 
+    # actual pipeline run starts here
 
-    # TODO
-    success = True
+    env["HF_TOKEN"] = os.getenv("HF_TOKEN", None)
 
+    cpt_training_args = {
+        "records_cap": 32, # limit on training records used
+        "max_steps": 1,
+        "warmup_steps": 0}
+    env['cpt_training_args'] = str(json.dumps(cpt_training_args))
+
+    sft_training_args = {
+        "records_cap": 32, # limit on training records used
+        "max_steps": 1,
+        "warmup_steps": 0}
+    env['sft_training_args'] = str(json.dumps(sft_training_args))
+
+    command = [
+        os.path.join(
+            os.path.dirname(os.path.dirname(__file__)),
+            "sample_pipelines", "Unsloth_Qwen_FuncCall",
+            "retraining_pipeline.py"
+        ), "run",
+        "--dataset_repo_id", pytest_dataset_repo_id, \
+        "--cpt_training_args", "{cpt_training_args}",
+        "--sft_training_args", "{sft_training_args}",
+        "--model_repo_id", pytest_model_repo_id \
+    ]
+
+    success = retrain_pipelines_local(
+        command = " ".join(command),
+        env=env
+    )
 
     if pytest_dataset_repo_id:
         delete_repo_safe_if_exists(hf_api=hf_api,

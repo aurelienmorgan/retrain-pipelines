@@ -383,7 +383,7 @@ def get_pretty_name(
 def get_new_repo_minor_version(
     repo_id: str,
     repo_type: str = "model",
-    hf_token: str = None
+    hf_token: str = os.getenv("HF_TOKEN", None)
 ) -> str:
     """
     `retrain-pipelines` repositories
@@ -467,7 +467,7 @@ def create_repo_if_not_exists(
     hf_api: HfApi,
     repo_id: str,
     repo_type: str = "model",
-    hf_token: str = None,
+    hf_token: str = os.getenv("HF_TOKEN", None)
 ) -> bool:
     """
     Note : For repositories of type 'model',
@@ -559,7 +559,7 @@ def local_repo_folder_to_hub(
     commit_message: str = "new commit",
     branch_name: str = "main",
     repo_type: str = "model",
-    hf_token: str = None,
+    hf_token: str = os.getenv("HF_TOKEN", None),
 ) -> str:
     """
     Upload all files in a single commit.
@@ -718,4 +718,39 @@ def push_files_to_hub_repo_branch(
     shutil.rmtree(tmp_src_dir, ignore_errors=True)
 
     return folder_branch_commit_hash
+
+
+def get_commit_created_at(
+    hf_api: HfApi,
+    repo_id: str,
+    revision: str,
+    repo_type: str = "model",
+    hf_token: str = os.getenv("HF_TOKEN", None)
+):
+    """
+
+    Params:
+        - hf_api (HfApi):
+            An instanciated FH api object.
+        - repo_id (str):
+            Path to the HuggingFace repository.
+        - revision (str):
+            commit hash or branch name.
+            If branch name, we consider
+            the latest commit.
+        - repo_type (str):
+            can be "model", "dataset", "space".
+        - hf_token (Optional, str):
+
+    Results:
+        - (bool):
+            success/failure
+    """
+    commits = api.list_repo_commits(
+        repo_id, repo_type="model", revision=revision, token=hf_token)
+    if commits:
+        # Commits are sorted by date, latest first
+        return commits[0].created_at
+
+    return None
 
