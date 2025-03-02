@@ -12,8 +12,8 @@ timestamp: '{{ timestamp_str }}'
 model_name: {{ pretty_name }}
 
 base_model: {{ base_model_repo_id }}
-base_model_relation: finetune
-library_name: peft
+base_model_relation: adapter
+library_name: transformers
 datasets:
 - {{ dataset_repo_id }}
 
@@ -37,6 +37,8 @@ thumbnail: https://cdn-avatars.huggingface.co/v1/production/uploads/651e93137b2a
 
 # @see https://huggingface.co/docs/hub/models-widgets#enabling-a-widget
 # @see https://huggingface.co/docs/hub/models-widgets-examples
+# @see https://huggingface.co/docs/hub/en/model-cards#specifying-a-task--pipelinetag-
+pipeline_tag: text2text-generation
 widget:
   - text: >-
       Hello
