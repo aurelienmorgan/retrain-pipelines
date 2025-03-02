@@ -145,7 +145,6 @@ def current_blessed_model_version_dict(
         model_info and
         model_info.model_index and
         "results" in model_info.model_index[0] and
-        # model_info.model_index[0]["results"] and
         "metrics" in model_info.model_index[0]["results"][0]
     ):
         if "timestamp" in model_info.cardData:

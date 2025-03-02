@@ -5,12 +5,11 @@ import requests
 import json
 import sys
 
-from retrain_pipelines.utils.docker import \
-        print_container_log_tail
-
-
 from pydantic import BaseModel, conlist, validator
 from typing import List, Union
+
+from retrain_pipelines.utils.docker import \
+        print_container_log_tail
 
 
 # Request models
