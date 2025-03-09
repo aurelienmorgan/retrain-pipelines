@@ -11,6 +11,8 @@ from retrain_pipelines.dataset import DatasetType, \
         pseudo_random_generate
 from retrain_pipelines.utils.pytest_utils import \
         get_venv
+from retrain_pipelines.utils import \
+        as_env_var
 from retrain_pipelines.local_launcher import \
         retrain_pipelines_local
 
@@ -40,7 +42,9 @@ def test_mf_lightgbm_regress_tempo():
         "learning_rate": [0.01],
         "n_estimators": [2],
     }
-    env['pipeline_hp_grid'] = str(json.dumps(pipeline_hp_grid))
+    as_env_var(pipeline_hp_grid,
+               "pipeline_hp_grid",
+               env=env)
 
     command = [
         os.path.join(
@@ -104,11 +108,9 @@ def test_mf_tabnet_classif_torchserve():
             "epsilon":[1e-15]
         }
     }
-    env['pipeline_hp_grid'] = str(
-            json.dumps(dedent(
-                """{pipeline_hp_grid}""".format(
-                    pipeline_hp_grid=pipeline_hp_grid)))
-        ).replace("'", '"').strip('"')
+    as_env_var(pipeline_hp_grid,
+               "pipeline_hp_grid",
+               env=env)
 
     command = [
         os.path.join(

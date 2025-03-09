@@ -10,6 +10,7 @@ from .utils import dict_dict_list_get_all_combinations, \
                    create_requirements, \
                    grant_read_access, \
                    tmp_os_environ, \
+                   as_env_var, \
                    get_get_html, \
                    get_get_dataset_readme_content, \
                    get_get_model_readme_content

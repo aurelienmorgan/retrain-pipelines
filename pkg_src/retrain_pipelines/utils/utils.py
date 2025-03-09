@@ -1,6 +1,7 @@
 
 import os
 import sys
+import json
 
 import re
 import stat
@@ -10,6 +11,8 @@ import tempfile
 import itertools
 import subprocess
 import importlib.util
+from typing import Any
+from os import _Environ
 from textwrap import dedent
 
 # conditional import of the "torch" package
@@ -569,4 +572,24 @@ def tmp_os_environ(env_updates: dict):
     yield
     os.environ.clear()
     os.environ.update(old_environ)
+
+
+def as_env_var(
+    env_var_value: Any,
+    env_var_name: str,
+    env: _Environ = os.environ
+) -> None:
+    """
+    Applies proper formatting to (dict) object as string
+    and sets it as an environment variable.
+    """
+
+    if isinstance(env_var_value, dict):
+        env[env_var_name] = \
+            str(json.dumps(dedent(
+                    """{env_var_value}""" \
+                    .format(env_var_value=env_var_value)))) \
+            .replace("'", '"').strip('"')
+    else:
+        env[env_var_name] = env_var_value
 

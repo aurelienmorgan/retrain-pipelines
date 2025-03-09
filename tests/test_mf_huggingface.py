@@ -11,6 +11,8 @@ from retrain_pipelines.utils.hf_utils import \
         create_repo_if_not_exists
 from retrain_pipelines.utils.pytest_utils import \
         get_venv
+from retrain_pipelines.utils import \
+        as_env_var
 from retrain_pipelines.local_launcher import \
         retrain_pipelines_local
 
@@ -99,13 +101,17 @@ def test_mf_unsloth_func_call_litserve():
         "records_cap": 32, # limit on training records used
         "max_steps": 1,
         "warmup_steps": 0}
-    env['cpt_training_args'] = str(json.dumps(cpt_training_args))
+    as_env_var(cpt_training_args,
+               "cpt_training_args",
+               env=env)
 
     sft_training_args = {
         "records_cap": 32, # limit on training records used
         "max_steps": 1,
         "warmup_steps": 0}
-    env['sft_training_args'] = str(json.dumps(sft_training_args))
+    as_env_var(sft_training_args,
+               "sft_training_args",
+               env=env)
 
     command = [
         os.path.join(
