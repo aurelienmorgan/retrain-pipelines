@@ -5,6 +5,25 @@ import subprocess
 from datetime import datetime
 
 import docker
+from docker.errors import DockerException
+
+
+def env_has_docker() -> bool:
+    """
+    Note that, if docker is missing, you could always
+    establish SSH connection to a machine with an env
+    hosting a docker service.
+    @see `help(docker.from_env)` for more on
+    setting local envirnonment variables such as
+    `DOCKER_HOST` for this.
+    """
+
+    try:
+        docker.from_env()
+    except DockerException as dEx:
+        print(dEx)
+        return false
+    return True
 
 
 def print_container_log_tail(

@@ -1,4 +1,10 @@
 
+from unsloth import FastLanguageModel, \
+    is_bfloat16_supported, UnslothTrainer, \
+    UnslothTrainingArguments
+
+import torch
+
 import os
 import sys
 
@@ -37,12 +43,6 @@ from datasets import load_dataset, Dataset, DatasetDict
 from datasets.config import HF_DATASETS_CACHE, HF_CACHE_HOME
 from huggingface_hub import list_repo_commits
 from transformers import AutoTokenizer
-
-from unsloth import FastLanguageModel, \
-    is_bfloat16_supported, UnslothTrainer, \
-    UnslothTrainingArguments
-
-import torch
 
 from retrain_pipelines import __version__
 from retrain_pipelines.dataset.hf_utils import get_lazy_df, \
@@ -155,7 +155,7 @@ class UnslothFuncCallFlow(FlowSpec):
         type=str,
         default="retrain-pipelines/func_calls",
         help="The 'repo_id' to be used " + \
-             "for the HuggingFace dataset version push " + \
+             "for the Hugging Face dataset version push " + \
              "(will be created at runtime" + \
              " if doesn't already exist)."
     )
@@ -199,24 +199,9 @@ class UnslothFuncCallFlow(FlowSpec):
         type=str,
         default="retrain-pipelines/function_caller",
         help="The 'repo_id' to be used " + \
-             "for the HuggingFace model version push " + \
+             "for the Hugging Face model version push " + \
              "(will be created at runtime" + \
              " if doesn't already exist)."
-    )
-
-    pipeline_hp_grid = Parameter(
-        "pipeline_hp_grid",
-        help="TabNet model hyperparameters domain " + \
-             "(for both the model and the trainer)",
-        type=JSONType,
-        default=dedent("""{
-            "trainer": {
-                "max_epochs": [300]
-            },
-            "model": {
-                "n_d": [64]
-            }
-        }""").replace("'", '"').strip('"')
     )
 
     default_pipeline_card_module_dir = \
@@ -273,6 +258,42 @@ class UnslothFuncCallFlow(FlowSpec):
             filefullname = os.path.join(
                     UnslothFuncCallFlow.default_pipeline_card_module_dir,
                     "dataset_readme_template.md")
+            shutil.copy(filefullname, target_dir)
+            print(filefullname)
+    @staticmethod
+    def copy_default_model_readme_module(
+        target_dir: str,
+        exists_ok: bool = False
+    ) -> None:
+        os.makedirs(target_dir, exist_ok=True)
+        if (
+            not exists_ok and
+            os.path.exists(os.path.join(target_dir, "model_readme.py"))
+        ):
+            print("File already exists. Skipping copy.")
+        else:
+            filefullname = os.path.join(
+                    UnslothFuncCallFlow.default_pipeline_card_module_dir,
+                    "model_readme.py"
+                )
+            shutil.copy(filefullname, target_dir)
+            print(filefullname)
+    @staticmethod
+    def copy_default_model_readme_template(
+        target_dir: str,
+        exists_ok: bool = False
+    ) -> None:
+        os.makedirs(target_dir, exist_ok=True)
+        if (
+            not exists_ok and
+            os.path.exists(os.path.join(target_dir,
+                                        "model_readme_template.md"))
+        ):
+            print("File already exists. Skipping copy.")
+        else:
+            filefullname = os.path.join(
+                    UnslothFuncCallFlow.default_pipeline_card_module_dir,
+                    "model_readme_template.md")
             shutil.copy(filefullname, target_dir)
             print(filefullname)
     @staticmethod
@@ -345,7 +366,7 @@ class UnslothFuncCallFlow(FlowSpec):
                   hf_dataset_dict["lazy_df"].explain())
         except ComputeError as ex:
             if "HF_TOKEN" not in os.environ:
-                print("Does the HuggingFace-hosted dataset " +
+                print("Does the Hugging Face-hosted dataset " +
                       "require authentication ?",
                       file=sys.stderr, flush=True)
             raise ex
@@ -604,7 +625,7 @@ class UnslothFuncCallFlow(FlowSpec):
         as specified by the the flow 'hf_enrich_dataset' argument.
         """
         """
-        Note : we here use the HuggingFace `datasets` library
+        Note : we here use the Hugging Face `datasets` library
         in 'streaming' mode for records sampling.
         """
 
@@ -666,10 +687,10 @@ class UnslothFuncCallFlow(FlowSpec):
         - readme with versioning info
         """
 
-        ###########################
-        #  case of user-provided  #
-        # documentation artifact(s)
-        ###########################
+        #############################
+        #  case of user-provided    #
+        # documentation artifact(s) #
+        #############################
         # note that user can provide either
         # 'pipeline_card.py' or 'template.html'
         # or 'dataset_readme.py'
@@ -691,7 +712,7 @@ class UnslothFuncCallFlow(FlowSpec):
                     f"{os.getenv('retrain_pipeline_type')}"
                 ).origin)
         print(f"template_dir : '{template_dir}'")
-        ###########################
+        #############################
         if "dataset_readme.py" in os.listdir(
                 self.pipeline_card_artifacts_path):
             from retrain_pipelines.utils import \
@@ -702,13 +723,13 @@ class UnslothFuncCallFlow(FlowSpec):
         else:
             from retrain_pipelines.pipeline_card import \
                     get_dataset_readme_content
-        ###########################
+        #############################
     
 
-        ###########################
-        #   augmented & enriched  #
-        #    finetuning dataset   #
-        ###########################
+        #############################
+        #    augmented & enriched   #
+        #     finetuning dataset    #
+        #############################
         merged_df = pl.concat([
                 # dataset
                 self.hf_dataset_dict["lazy_df"].select([
@@ -737,12 +758,12 @@ class UnslothFuncCallFlow(FlowSpec):
             "train": Dataset.from_pandas(pandas_df[:train_size]),
             "validation": Dataset.from_pandas(pandas_df[train_size:])
         })
-        ###########################
+        #############################
 
-        ###########################
-        #  continued pre-training #
-        #         dataset         #
-        ###########################
+        #############################
+        #   continued pre-training  #
+        #          dataset          #
+        #############################
         struct_schema = pl.Struct([
             pl.Field("name", pl.String),
             pl.Field("description", pl.String),
@@ -767,24 +788,24 @@ class UnslothFuncCallFlow(FlowSpec):
         self.unique_tools_dataset = \
             Dataset(unique_tools_arrow_table)
         print(self.unique_tools_dataset)
-        ###########################
+        #############################
 
-        ###########################
-        #       DatasetDict       #
-        #   with multiple tables  #
-        ###########################
+        #############################
+        #        DatasetDict        #
+        #    with multiple tables   #
+        #############################
         dataset_dict = DatasetDict({
             "continued_pre_training": \
                 self.unique_tools_dataset,
             "supervised_finetuning": sft_dataset
         })
         print(dataset_dict, flush=True)
-        ###########################
+        #############################
 
-        ###########################
-        #      dataset README     #
-        #      from template      #
-        ###########################
+        #############################
+        #       dataset README      #
+        #       from template       #
+        #############################
         commit_datetime = datetime.utcnow()
         new_dataset_version_label = get_new_repo_minor_version(
             repo_id=self.dataset_repo_id,
@@ -807,7 +828,7 @@ class UnslothFuncCallFlow(FlowSpec):
             mf_run_id=current.run.id,
             engine=self.engine
         )
-        ###########################
+        #############################
 
         dataset_commit_hash = push_dataset_version_to_hub(
             repo_id=self.dataset_repo_id,
@@ -910,9 +931,9 @@ class UnslothFuncCallFlow(FlowSpec):
             self.cpt_training_args["records_cap"] is not None and
             isinstance(self.cpt_training_args["records_cap"], int)
         ):
-            train_dataset = cpt_dataset.take(
+            cpt_dataset = cpt_dataset.take(
                 self.cpt_training_args["records_cap"])
-            print(f"train_dataset : {train_dataset}")
+            print(f"cpt_dataset : {cpt_dataset}")
 
         train_args = UnslothTrainingArguments(
             # https://huggingface.co/docs/transformers/main_classes/trainer#transformers.TrainingArguments.save_strategy
@@ -947,7 +968,7 @@ class UnslothFuncCallFlow(FlowSpec):
 
         trainer = UnslothTrainer(
             model=model, tokenizer=tokenizer,
-            train_dataset=train_dataset,
+            train_dataset=cpt_dataset,
             dataset_text_field="tools",
             max_seq_length=self.max_seq_length,
             dataset_num_proc=2,
@@ -1249,7 +1270,7 @@ class UnslothFuncCallFlow(FlowSpec):
         # with tokenizer.chat_template being set             #
         # in tokenizer.config) is forcing on us some kind of #
         # chat_template format hard-requirements             #
-        # coming from their dream-fantasmagorical world,     #
+        # coming from their dream-fantasmagorical world..    #
         ######################################################
         # load base from cache
         # (with base tokenizer, which we ignore)
@@ -1266,7 +1287,7 @@ class UnslothFuncCallFlow(FlowSpec):
         # load our CPT+SFT trained & locally-saved adapter
         model.load_adapter(peft_model_id=self.sft_model_dir)
         # Separately load our (potentially trained &)
-        # locally-saved # adapter-tokenizer
+        # locally-saved adapter-tokenizer
         # (loading it below via HF and not Unsloth)
         tokenizer = AutoTokenizer.from_pretrained(
             pretrained_model_name_or_path=self.sft_model_dir
@@ -1364,14 +1385,14 @@ class UnslothFuncCallFlow(FlowSpec):
               str(current_blessed_version_dict))
 
         if current_blessed_version_dict is None:
-            # case 'no prior blessed run'
             print("case 'no prior blessed model version found"
                   " => blessing.'")
             self.model_version_blessed = True
 
-        elif main_perf_metric_name in \
-        current_blessed_version_dict["perf_metrics"]:
-
+        elif (
+            main_perf_metric_name in
+                current_blessed_version_dict["perf_metrics"]
+        ):
             current_blessed_run_id = \
                 current_blessed_version_dict["mf_run_id"]
             current_blessed_metric_value = \
@@ -1423,10 +1444,10 @@ class UnslothFuncCallFlow(FlowSpec):
         readme with versioning info.
         """
 
-        ###########################
-        #  case of user-provided  #
-        # documentation artifact(s)
-        ###########################
+        #############################
+        #  case of user-provided    #
+        # documentation artifact(s) #
+        #############################
         # note that user can provide either
         # 'pipeline_card.py' or 'template.html'
         # or 'dataset_readme.py'
@@ -1448,7 +1469,7 @@ class UnslothFuncCallFlow(FlowSpec):
                     f"{os.getenv('retrain_pipeline_type')}"
                 ).origin)
         print(f"template_dir : '{template_dir}'")
-        ###########################
+        #############################
         if "model_readme.py" in os.listdir(
                 self.pipeline_card_artifacts_path):
             from retrain_pipelines.utils import \
@@ -1459,14 +1480,14 @@ class UnslothFuncCallFlow(FlowSpec):
         else:
             from retrain_pipelines.pipeline_card import \
                     get_model_readme_content
-        ###########################
+        #############################
         from retrain_pipelines.model.hf_utils import \
             push_model_version_to_hub
 
-        ###########################
-        #       model README      #
-        #      from template      #
-        ###########################
+        #############################
+        #        model README       #
+        #       from template       #
+        #############################
         commit_datetime = datetime.utcnow()
         new_model_version_label = get_new_repo_minor_version(
             repo_id=self.model_repo_id,
@@ -1487,7 +1508,7 @@ class UnslothFuncCallFlow(FlowSpec):
             mf_flow_name=current.flow_name,
             mf_run_id=current.run.id
         )
-        ###########################
+        #############################
 
         print("Pushing model version to HF hub " +
               ("(blessed). " if self.model_version_blessed
@@ -1551,159 +1572,167 @@ class UnslothFuncCallFlow(FlowSpec):
         self.local_serve_is_ready = LocalServeReadinessEnum.NOT_APPLICABLE
 
         if self.model_version_blessed:
-            model_module_dir = \
-                os.path.dirname(
-                    importlib.util.find_spec(
-                        "retrain_pipelines.model." +
-                        os.getenv('retrain_pipeline_type')
-                    ).origin)
+            from retrain_pipelines.utils.docker import \
+                env_has_docker
 
-            # server & data-model & server-config modules artifacts
-            files_to_copy = [
-                "litserve_server.py",
-                "litserve_datamodel.py",
-                "litserve_serverconfig.py",
-                ".dockerignore" # docker context loading
-                                # at image-build time,
-                                # exclude model weights
-            ]
-            for filename in files_to_copy:
-                shutil.copy(
-                    os.path.join(model_module_dir, "litserve",
-                                 filename),
-                    os.path.join(self.serving_artifacts_local_folder,
-                                 filename)
+            if env_has_docker():
+                model_module_dir = \
+                    os.path.dirname(
+                        importlib.util.find_spec(
+                            "retrain_pipelines.model." +
+                            os.getenv('retrain_pipeline_type')
+                        ).origin)
+
+                # server & data-model & server-config modules artifacts
+                files_to_copy = [
+                    "litserve_server.py",
+                    "litserve_datamodel.py",
+                    "litserve_serverconfig.py",
+                    ".dockerignore" # docker context loading
+                                    # at image-build time,
+                                    # exclude model weights
+                ]
+                for filename in files_to_copy:
+                    shutil.copy(
+                        os.path.join(model_module_dir, "litserve",
+                                     filename),
+                        os.path.join(self.serving_artifacts_local_folder,
+                                     filename)
+                    )
+
+                # save dependencies as artifact
+                create_requirements(self.serving_artifacts_local_folder,
+                                    exclude=["cudf-polars-.*", "cuda-python",
+                                             "nvidia-.*", "(py)?libcudf-.*",
+                                             "nvtx", "rmm-.*", "litserve",
+                                             ".*retrain-pipelines.*"]
                 )
 
-            # save dependencies as artifact
-            create_requirements(self.serving_artifacts_local_folder,
-                                exclude=["cudf-polars-.*", "cuda-python", 
-                                         "nvidia-.*", "(py)?libcudf-.*",
-                                         "nvtx", "rmm-.*", "litserve",
-                                         ".*retrain-pipelines.*"]
-            )
-
-            # server config yaml
-            env = Environment(loader=FileSystemLoader(
-                os.path.join(model_module_dir, "litserve")))
-            template = env.get_template(
-                "litserve_serverconfig_template.yaml")
-            server_config_data = {
-                "port": "8000",
-                "max_seq_length": self.max_seq_length,
-                "max_new_token": self.max_new_tokens,
-                "base_model": {
-                    "repo_id": self.hf_base_model_dict["repo_id"],
-                    "revision": self.hf_base_model_dict["commit_hash"]
-                },
-                "adapters": [
-                    {
-                        "name": "func_caller",
-                        "path": "/FuncCallAdapter"
-                    }
-                ]
-            }
-            server_config_yaml = template.render(server_config_data)
-            print(server_config_yaml)
-            with open(os.path.join(
-                self.serving_artifacts_local_folder,
-                "litserve_serverconfig.yaml"), 'w'
-            ) as output_file:
-                output_file.write(server_config_yaml)
-
-            # Dockerfile
-            env = Environment(loader=FileSystemLoader(
-                os.path.join(model_module_dir)))
-            template = env.get_template(
-                "Dockerfile.litserve_template")
-            # Change CUDA version here from available list
-            # @see https://hub.docker.com/r/nvidia/cuda/tags
-            dockerfile_content = template.render(
-                {"cuda_version": "12.0.0"})
-            with open(os.path.join(
-                self.serving_artifacts_local_folder,
-                "Dockerfile.litserve"), 'w'
-            ) as output_file:
-                output_file.write(dockerfile_content)
-
-            os.environ["no_proxy"] = "localhost,127.0.0.1,0.0.0.0"
-
-            ############################################
-            #   actually deploy the inference service  #
-            ############################################
-            start_time = time.time()
-            from retrain_pipelines.utils.docker import \
-                build_and_run_docker, print_container_log_tail, \
-                cleanup_docker
-            from retrain_pipelines.model.litserve import \
-                endpoint_started, endpoint_is_ready
-
-            self.port = 8765
-            HF_HUB_CACHE = os.path.realpath(os.path.expanduser(
-                os.getenv(
-                    "HF_HUB_CACHE",
-                    os.path.join(os.getenv("HF_HOME",
-                                           "~/.cache/huggingface"),
-                                 "hub")
-                )))
-            print(f"HF_HUB_CACHE : {HF_HUB_CACHE}")
-            image_name = container_name = "litserve-model"
-
-            serving_container = build_and_run_docker(
-                image_name=image_name, image_tag="1.0",
-                build_path=self.serving_artifacts_local_folder,
-                dockerfile="Dockerfile.litserve",
-                ports_publish_dict={'8000/tcp': self.port},
-                env_vars_dict={
-                    "HF_HUB_CACHE": "/huggingface_hub_cache",
-                    "HF_TOKEN": os.getenv("HF_TOKEN")
-                },
-                volumes_dict={
-                    self.sft_model_dir: 
-                        {"bind": "/FuncCallAdapter",
-                         "mode": "ro"},
-                    HF_HUB_CACHE:
-                        {"bind": "/huggingface_hub_cache",
-                         "mode": "ro"}
+                # server config yaml
+                env = Environment(loader=FileSystemLoader(
+                    os.path.join(model_module_dir, "litserve")))
+                template = env.get_template(
+                    "litserve_serverconfig_template.yaml")
+                server_config_data = {
+                    "port": "8000",
+                    "max_seq_length": self.max_seq_length,
+                    "max_new_token": self.max_new_tokens,
+                    "base_model": {
+                        "repo_id": self.hf_base_model_dict["repo_id"],
+                        "revision": self.hf_base_model_dict["commit_hash"]
+                    },
+                    "adapters": [
+                        {
+                            "name": "func_caller",
+                            "path": "/FuncCallAdapter"
+                        }
+                    ]
                 }
-            )
+                server_config_yaml = template.render(server_config_data)
+                print(server_config_yaml)
+                with open(os.path.join(
+                    self.serving_artifacts_local_folder,
+                    "litserve_serverconfig.yaml"), 'w'
+                ) as output_file:
+                    output_file.write(server_config_yaml)
 
-            if not serving_container:
-                print("failed spinning the LitServe container",
-                      file=sys.stderr)
-                self.local_serve_is_ready = \
-                    LocalServeReadinessEnum.FAILURE
-                try:
-                    cleanup_docker(
-                        container_name=container_name,
-                        image_name=f"{image_name}:1.0",
-                        no_pruning=True # for intermediate layers recycling
-                                        # (during later re-runs)
-                                        # to avoid long rebuild time
-                                        # of exactly the same.
-                    )
-                except Exception as cleanup_ex:
-                    # fail silently
-                    pass
-            else:
-                print("Awaiting endpoint launch..")
+                # Dockerfile
+                env = Environment(loader=FileSystemLoader(
+                    os.path.join(model_module_dir)))
+                template = env.get_template(
+                    "Dockerfile.litserve_template")
+                # Change CUDA version here from available list
+                # @see https://hub.docker.com/r/nvidia/cuda/tags
+                dockerfile_content = template.render(
+                    {"cuda_version": "12.0.0"})
+                with open(os.path.join(
+                    self.serving_artifacts_local_folder,
+                    "Dockerfile.litserve"), 'w'
+                ) as output_file:
+                    output_file.write(dockerfile_content)
+
+                os.environ["no_proxy"] = "localhost,127.0.0.1,0.0.0.0"
+
+                ############################################
+                #   actually deploy the inference service  #
+                ############################################
                 start_time = time.time()
-                if not endpoint_started(
-                    container_name, port=self.port, timeout=10*60
-                ):
-                    print(
-                        f"The endpoint '{container_name}' " +
-                        f"did not start.")
+                from retrain_pipelines.utils.docker import \
+                    build_and_run_docker, print_container_log_tail, \
+                    cleanup_docker
+                from retrain_pipelines.model.litserve import \
+                    endpoint_started, endpoint_is_ready
+
+                self.port = 8765
+                HF_HUB_CACHE = os.path.realpath(os.path.expanduser(
+                    os.getenv(
+                        "HF_HUB_CACHE",
+                        os.path.join(os.getenv("HF_HOME",
+                                               "~/.cache/huggingface"),
+                                     "hub")
+                    )))
+                print(f"HF_HUB_CACHE : {HF_HUB_CACHE}")
+                image_name = container_name = "litserve-model"
+
+                serving_container = build_and_run_docker(
+                    image_name=image_name, image_tag="1.0",
+                    build_path=self.serving_artifacts_local_folder,
+                    dockerfile="Dockerfile.litserve",
+                    ports_publish_dict={'8000/tcp': self.port},
+                    env_vars_dict={
+                        "HF_HUB_CACHE": "/huggingface_hub_cache",
+                        "HF_TOKEN": os.getenv("HF_TOKEN")
+                    },
+                    volumes_dict={
+                        self.sft_model_dir:
+                            {"bind": "/FuncCallAdapter",
+                             "mode": "ro"},
+                        HF_HUB_CACHE:
+                            {"bind": "/huggingface_hub_cache",
+                             "mode": "ro"}
+                    }
+                )
+
+                if not serving_container:
+                    print("failed spinning the LitServe container",
+                          file=sys.stderr)
                     self.local_serve_is_ready = \
                         LocalServeReadinessEnum.FAILURE
-                # health check on the spun-up endpoint
-                elif endpoint_is_ready(port=self.port):
-                    self.local_serve_is_ready = \
-                        LocalServeReadinessEnum.SUCCESS
-            elapsed_time = time.time() - start_time
-            print("deploy_local -   Elapsed time: " +
-                  f"{elapsed_time:.2f} seconds")
-            ############################################
+                    try:
+                        cleanup_docker(
+                            container_name=container_name,
+                            image_name=f"{image_name}:1.0",
+                            no_pruning=True # for intermediate layers recycling
+                                            # (during later re-runs)
+                                            # to avoid long rebuild time
+                                            # of exactly the same.
+                        )
+                    except Exception as cleanup_ex:
+                        # fail silently
+                        pass
+                else:
+                    print("Awaiting endpoint launch..")
+                    start_time = time.time()
+                    if not endpoint_started(
+                        container_name, port=self.port, timeout=10*60
+                    ):
+                        print(
+                            f"The endpoint '{container_name}' " +
+                            f"did not start.")
+                        self.local_serve_is_ready = \
+                            LocalServeReadinessEnum.FAILURE
+                    # health check on the spun-up endpoint
+                    elif endpoint_is_ready(port=self.port):
+                        self.local_serve_is_ready = \
+                            LocalServeReadinessEnum.SUCCESS
+                elapsed_time = time.time() - start_time
+                print("deploy_local -   Elapsed time: " +
+                      f"{elapsed_time:.2f} seconds")
+                ############################################
+            else:
+                # env doesn't have docker
+                self.local_serve_is_ready = \
+                    LocalServeReadinessEnum.FAILURE_NO_DOCKER
 
             if LocalServeReadinessEnum.SUCCESS == self.local_serve_is_ready:
                 from retrain_pipelines.model.litserve.litserve_datamodel \
@@ -1759,12 +1788,6 @@ class UnslothFuncCallFlow(FlowSpec):
                 # fail silently
                 pass
 
-        # TODO  -  YOU STILL DIDN'T CHANGE THE MODEL README EVAL STUFF !!!!
-        #                                   SAME FOR README 'widget' SECTION !!!!
-        #                                   ALSO, DON'T FORGET TO UPDATE THE README BODY !!!!
-        # https://huggingface.co/docs/huggingface_hub/main/en/package_reference/cards#huggingface_hub.EvalResult
-
-
         self.next(self.pipeline_card)
 
 
@@ -1776,10 +1799,10 @@ class UnslothFuncCallFlow(FlowSpec):
         import datetime
         import importlib.metadata
 
-        ###########################
-        #  case of user-provided  #
-        # documentation artifact(s)
-        ###########################
+        #############################
+        #   case of user-provided   #
+        # documentation artifact(s) #
+        #############################
         # note that user can provide either
         # 'pipeline_card.py' or 'template.html'
         # or 'dataset_readme.py'
@@ -1799,7 +1822,7 @@ class UnslothFuncCallFlow(FlowSpec):
                     f"retrain_pipelines.pipeline_card."+
                     f"{os.getenv('retrain_pipeline_type')}"
                 ).origin)
-        ###########################
+        #############################
         if "pipeline_card.py" in os.listdir(
                                     self.pipeline_card_artifacts_path
         ):
@@ -1811,12 +1834,12 @@ class UnslothFuncCallFlow(FlowSpec):
                     get_html
         from retrain_pipelines.pipeline_card.helpers import \
                 mf_dag_svg
-        ###########################
+        #############################
 
 
-        ###########################
-        ##     "default" card    ##
-        ###########################
+        #############################
+        ##      "default" card     ##
+        #############################
         self.metadata = {
             "name": "TabNet Model",
             "version": "1.0",
@@ -1872,11 +1895,11 @@ class UnslothFuncCallFlow(FlowSpec):
             Image.from_matplotlib(self.sft_log_history_fig))
         current.card['default'].append(
             Image.from_matplotlib(self.validation_completions_fig))
-        ###########################
+        #############################
 
-        ###########################
-        ##   html "custom" card  ##
-        ###########################
+        #############################
+        ##    html "custom" card   ##
+        #############################
         dt = datetime.datetime.now(tz=datetime.timezone.utc)
         formatted_dt = dt.strftime("%A %b %d %Y %I:%M:%S %p %Z")
         task_obj_python_cmd = f"metaflow.Task(" + \
@@ -1934,9 +1957,9 @@ class UnslothFuncCallFlow(FlowSpec):
             'dag_svg': mf_dag_svg(self)
         }
         self.html = get_html(params)
-        ###########################
+        #############################
         current
-        ###########################
+        #############################
 
         self.next(self.pipeline_to_hub)
 
@@ -1945,7 +1968,7 @@ class UnslothFuncCallFlow(FlowSpec):
     def pipeline_to_hub(self):
         """
         publish versioned source-code and pipeline-card
-        for ths run on the HuggingFace Hub.
+        for ths run on the Hugging Face Hub.
         """
 
         model_commit_datetime = \
