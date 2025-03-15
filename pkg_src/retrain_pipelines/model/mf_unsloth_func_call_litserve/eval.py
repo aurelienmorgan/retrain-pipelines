@@ -492,7 +492,7 @@ def _plot_bars(
 
     ax2 = ax.twinx()
     ax2.set_ylabel("Records Count (log scale)",
-                   rotation=270, labelpad=16,
+                   rotation=270, labelpad=15,
                    loc="center", color="#666666",
                    fontsize=8)
     ax2.set_yscale("log")
