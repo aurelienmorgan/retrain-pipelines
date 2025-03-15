@@ -22,7 +22,7 @@ def env_has_docker() -> bool:
         docker.from_env()
     except DockerException as dEx:
         print(dEx)
-        return false
+        return False
     return True
 
 
