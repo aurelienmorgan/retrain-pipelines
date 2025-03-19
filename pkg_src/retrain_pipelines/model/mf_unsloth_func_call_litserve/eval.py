@@ -1,12 +1,13 @@
 
 import gc
 import re
+import sys
 import csv
 import json
 
 import numpy as np
 import polars as pl
-from tqdm.auto import tqdm
+from tqdm import tqdm
 from collections import Counter
 
 import torch
@@ -76,7 +77,11 @@ def infer_validation(
     max_new_tokens_count = 0
     results = []
 
-    for i in tqdm(range(0, len(validation_data), batch_size)):
+    for i in tqdm(range(0, len(validation_data), batch_size),
+                  file=sys.stdout):
+        print("", end="\n", file=sys.stdout, flush=True)
+        # print(f{i} / {len(validation_data)/batch_size}",
+              # end="\n", file=sys.stdout, flush=True)
         batch = validation_data[i:i + batch_size]
         queries = batch[queries_attr_name]
         formatted_inputs = [
