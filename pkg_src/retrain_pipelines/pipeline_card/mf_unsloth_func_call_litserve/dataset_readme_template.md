@@ -42,14 +42,34 @@ size_categories:
 
 ---
 
-# {{ pretty_name }}
-
-`version {{ new_version_label }}`  -  `{{ commit_datetime.strftime("%Y-%m-%d %H:%M:%S UTC") }}`
+<div 
+  class="
+    p-6 mb-4 rounded-lg 
+    pt-6 sm:pt-9
+    bg-gradient-to-b
+    from-purple-500 
+    dark:from-purple-500/20
+  "
+>
+  <div 
+    class="
+      pl-4 rounded-lg 
+      border-2 border-gray-100 
+      bg-gradient-to-b
+      from-purple-500 
+      dark:from-purple-500/20
+    "
+  >
+    <b>{{ pretty_name }}</b>
+</div>
+  <code>version {{ new_version_label }}</code>  -  <code>{{ commit_datetime.strftime("%Y-%m-%d %H:%M:%S UTC") }}</code>
+</div>
 
 Source datasets :
   - main&nbsp;:
-    - <b>{{ main_pretty_name }}</b><br />
-    `{{ main_repo_id }}`
+    - <b>{{ main_pretty_name }}</b>&nbsp;<img alt="" src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fhuggingface.co%2Fapi%2Fdatasets%2F{{ main_repo_id | urlencode }}&amp;query=%24.downloads&amp;logo=huggingface&amp;label=downloads"  class="inline-block" />&nbsp;<img alt="" src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fhuggingface.co%2Fapi%2Fdatasets%2F{{ main_repo_id | urlencode }}&amp;query=%24.likes&amp;logo=huggingface&amp;label=likes"  class="inline-block" />
+    <br />
+    <code>{{ main_repo_id }}</code>
     (<a href="https://huggingface.co/datasets/{{ main_repo_id }}/blob/{{ main_commit_hash }}/README.md"
         target="_blank">{{ main_commit_hash[:7] }}</a> -
         {{ main_commit_datetime.strftime("%Y-%m-%d %H:%M:%S UTC") }})
@@ -69,8 +89,9 @@ Source datasets :
     {% endif -%}
     <br />
   - data-enrichment&nbsp;:
-    - <b>{{ enrich_pretty_name }}</b><br />
-    `{{ enrich_repo_id }}`
+    - <b>{{ enrich_pretty_name }}</b>&nbsp;<img alt="" src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fhuggingface.co%2Fapi%2Fdatasets%2F{{ enrich_repo_id | urlencode }}&amp;query=%24.downloads&amp;logo=huggingface&amp;label=downloads"  class="inline-block" />&nbsp;<img alt="" src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fhuggingface.co%2Fapi%2Fdatasets%2F{{ enrich_repo_id | urlencode }}&amp;query=%24.likes&amp;logo=huggingface&amp;label=likes"  class="inline-block" />
+    <br />
+    <code>{{ enrich_repo_id }}</code>
     (<a href="https://huggingface.co/datasets/{{ enrich_repo_id }}/blob/{{ enrich_commit_hash }}/README.md"
         target="_blank">{{ enrich_commit_hash[:7] }}</a> -
         {{ enrich_commit_datetime.strftime("%Y-%m-%d %H:%M:%S UTC") }})
@@ -99,11 +120,33 @@ The latter is a classic question/answer text dataset. Only tool calls are in the
 Data-augmentation rate&nbsp;: +{{ (augmentation_rate * 100)|round(1) ~ '%' }}<br />
 Data-enrichment rate&nbsp;: +{{ (enrichment_rate * 100)|round(1) ~ '%' }}<br />
 
-<hr />
-Powered by
-<code><a target="_blank"
-         href="https://github.com/aurelienmorgan/retrain-pipelines">retrain-pipelines
-      {{ __version__ }}</a></code> - 
-<code>Run by <a target="_blank" href="https://huggingface.co/{{ run_user }}">{{ run_user }}</a></code> -
-<em><b>{{ mf_flow_name }}</b></em> - mf_run_id&nbsp;: <code>{{ mf_run_id }}</code>
+<div 
+  class="
+    p-6 mb-4 rounded-lg 
+    pt-6 sm:pt-9
+    px-4
+    pb-1 
+    bg-gradient-to-t
+    from-purple-500 
+    dark:from-purple-500/20
+  "
+>
+  <div 
+    class="
+      p-6 mb-4 rounded-lg 
+      border-2 border-gray-100 
+      pt-6 sm:pt-9
+      bg-gradient-to-t
+      from-purple-500 
+      dark:from-purple-500/20
+    "
+  >
+    Powered by
+    <code><a target="_blank"
+             href="https://github.com/aurelienmorgan/retrain-pipelines">retrain-pipelines
+          {{ __version__ }}</a></code> - 
+    <code>Run by <a target="_blank" href="https://huggingface.co/{{ run_user }}">{{ run_user }}</a></code> -
+    <em><b>{{ mf_flow_name }}</b></em> - mf_run_id&nbsp;: <code>{{ mf_run_id }}</code>
+  </div>
+</div>
 

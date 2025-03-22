@@ -6,6 +6,7 @@ import textwrap
 from ast import literal_eval
 from datetime import datetime
 
+from urllib.parse import quote as url_encode
 from jinja2 import Environment, FileSystemLoader
 
 from datasets import DatasetDict
@@ -98,6 +99,28 @@ def _model_readme_params(
         , '  '
     )
 
+    main_usage_snippet = textwrap.dedent("""
+        from transformers import AutoModelForCausalLM, AutoTokenizer
+        from torch import device, cuda
+
+        repo_id = "{model_repo_id}"
+        revision = "<model_revision_commit_hash>"
+        model = AutoModelForCausalLM.from_pretrained(
+            repo_id, revision=revision, torch_dtype="auto", device_map="auto")
+        tokenizer = AutoTokenizer.from_pretrained(
+            repo_id, revision=revision, torch_dtype="auto", device_map="auto")
+
+        device = device("cuda" if cuda.is_available() else "cpu")
+        def generate_tool_calls_list(query, max_new_tokens=400) -> str:
+            formatted_query = tokenizer.chat_template.format(query, "")
+            inputs = tokenizer(formatted_query, return_tensors="pt").input_ids.to(device)
+            outputs = model.generate(inputs, max_new_tokens=max_new_tokens, do_sample=False)
+            generated_text = tokenizer.batch_decode(outputs, skip_special_tokens=True)[0]
+            return generated_text[len(formatted_query):].strip()
+
+        generate_tool_calls_list("Is 49 a perfect square ?")
+    """).strip().format(model_repo_id=model_repo_id)
+
     return {
             "model_repo_id": model_repo_id,
             "new_version_label": version_label,
@@ -123,6 +146,8 @@ def _model_readme_params(
             "base_model_license_label": base_model_license_label,
 
             "perf_metrics": perf_metrics_yaml,
+
+            "main_usage_snippet": main_usage_snippet,
 
             "__version__": __version__,
             "run_user": whoami()["name"],
@@ -192,6 +217,7 @@ def get_model_readme_content(
     )
 
     env = Environment(loader=FileSystemLoader(template_folder))
+    env.filters['urlencode'] = url_encode
     template = env.get_template("model_readme_template.md")
     readme_content = template.render(params)
 

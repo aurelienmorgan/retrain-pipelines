@@ -5,6 +5,7 @@ import json
 from ast import literal_eval
 from datetime import datetime
 
+from urllib.parse import quote as url_encode
 from jinja2 import Environment, FileSystemLoader
 
 from datasets import DatasetDict
@@ -263,6 +264,7 @@ def get_dataset_readme_content(
     )
 
     env = Environment(loader=FileSystemLoader(template_folder))
+    env.filters['urlencode'] = url_encode
     template = env.get_template("dataset_readme_template.md")
     readme_content = template.render(params)
 
