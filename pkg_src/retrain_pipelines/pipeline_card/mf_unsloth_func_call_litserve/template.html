@@ -423,54 +423,61 @@
                     justify-content:center; align-items:center; display:flex;
                     background:{{blessed_background}};
                     font-size:xxx-large; font-weight:bold;">
-            Model Version {{model_version_blessed}}Blessed&nbsp;!
+            Model Version {{model_version_not_blessed}}Blessed&nbsp;!
         </div>
         <!-- model version blessing status -->
-        {% if current_blessed_run_id is not none %}
+{% if model_version_not_blessed %}
         <font color="#C0C0C0">Last blessed run&nbsp;:
-            run_id {{current_blessed_run_id}} ({{current_blessed_run_finished}})
-            [<a id="blessed_run_link" style="color: orange;" target="_blank"
-               href="{{previsous_blessed_card_href}}">here</a>]
-            or
+            <b>v{{ previous_blessed_version_label }}</b>
+            <span class="info-container">
+                <span style="background-color: #C0C0C0;" class="info-icon">i</span>
+                <span style="width: 175px; white-space: nowrap;"
+                      class="info-content">{{ previous_blessed_commit_datetime.strftime("%Y-%m-%d %H:%M:%S UTC") }}</span>
+            </span>
             [<a href="https://huggingface.co/{{ model_repo_id }}/blob/{{ previous_blessed_model_commit_hash }}/README.md"
                 target="_blank">HuggingFace &#x1F917;</a>]
-        </font>
-        <script language="javascript">
-            window.onload = function() {
-                var link = document.getElementById("blessed_run_link");
-                if (window.self !== window.top) {
-                    // card displayed as an iframe (prob' in the Metaflow UI)
-                    // [get parent domain & port without hitting CORS]
-                    var referrerUrl = new URL(document.referrer);
-                    var parentDomain = referrerUrl.hostname;
-                    var parentPort = referrerUrl.port;
-                    var newUrl = `http://${parentDomain}${parentPort ? ':' + parentPort : ''}/{{previsous_blessed_card_url}}`;
-                    link.href = newUrl;
-                } else {
-                    // card is not displayed as an iframe
-                    var isLocalFile = window.location.protocol === "file:"
-                    console.log(isLocalFile)
-                    if (isLocalFile) {
-                        // card is prob' displayed
-                        // via a python call to
-                        // "retrain_pipelines.inspectors.browse_local_pipeline_card"
-                        var currentDir = window.location.pathname.substring(
-                                0, window.location.pathname.lastIndexOf('/'));
-                        console.log(currentDir)
-                        var lastSegment = link.href.substring(
-                                link.href.lastIndexOf('/') + 1);
-                        var newHref = `file:///${currentDir}/_html-custom-${lastSegment}.html`;
-                        console.log(newHref)
-                        link.href = newHref;
+    {% if previous_blessed_run_id is not none %}
+            - run_id {{previous_blessed_run_id}}
+            [<a id="blessed_run_link" style="color: orange;" target="_blank"
+               href="{{previsous_blessed_card_href}}">here</a>]
+            <script language="javascript">
+                window.onload = function() {
+                    var link = document.getElementById("blessed_run_link");
+                    if (window.self !== window.top) {
+                        // card displayed as an iframe (prob' in the Metaflow UI)
+                        // [get parent domain & port without hitting CORS]
+                        var referrerUrl = new URL(document.referrer);
+                        var parentDomain = referrerUrl.hostname;
+                        var parentPort = referrerUrl.port;
+                        var newUrl = `http://${parentDomain}${parentPort ? ':' + parentPort : ''}/{{previsous_blessed_card_url}}`;
+                        link.href = newUrl;
                     } else {
-                        // card is prob' hosted by Metaflow-Service [ui-backend]
-                        // => do nothing
+                        // card is not displayed as an iframe
+                        var isLocalFile = window.location.protocol === "file:"
+                        console.log(isLocalFile)
+                        if (isLocalFile) {
+                            // card is prob' displayed
+                            // via a python call to
+                            // "retrain_pipelines.inspectors.browse_local_pipeline_card"
+                            var previousDir = window.location.pathname.substring(
+                                    0, window.location.pathname.lastIndexOf('/'));
+                            console.log(previousDir)
+                            var lastSegment = link.href.substring(
+                                    link.href.lastIndexOf('/') + 1);
+                            var newHref = `file:///${previousDir}/_html-custom-${lastSegment}.html`;
+                            console.log(newHref)
+                            link.href = newHref;
+                        } else {
+                            // card is prob' hosted by Metaflow-Service [ui-backend]
+                            // => do nothing
+                        }
                     }
                 }
-            }
-        </script>
+            </script>
+        </font>
         <!-- END model version blessing status -->
-        {% endif %}
+    {% endif %}
+{% endif %}
 {% if local_serve_status is not none %}
         <!-- infra validation status -->
         <p></p>

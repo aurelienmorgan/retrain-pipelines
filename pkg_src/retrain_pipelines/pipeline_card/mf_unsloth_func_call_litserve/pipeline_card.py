@@ -27,19 +27,15 @@ def get_html(
     # model version blessing #
     ##########################
     model_version_blessed = params['model_version_blessed']
-    if not model_version_blessed:
-        current_blessed_run_id=params['current_blessed_run'].id
+    previous_blessed_run = params['current_blessed_run']
+    if previous_blessed_run is not None:
         previous_blessed_model_card_task = [
-            step.task for step in params['current_blessed_run'].steps()
+            step.task for step in previous_blessed_run.steps()
             if step.id == 'pipeline_card'][0]
         previous_blessed_custom_card = \
             cards.get_cards(previous_blessed_model_card_task,
                             id='custom', type='html')[0]
 
-        current_blessed_run_finished = \
-            params['current_blessed_run'] \
-            .finished_at.astimezone(pytz.utc) \
-            .strftime('%A %b %d %Y %I:%M:%S %p %Z')
         previsous_blessed_card_href = '/flows/' + \
             previous_blessed_custom_card.path[
                 :previous_blessed_custom_card.path.rfind("/")+1] + \
@@ -147,109 +143,114 @@ def get_html(
     template = env.get_template('template.html')
 
     return template.render(
-                bootstrap_js_dependencies=bootstrap_js_dependencies,
-                title=params['title'], subtitle=params['subtitle'],
-                blessed_color="#008000" if model_version_blessed \
-                              else "#811331",
-                blessed_background="#7CFC00" if model_version_blessed \
-                                   else "#FF3131",
-                model_version_blessed="" if model_version_blessed \
-                                      else "NOT ",
+        bootstrap_js_dependencies=bootstrap_js_dependencies,
+        title=params['title'], subtitle=params['subtitle'],
+        blessed_color="#008000" if model_version_blessed \
+                      else "#811331",
+        blessed_background="#7CFC00" if model_version_blessed \
+                           else "#FF3131",
+        model_version_not_blessed="" if model_version_blessed \
+                                  else "NOT ",
+        ###################################
 
-                # if model version not blessed => #
-                current_blessed_run_id=(
-                    None if model_version_blessed
-                    else current_blessed_run_id),
-                current_blessed_run_finished=(
-                    None if model_version_blessed
-                    else current_blessed_run_finished),
-                previsous_blessed_card_href=(
-                    None if model_version_blessed
-                    else previsous_blessed_card_href),
-                previsous_blessed_card_url=(
-                    None if model_version_blessed
-                    else previsous_blessed_card_url),
-                previous_blessed_model_commit_hash=(
-                    None if model_version_blessed
-                    else params['current_blessed_model_commit_hash']),
-                ###################################
+        # if model version not blessed => #
+        previous_blessed_version_label=(
+            None if model_version_blessed
+            else params['current_blessed_version_label']),
+        previous_blessed_commit_datetime=(
+            None if model_version_blessed
+            else params['current_blessed_commit_datetime']),
+        previous_blessed_model_commit_hash=(
+            None if model_version_blessed
+            else params['current_blessed_model_commit_hash']),
+        ## if ML framework instance is the same
+        ## between non-blessed and previous-blessed
+        previous_blessed_run_id=(
+            None if previous_blessed_run is None
+            else previous_blessed_run.id),
+        previsous_blessed_card_href=(
+            None if previous_blessed_run is None
+            else previsous_blessed_card_href),
+        previsous_blessed_card_url=(
+            None if previous_blessed_run is None
+            else previsous_blessed_card_url),
+        ###################################
 
-                # infra validation status =>      #
-                local_serve_color=(
-                    None if (LocalServeReadinessEnum.NOT_APPLICABLE
-                             == local_serve_is_ready)
-                    else "#008000" if (LocalServeReadinessEnum.SUCCESS
-                                       == local_serve_is_ready)
-                    else "#A34700" if (LocalServeReadinessEnum.FAILURE_NO_DOCKER
-                                       == local_serve_is_ready)
-                    else "#811331"),
-                local_serve_background=(
-                    None if (LocalServeReadinessEnum.NOT_APPLICABLE
-                             == local_serve_is_ready)
-                    else "#7CFC00" if (LocalServeReadinessEnum.SUCCESS
-                                       == local_serve_is_ready)
-                    else "#FFA500" if (LocalServeReadinessEnum.FAILURE_NO_DOCKER
-                                       == local_serve_is_ready)
-                    else "#FF3131"),
-                local_serve_status=(
-                    None if (LocalServeReadinessEnum.NOT_APPLICABLE
-                             == local_serve_is_ready)
-                    else "Passed" if (LocalServeReadinessEnum.SUCCESS
-                                       == local_serve_is_ready)
-                    else "Skipped" if (LocalServeReadinessEnum.FAILURE_NO_DOCKER
-                                       == local_serve_is_ready)
-                    else "Failed"),
-                local_serve_reason=(
-                    "(docker missing on host)" if (
-                        LocalServeReadinessEnum.FAILURE_NO_DOCKER
-                        == local_serve_is_ready
-                    )
-                    else None),
-                ###################################
-
-                # EDA =>                          #
-                main_dataset_repo_id=params['main_dataset_repo_id'],
-                main_dataset_commit_hash=\
-                    params['main_dataset_commit_hash'],
-                main_dataset_commit_datetime=\
-                    params['main_dataset_commit_datetime'],
-                records_count="{:,}".format(params['records_count']),
-                data_schema_table=indent(data_schema_table, ' '*36),
-                answers_tools_count_curve=answers_tools_count_curve,
-                words_count_curve=words_count_curve,
-
-                ###################################
-
-                # model training =>               #
-                dataset_repo_id=params['dataset_repo_id'],
-                dataset_version_label=params['dataset_version_label'],
-                dataset_commit_datetime=\
-                    params['dataset_commit_datetime'],
-                dataset_commit_hash=params['dataset_commit_hash'],
-                dataset_augmentation_rate=params['dataset_augmentation_rate'],
-                dataset_enrichment_rate=params['dataset_enrichment_rate'],
-
-                model_repo_id=params['model_repo_id'],
-                model_commit_hash=params['model_commit_hash'],
-                model_version_label=params['model_version_label'],
-                model_commit_datetime=params['model_commit_datetime'],
-
-                cpt_log_history_curve=cpt_log_history_curve,
-                sft_log_history_curve=sft_log_history_curve,
-
-                ###################################
-
-                pipeline_parameters_table=indent(pipeline_parameters_table, ' '*28),
-
-                # validation perf =>              #
-                validation_completions_curve=validation_completions_curve,
-                metrics_table=indent(metrics_table, ' '*28),
-
-                ###################################
-
-                task_obj_python_cmd= \
-                    apply_args_color_format(params['task_obj_python_cmd']),
-                dag_svg=indent(params['dag_svg'], ' '*40),
-                __version__=__version__
+        # infra validation status =>      #
+        local_serve_color=(
+            None if (LocalServeReadinessEnum.NOT_APPLICABLE
+                     == local_serve_is_ready)
+            else "#008000" if (LocalServeReadinessEnum.SUCCESS
+                               == local_serve_is_ready)
+            else "#A34700" if (LocalServeReadinessEnum.FAILURE_NO_DOCKER
+                               == local_serve_is_ready)
+            else "#811331"),
+        local_serve_background=(
+            None if (LocalServeReadinessEnum.NOT_APPLICABLE
+                     == local_serve_is_ready)
+            else "#7CFC00" if (LocalServeReadinessEnum.SUCCESS
+                               == local_serve_is_ready)
+            else "#FFA500" if (LocalServeReadinessEnum.FAILURE_NO_DOCKER
+                               == local_serve_is_ready)
+            else "#FF3131"),
+        local_serve_status=(
+            None if (LocalServeReadinessEnum.NOT_APPLICABLE
+                     == local_serve_is_ready)
+            else "Passed" if (LocalServeReadinessEnum.SUCCESS
+                               == local_serve_is_ready)
+            else "Skipped" if (LocalServeReadinessEnum.FAILURE_NO_DOCKER
+                               == local_serve_is_ready)
+            else "Failed"),
+        local_serve_reason=(
+            "(docker missing on host)" if (
+                LocalServeReadinessEnum.FAILURE_NO_DOCKER
+                == local_serve_is_ready
             )
+            else None),
+        ###################################
 
+        # EDA =>                          #
+        main_dataset_repo_id=params['main_dataset_repo_id'],
+        main_dataset_commit_hash=\
+            params['main_dataset_commit_hash'],
+        main_dataset_commit_datetime=\
+            params['main_dataset_commit_datetime'],
+        records_count="{:,}".format(params['records_count']),
+        data_schema_table=indent(data_schema_table, ' '*36),
+        answers_tools_count_curve=answers_tools_count_curve,
+        words_count_curve=words_count_curve,
+
+        ###################################
+
+        # model training =>               #
+        dataset_repo_id=params['dataset_repo_id'],
+        dataset_version_label=params['dataset_version_label'],
+        dataset_commit_datetime=\
+            params['dataset_commit_datetime'],
+        dataset_commit_hash=params['dataset_commit_hash'],
+        dataset_augmentation_rate=params['dataset_augmentation_rate'],
+        dataset_enrichment_rate=params['dataset_enrichment_rate'],
+
+        model_repo_id=params['model_repo_id'],
+        model_commit_hash=params['model_commit_hash'],
+        model_version_label=params['model_version_label'],
+        model_commit_datetime=params['model_commit_datetime'],
+
+        cpt_log_history_curve=cpt_log_history_curve,
+        sft_log_history_curve=sft_log_history_curve,
+
+        ###################################
+
+        pipeline_parameters_table=indent(pipeline_parameters_table, ' '*28),
+
+        # validation perf =>              #
+        validation_completions_curve=validation_completions_curve,
+        metrics_table=indent(metrics_table, ' '*28),
+
+        ###################################
+
+        task_obj_python_cmd= \
+            apply_args_color_format(params['task_obj_python_cmd']),
+        dag_svg=indent(params['dag_svg'], ' '*40),
+        __version__=__version__
+    )

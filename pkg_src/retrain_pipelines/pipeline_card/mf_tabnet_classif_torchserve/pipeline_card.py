@@ -224,7 +224,7 @@ def get_html(
                 title=params['title'], subtitle=params['subtitle'],
                 blessed_color="#008000" if model_version_blessed else "#811331",
                 blessed_background="#7CFC00" if model_version_blessed else "#FF3131",
-                model_version_blessed="" if model_version_blessed else "NOT ",
+                model_version_not_blessed="" if model_version_blessed else "NOT ",
 
                 # if model version not blessed => #
                 current_blessed_run_id=(

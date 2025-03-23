@@ -20,6 +20,7 @@ from enum import Enum
 from io import StringIO
 from textwrap import dedent
 from datetime import datetime
+from contextlib import redirect_stdout
 
 import numpy as np
 import pandas as pd
@@ -43,6 +44,7 @@ from datasets import load_dataset, Dataset, DatasetDict
 from datasets.config import HF_DATASETS_CACHE, HF_CACHE_HOME
 from huggingface_hub import list_repo_commits
 from transformers import AutoTokenizer
+from transformers.utils import logging as hf_logging
 
 from retrain_pipelines import __version__
 from retrain_pipelines.dataset.hf_utils import get_lazy_df, \
@@ -966,6 +968,12 @@ class UnslothFuncCallFlow(FlowSpec):
                 "runs", "cpt")
         )
 
+        self.cpt_traces_file_fullname = os.path.join(
+            self.unsloth_dir, "cpt_trainer_traces.txt")
+        print("Training started. " +
+              f"Check {self.cpt_traces_file_fullname} for live traces.",
+              flush=True)
+
         trainer = UnslothTrainer(
             model=model, tokenizer=tokenizer,
             train_dataset=cpt_dataset,
@@ -981,7 +989,7 @@ class UnslothFuncCallFlow(FlowSpec):
         #######################################
         torch.cuda.ipc_collect()
         torch.cuda.empty_cache()
-        gc.collect()
+        _ = gc.collect()
 
         gpu_stats = torch.cuda.get_device_properties(0)
         self.start_gpu_memory = \
@@ -995,7 +1003,13 @@ class UnslothFuncCallFlow(FlowSpec):
         print(f"{self.start_gpu_memory} GB of memory reserved.")
         #######################################
 
-        trainer_stats = trainer.train()
+        with open(self.cpt_traces_file_fullname, 'w') as f:
+            with redirect_stdout(f):
+                hf_logging.set_verbosity_error()
+                hf_logging.disable_progress_bar()
+                trainer_stats = trainer.train()
+        hf_logging.set_verbosity_info()
+        hf_logging.enable_progress_bar()
         print(f"{trainer_stats.metrics['train_runtime']} " +
               f"seconds used for training " +
               f"({round(trainer_stats.metrics['train_runtime']/60, 2)}" +
@@ -1030,7 +1044,7 @@ class UnslothFuncCallFlow(FlowSpec):
 
         torch.cuda.ipc_collect()
         torch.cuda.empty_cache()
-        gc.collect()
+        _ = gc.collect()
 
         model, tokenizer = FastLanguageModel.from_pretrained(
             model_name=self.cpt_model_dir,
@@ -1186,6 +1200,12 @@ class UnslothFuncCallFlow(FlowSpec):
                 "runs", "sft")
         )
 
+        self.sft_traces_file_fullname = os.path.join(
+            self.unsloth_dir, "sft_trainer_traces.txt")
+        print("Training started. " +
+              f"Check {self.sft_traces_file_fullname} for live traces.",
+              flush=True)
+
         trainer = UnslothTrainer(
             model=model, tokenizer=tokenizer,
             train_dataset=train_dataset,
@@ -1203,7 +1223,7 @@ class UnslothFuncCallFlow(FlowSpec):
         #######################################
         torch.cuda.ipc_collect()
         torch.cuda.empty_cache()
-        gc.collect()
+        _ = gc.collect()
 
         used_memory = \
             round(torch.cuda.max_memory_reserved()
@@ -1226,7 +1246,13 @@ class UnslothFuncCallFlow(FlowSpec):
               f"% of max memory = {lora_percentage} %.")
         #######################################
 
-        trainer_stats = trainer.train()
+        with open(self.sft_traces_file_fullname, 'w') as f:
+            with redirect_stdout(f):
+                hf_logging.set_verbosity_error()
+                hf_logging.disable_progress_bar()
+                trainer_stats = trainer.train()
+        hf_logging.set_verbosity_info()
+        hf_logging.enable_progress_bar()
         print(f"{trainer_stats.metrics['train_runtime']} " +
               f"seconds used for training " +
               f"({round(trainer_stats.metrics['train_runtime']/60, 2)}" +
@@ -1259,18 +1285,18 @@ class UnslothFuncCallFlow(FlowSpec):
 
         torch.cuda.ipc_collect()
         torch.cuda.empty_cache()
-        gc.collect()
+        _ = gc.collect()
 
 
         ######################################################
-        #              loading trained adapter              #
+        #              loading trained adapter               #
         ######################################################
-        # Unsloth (if loading both model & tokenizer at once #
+        # Unsloth [and hf transformers before it]            #
+        # (if loading both model & tokenizer at once         #
         # same as we did in prior tasks, but now             #
         # with tokenizer.chat_template being set             #
         # in tokenizer.config) is forcing on us some kind of #
-        # chat_template format hard-requirements             #
-        # coming from their dream-fantasmagorical world..    #
+        # chat_template format hard-requirements.            #
         ######################################################
         # load base from cache
         # (with base tokenizer, which we ignore)
@@ -1312,7 +1338,7 @@ class UnslothFuncCallFlow(FlowSpec):
                 self.sft_training_args["records_cap"])
         else:
             validation_data = queries_dataset["validation"]
-        print(validation_data)
+        print(validation_data, flush=True)
         ######################################################
 
         self.max_new_tokens = 400
@@ -1362,7 +1388,7 @@ class UnslothFuncCallFlow(FlowSpec):
         del tokenizer
         torch.cuda.ipc_collect()
         torch.cuda.empty_cache()
-        gc.collect()
+        _ = gc.collect()
 
         self.next(self.model_version_blessing)
 
@@ -1370,6 +1396,23 @@ class UnslothFuncCallFlow(FlowSpec):
     @step
     def model_version_blessing(self):
         """
+        Comparing newly-retrained model version
+        against best-performing predecessor.
+        """
+        """
+        Note: for Hugging Face integrated pipelines,
+        we compare against lastest commit of main branch
+        of the model repository there.
+        When it comes to local "mf_run_id" of the pipeline run
+        having generated that best prior model version
+        (retrieved from model card metadata from HF yaml section),
+        we check against records of the herein ML-framework instance,
+        as "prior best version" of the model here beign retrained
+        may have been originated from another one
+        than the one executing the current retraining
+        (in which case, we simply don't includ a "local" hyperlink
+        in the model version pipeline_cards that will be
+        produced later in the herein pipeline run).
         """
         from retrain_pipelines.model.hf_utils import \
             current_blessed_model_version_dict
@@ -1395,6 +1438,7 @@ class UnslothFuncCallFlow(FlowSpec):
         ):
             current_blessed_run_id = \
                 current_blessed_version_dict["mf_run_id"]
+            print(f"current_blessed_run_id : {current_blessed_run_id}")
             current_blessed_metric_value = \
                 current_blessed_version_dict[
                     "perf_metrics"][main_perf_metric_name]
@@ -1409,12 +1453,55 @@ class UnslothFuncCallFlow(FlowSpec):
                     current_blessed_version_dict
                 for run in Flow(self.__class__.__name__):
                     if str(run.id) == current_blessed_run_id:
-                        self.current_blessed_run = run
-                        break
+                        run_steps = iter(run.steps())
+                        last_run_step = next(run_steps)
+                        last_task = next(iter(last_run_step.tasks()))
+
+                        # tasks are listed backwards, so last task is first item :
+                        # Has the run seen task "pipeline_card" prior to last task
+                        # (meaning, "pipeline_card" completed successfully and
+                        #  "run" has generated a sutom pipeline-card artifact) ?
+                        # If not, hyperlink generation will later fail.
+                        run_has_custom_card_artifact = False
+                        for step in run_steps:
+                            if "pipeline_card" == step.id:
+                                run_has_custom_card_artifact = True
+                                break
+
+                        if not run_has_custom_card_artifact:
+                            print(
+                                f"Run #{current_blessed_run_id} " +
+                                "Doesn't seem to have successfully " +
+                                "generated a pipeline-card artifact.",
+                                file=sys.stderr, flush=True)
+                            break
+                        else:
+                            # further filtering on successful runs that are
+                            # retraining of a prior version of the same model
+                            # (to minimize the risk that this was obtained
+                            #  on another ML-framework instance)
+                            if (
+                                # last_task.successful and
+                                # may have failed after the "pipeline_card" step
+                                # and been resumed
+                                hasattr(last_task.artifacts,
+                                        'model_version_blessed') and
+                                last_task.artifacts.model_version_blessed.data and
+                                hasattr(last_task.artifacts,
+                                        'model_repo_id') and
+                                last_task.artifacts.model_repo_id.data == \
+                                    self.model_repo_id
+                            ):
+                                self.current_blessed_run = run
+                            break
+
                 if not self.current_blessed_run:
-                    raise Exception(
+                    print(
                         "Couldn't find blessed run " +
-                        f"{current_blessed_run_id} !")
+                        f"{current_blessed_run_id} !\n" +
+                        "It seems that prior blessed run was " +
+                        "executed on another ML framework instance.",
+                        file=sys.stderr, flush=True)
 
             print("new : " +
                     str(self.perf_metrics[main_perf_metric_name]) +
@@ -1910,13 +1997,26 @@ class UnslothFuncCallFlow(FlowSpec):
             'title': f"{current.flow_name}",
             "subtitle": f"(flow run # {len(list(current.run.parent.runs()))}," + \
                         f" run_id: {str(current.run.id)}  -  {formatted_dt})",
+
+            # blessed status / current_blessed version
             'model_version_blessed': self.model_version_blessed,
-            'current_blessed_run': self.current_blessed_run,
+            'current_blessed_version_label': (
+                self.current_blessed_version_dict["version_label"]
+                if self.current_blessed_version_dict
+                else None
+            ),
+            'current_blessed_commit_datetime': (
+                self.current_blessed_version_dict["commit_datetime"]
+                if self.current_blessed_version_dict
+                else None
+            ),
             'current_blessed_model_commit_hash': (
                 self.current_blessed_version_dict["commit_hash"]
                 if self.current_blessed_version_dict
                 else None
             ),
+            'current_blessed_run': self.current_blessed_run,
+
             'LocalServeReadinessEnum': LocalServeReadinessEnum,
             'local_serve_is_ready': self.local_serve_is_ready,
             # EDA
