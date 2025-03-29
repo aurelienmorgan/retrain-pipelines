@@ -114,7 +114,7 @@ Browse a live example for yourself <a href="https://retrain-pipelines.w3spaces.c
 
 <details>
   <summary>Third-parties integration&nbsp;🔽</summary>
-TensorBoard, PyTorch Profiler, Weights and Biases. <b>retrain-pipelines</b> aims at making centrally available to ML engineers the information they care for.
+TensorBoard, PyTorch Profiler, Weights and Biases, Hugging Face. <b>retrain-pipelines</b> aims at making centrally available to ML engineers the information they care for.
 
   <details>
   <summary>illustration with <code>WandB</code> in the <code>LightGBM_hp_cv_WandB</code> sample pipeline&nbsp;🔽</summary>
