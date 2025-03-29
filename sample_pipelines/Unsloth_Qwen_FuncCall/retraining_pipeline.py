@@ -44,7 +44,6 @@ from datasets import load_dataset, Dataset, DatasetDict
 from datasets.config import HF_DATASETS_CACHE, HF_CACHE_HOME
 from huggingface_hub import list_repo_commits
 from transformers import AutoTokenizer
-from transformers.utils import logging as hf_logging
 
 from retrain_pipelines import __version__
 from retrain_pipelines.dataset.hf_utils import get_lazy_df, \
@@ -1005,11 +1004,7 @@ class UnslothFuncCallFlow(FlowSpec):
 
         with open(self.cpt_traces_file_fullname, 'w') as f:
             with redirect_stdout(f):
-                hf_logging.set_verbosity_error()
-                hf_logging.disable_progress_bar()
                 trainer_stats = trainer.train()
-        hf_logging.set_verbosity_info()
-        hf_logging.enable_progress_bar()
         print(f"{trainer_stats.metrics['train_runtime']} " +
               f"seconds used for training " +
               f"({round(trainer_stats.metrics['train_runtime']/60, 2)}" +
@@ -1193,6 +1188,7 @@ class UnslothFuncCallFlow(FlowSpec):
                 self.unsloth_dir, "outputs", "sft"),
             save_total_limit=2,
 
+            disable_tqdm=True,
             logging_steps=1,
             report_to="tensorboard",
             logging_dir=os.path.join(
@@ -1248,11 +1244,8 @@ class UnslothFuncCallFlow(FlowSpec):
 
         with open(self.sft_traces_file_fullname, 'w') as f:
             with redirect_stdout(f):
-                hf_logging.set_verbosity_error()
-                hf_logging.disable_progress_bar()
                 trainer_stats = trainer.train()
-        hf_logging.set_verbosity_info()
-        hf_logging.enable_progress_bar()
+
         print(f"{trainer_stats.metrics['train_runtime']} " +
               f"seconds used for training " +
               f"({round(trainer_stats.metrics['train_runtime']/60, 2)}" +
