@@ -12,8 +12,7 @@ from requests.exceptions import ReadTimeout
 from huggingface_hub import list_repo_refs, \
     list_repo_commits, list_repo_files, HfApi, \
     hf_hub_download
-from huggingface_hub.utils import \
-    RepositoryNotFoundError, HfHubHTTPError
+from huggingface_hub.utils import HfHubHTTPError
 
 from retrain_pipelines.utils import \
     create_requirements
@@ -380,6 +379,116 @@ def get_pretty_name(
     return pretty_name
 
 
+def get_repo_version(
+    repo_id: str,
+    revision: str = None,
+    repo_type: str = "model",
+    hf_token: str = os.getenv("HF_TOKEN", None)
+) -> (int, int):
+    """
+    """
+
+    if revision is None:
+        return get_repo_latest_version(
+            repo_id=repo_id, repo_type=repo_type, hf_token=hf_token
+        )
+
+    api = HfApi()
+    api_info_method = \
+        api.model_info if "model" == repo_type \
+        else api.dataset_info if "dataset" == repo_type \
+        else api.space_info # if "space" == repo_type
+
+    repo_rev_info = api_info_method(
+        repo_id=repo_id,
+        revision=revision,
+        token=hf_token
+    )
+    repo_rev_card_data = repo_rev_info.card_data
+
+    if repo_rev_card_data and "version" in repo_rev_card_data:
+        version_label = \
+            repo_rev_card_data["version"]
+        major, minor =  \
+            map(int, version_label.split('.'))
+
+        return major, minor
+
+    return 0, 0
+
+
+def get_repo_latest_version(
+    repo_id: str,
+    repo_type: str = "model",
+    hf_token: str = os.getenv("HF_TOKEN", None)
+) -> (int, int):
+    """
+    `retrain-pipelines` repositories
+    on the Hugging Face Hub
+    have a "version" tag in their metadata
+    (str formatted "major.minor").
+    We here retrieve the latest value and
+    return it minor-incremented.
+
+    Note : We look into last commit
+           of all branches.
+
+    Params:
+        - repo_id (str):
+            Path to the HuggingFace repository.
+        - repo_type (str):
+            can be "model", "dataset", "space".
+        - hf_token (Optional, str):
+            Needed if the HF repository is "gated"
+            (requires to be granted access).
+            @see https://huggingface.co/docs/hub/en/datasets-gated
+
+    Results:
+        - (int, int):
+            version as (minor, major) pair
+    """
+
+    refs = None
+    refs = list_repo_refs(
+        repo_id=repo_id,
+        repo_type=repo_type,
+        token=hf_token
+    )
+
+    if refs:
+        api = HfApi()
+        api_info_method = \
+            api.model_info if "model" == repo_type \
+            else api.dataset_info if "dataset" == repo_type \
+            else api.space_info # if "space" == repo_type
+
+        latest_version_major = 0
+        latest_version_minor = 0
+        for branch in refs.branches:
+            branch_repo_info = api_info_method(
+                repo_id=repo_id,
+                revision=branch.target_commit,
+                token=hf_token
+            )
+            branch_card_data = branch_repo_info.card_data
+            if branch_card_data and "version" in branch_card_data:
+                branch_version_label = \
+                    branch_card_data["version"]
+                branch_major, branch_minor =  \
+                    map(int, branch_version_label.split('.'))
+                if branch_major > latest_version_major:
+                    latest_version_major, latest_version_minor = \
+                        branch_major, branch_minor
+                elif branch_minor > latest_version_minor:
+                    latest_version_major, latest_version_minor = \
+                        branch_major, branch_minor
+        #         print(branch_card_data["version"])
+
+        return latest_version_major, latest_version_minor
+
+    return 0, 0
+
+
 def get_new_repo_minor_version(
     repo_id: str,
     repo_type: str = "model",
@@ -387,7 +496,7 @@ def get_new_repo_minor_version(
 ) -> str:
     """
     `retrain-pipelines` repositories
-    on the HuggingFace Hub
+    on the Hugging Face Hub
     have a "version" tag in their metadata
     (str formatted "major.minor").
     We here retrieve the latest value and
@@ -411,54 +520,14 @@ def get_new_repo_minor_version(
             new version label
     """
 
-    refs = None
-    new_version_label = "0.1"
-    try:
-        refs = list_repo_refs(
-            repo_id=repo_id,
-            repo_type=repo_type,
-            token=hf_token
-        )
-    except RepositoryNotFoundError as err:
-        print(f"repo {repo_id} not found.\n" +
-              "If you are trying to access a " +
-              "private or gated repo, " +
-              "make sure you are authenticated " +
-              "and your credentials allow it.",
-              file=sys.stderr)
-        print(err, file=sys.stderr)
+    latest_version_major, latest_version_minor = \
+        get_repo_latest_version(repo_id, repo_type, hf_token)
 
-    if refs:
-        api = HfApi()
-        api_info_method = \
-            api.model_info if "model" == repo_type \
-            else api.dataset_info if "dataset" == repo_type \
-            else api.space_info # if "space" == repo_type
-
-        latest_version_major = 0
-        latest_version_minor = 0
-        for branch in refs.branches:
-            branch_model_info = api_info_method(
-                repo_id=repo_id,
-                revision=branch.target_commit,
-                token=hf_token
-            )
-            branch_card_data = branch_model_info.card_data
-            if branch_card_data and "version" in branch_card_data:
-                branch_version_label = \
-                    branch_card_data["version"]
-                branch_major, branch_minor =  \
-                    map(int, branch_version_label.split('.'))
-                if branch_major > latest_version_major:
-                    latest_version_major, latest_version_minor = \
-                        branch_major, branch_minor
-                elif branch_minor > latest_version_minor:
-                    latest_version_major, latest_version_minor = \
-                        branch_major, branch_minor
-        #         print(branch_card_data["version"])
-
+    if latest_version_major + latest_version_minor > 0:
         new_version_label = \
             f"{latest_version_major}.{latest_version_minor+1}"
+    else:
+        new_version_label = "0.1"
     
     return new_version_label
 

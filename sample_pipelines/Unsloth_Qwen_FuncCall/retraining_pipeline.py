@@ -54,7 +54,8 @@ from retrain_pipelines.dataset.tool_calls import \
     plot_tools_occurences, column_words_stats, \
     plot_words_count
 from retrain_pipelines.utils.hf_utils import \
-    get_new_repo_minor_version, push_files_to_hub_repo_branch
+    get_repo_version, get_new_repo_minor_version, \
+    push_files_to_hub_repo_branch
 from retrain_pipelines.utils import create_requirements
 
  
@@ -371,6 +372,17 @@ class UnslothFuncCallFlow(FlowSpec):
                       "require authentication ?",
                       file=sys.stderr, flush=True)
             raise ex
+        hf_dataset_version = get_repo_version(
+            repo_id=hf_dataset_dict["repo_id"],
+            revision=hf_dataset_dict["commit_hash"],
+            repo_type="dataset",
+            hf_token=os.getenv("HF_TOKEN", None)
+        )
+        hf_dataset_dict["version"] = (
+            f"{hf_dataset_version[0]}.{hf_dataset_version[1]}"
+            if sum(hf_dataset_version) > 0
+            else None
+        )
         self.hf_dataset_dict = hf_dataset_dict
 
         # hf_enrich_dataset
@@ -388,25 +400,50 @@ class UnslothFuncCallFlow(FlowSpec):
                 ),
                 hf_token=os.getenv("HF_TOKEN", None)
             )
+        hf_enrich_dataset_version = get_repo_version(
+            repo_id=hf_enrich_dataset_dict["repo_id"],
+            revision=hf_enrich_dataset_dict["commit_hash"],
+            repo_type="dataset",
+            hf_token=os.getenv("HF_TOKEN", None)
+        )
+        hf_enrich_dataset_dict["version"] = (
+            f"{hf_enrich_dataset_version[0]}.{hf_enrich_dataset_version[1]}"
+            if sum(hf_enrich_dataset_version) > 0
+            else None
+        )
         print(' ; '.join(f"{k}: {hf_enrich_dataset_dict[k]}"
                                  for k in ['commit_hash',
                                            'commit_datetime']))
         self.hf_enrich_dataset_dict = hf_enrich_dataset_dict
 
         # hf_base_model
-        hf_base_model_commits = list_repo_commits(
+        hf_base_model_revision=(
+            None if (rev_commit_hash:=self.hf_base_model["commit_hash"]) == ""
+            else rev_commit_hash
+        )
+        hf_base_model_commit = list_repo_commits(
+                repo_id=self.hf_base_model["repo_id"],
+                revision=hf_base_model_revision,
+                repo_type="model",
+                token=os.getenv("HF_TOKEN", None)
+            )[0]
+        # version major+minor=0 for non retrain-pipelines models
+        hf_base_model_version = get_repo_version(
             repo_id=self.hf_base_model["repo_id"],
-            revision=(
-                None if (rev_commit_hash:=self.hf_base_model["commit_hash"]) == ""
-                else rev_commit_hash
-            ),
+            revision=hf_base_model_revision,
             repo_type="model",
-            token=os.getenv("HF_TOKEN", None))
+            hf_token=os.getenv("HF_TOKEN", None)
+        )
         self.hf_base_model_dict = {
             "repo_id": self.hf_base_model["repo_id"],
-            "commit_hash": hf_base_model_commits[0].commit_id,
+            "version": (
+                f"{hf_base_model_version[0]}.{hf_base_model_version[1]}"
+                if sum(hf_base_model_version) > 0
+                else None
+            ),
+            "commit_hash": hf_base_model_commit.commit_id,
             "commit_datetime": \
-                hf_base_model_commits[0].created_at
+                hf_base_model_commit.created_at
         }
 
         self.model_version_blessed = False
@@ -436,6 +473,8 @@ class UnslothFuncCallFlow(FlowSpec):
                 self.unsloth_dir, "cpt_model")
         self.sft_model_dir = os.path.join(
                 self.unsloth_dir, "sft_model")
+
+        raise Exception("DEBUG")
 
         self.next(self.eda)
 
