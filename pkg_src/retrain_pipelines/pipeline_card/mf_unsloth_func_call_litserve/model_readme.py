@@ -140,7 +140,7 @@ def _model_readme_params(
 
             "base_model_repo_id": base_model_dict["repo_id"],
             "base_model_pretty_name": base_model_pretty_name,
-            "base_model_version": base_model_dict["version"],
+            "base_model_version_label": base_model_dict["version_label"],
             "base_model_commit_hash": base_model_commit_hash,
             "base_model_commit_datetime": base_model_commit_datetime,
             "base_model_arxiv_codes": base_model_arxiv_codes,

@@ -378,7 +378,7 @@ class UnslothFuncCallFlow(FlowSpec):
             repo_type="dataset",
             hf_token=os.getenv("HF_TOKEN", None)
         )
-        hf_dataset_dict["version"] = (
+        hf_dataset_dict["version_label"] = (
             f"{hf_dataset_version[0]}.{hf_dataset_version[1]}"
             if sum(hf_dataset_version) > 0
             else None
@@ -406,7 +406,7 @@ class UnslothFuncCallFlow(FlowSpec):
             repo_type="dataset",
             hf_token=os.getenv("HF_TOKEN", None)
         )
-        hf_enrich_dataset_dict["version"] = (
+        hf_enrich_dataset_dict["version_label"] = (
             f"{hf_enrich_dataset_version[0]}.{hf_enrich_dataset_version[1]}"
             if sum(hf_enrich_dataset_version) > 0
             else None
@@ -436,7 +436,7 @@ class UnslothFuncCallFlow(FlowSpec):
         )
         self.hf_base_model_dict = {
             "repo_id": self.hf_base_model["repo_id"],
-            "version": (
+            "version_label": (
                 f"{hf_base_model_version[0]}.{hf_base_model_version[1]}"
                 if sum(hf_base_model_version) > 0
                 else None
@@ -473,8 +473,6 @@ class UnslothFuncCallFlow(FlowSpec):
                 self.unsloth_dir, "cpt_model")
         self.sft_model_dir = os.path.join(
                 self.unsloth_dir, "sft_model")
-
-        raise Exception("DEBUG")
 
         self.next(self.eda)
 
