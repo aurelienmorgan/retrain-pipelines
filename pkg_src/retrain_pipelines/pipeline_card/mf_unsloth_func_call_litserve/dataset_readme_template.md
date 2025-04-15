@@ -69,7 +69,7 @@ Source datasets :
   - main&nbsp;:
     - <b>{{ main_pretty_name }}</b>&nbsp;<img alt="" src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fhuggingface.co%2Fapi%2Fdatasets%2F{{ main_repo_id | urlencode }}&amp;query=%24.downloads&amp;logo=huggingface&amp;label=downloads"  class="inline-block" />&nbsp;<img alt="" src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fhuggingface.co%2Fapi%2Fdatasets%2F{{ main_repo_id | urlencode }}&amp;query=%24.likes&amp;logo=huggingface&amp;label=likes"  class="inline-block" />
     <br />
-    <code>{{ main_repo_id }}</code>
+    <code>{{ main_repo_id }}{% if main_version is not none %} v{{ main_version }}{% endif %}</code>
     (<a href="https://huggingface.co/datasets/{{ main_repo_id }}/blob/{{ main_commit_hash }}/README.md"
         target="_blank">{{ main_commit_hash[:7] }}</a> -
         {{ main_commit_datetime.strftime("%Y-%m-%d %H:%M:%S UTC") }})
@@ -91,7 +91,7 @@ Source datasets :
   - data-enrichment&nbsp;:
     - <b>{{ enrich_pretty_name }}</b>&nbsp;<img alt="" src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fhuggingface.co%2Fapi%2Fdatasets%2F{{ enrich_repo_id | urlencode }}&amp;query=%24.downloads&amp;logo=huggingface&amp;label=downloads"  class="inline-block" />&nbsp;<img alt="" src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fhuggingface.co%2Fapi%2Fdatasets%2F{{ enrich_repo_id | urlencode }}&amp;query=%24.likes&amp;logo=huggingface&amp;label=likes"  class="inline-block" />
     <br />
-    <code>{{ enrich_repo_id }}</code>
+    <code>{{ enrich_repo_id }}{% if enrich_version is not none %} v{{ enrich_version }}{% endif %}</code>
     (<a href="https://huggingface.co/datasets/{{ enrich_repo_id }}/blob/{{ enrich_commit_hash }}/README.md"
         target="_blank">{{ enrich_commit_hash[:7] }}</a> -
         {{ enrich_commit_datetime.strftime("%Y-%m-%d %H:%M:%S UTC") }})

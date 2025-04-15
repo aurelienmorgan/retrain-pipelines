@@ -161,7 +161,9 @@ def _dataset_readme_params(
             "enrich_repo_id": \
                 hf_enrich_dataset_dict["repo_id"],
 
+            "main_version": hf_dataset_dict["version"],
             "main_commit_hash": main_commit_hash,
+            "enrich_version": hf_enrich_dataset_dict["version"],
             "enrich_commit_hash": enrich_commit_hash,
 
             "main_commit_datetime": \
