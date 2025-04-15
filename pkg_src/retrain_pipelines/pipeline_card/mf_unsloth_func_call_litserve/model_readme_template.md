@@ -107,7 +107,7 @@ Training dataset&nbsp;:
     <img alt="" src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fhuggingface.co%2Fapi%2Fdatasets%2F{{ dataset_repo_id | urlencode }}&amp;query=%24.downloads&amp;logo=huggingface&amp;label=downloads"  class="inline-block" />&nbsp;<img alt="" src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fhuggingface.co%2Fapi%2Fdatasets%2F{{ dataset_repo_id | urlencode }}&amp;query=%24.likes&amp;logo=huggingface&amp;label=likes"  class="inline-block" />
 
 Base model&nbsp;:
-- <code>{{ base_model_repo_id }}</code>
+- <code>{{ base_model_repo_id }}{% if base_model_version is not none %} v{{ base_model_version }}{% endif %}</code>
 (<a href="https://huggingface.co/{{ base_model_repo_id }}/blob/{{ base_model_commit_hash }}/README.md"
     target="_blank">{{ base_model_commit_hash[:7] }}</a> -
     {{ base_model_commit_datetime.strftime("%Y-%m-%d %H:%M:%S UTC") }})
