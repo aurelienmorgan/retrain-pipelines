@@ -686,13 +686,29 @@
                         </table>
                         <br />
                         <h3 style="color:#FFD700;">
-                            Training parameters&nbsp;:
+                            Input parameters&nbsp;:
                         </h3>
+                        <h4 style="color:#CCAD00;">base model&nbsp;:</h4>
+                        <font color="#C0C0C0">
+                            <b>{{base_model_repo_id}}</b>
+{% if base_model_version_label is not none %}
+                            <b>v{{ base_model_version_label }}</b>
+                            <span style="background-color: #C0C0C0;" class="info-icon">i</span>
+                            <span style="width: 175px; white-space: nowrap;"
+                                  class="info-content">{{ base_model_commit_datetime.strftime("%Y-%m-%d %H:%M:%S UTC") }}</span>
+                            </span>
+{% else %}
+                        ({{ base_model_commit_datetime.strftime("%Y-%m-%d %H:%M:%S UTC") }})
+{% endif %}
+                            [<a href="https://hf.co/{{ base_model_repo_id }}/blob/{{ base_model_commit_hash }}/README.md"
+                                target="_blank">HuggingFace &#x1F917;</a>]
+                        </font>
+                        <h4 style="color:#CCAD00;">training conditions&nbsp;:</h4>
                         <div class="wide-table-container">
 {{pipeline_parameters_table}}
                         </div>
                         <br />
-                        <h3 style="color:#FFD700;">Performance metrics :</h3>
+                        <h3 style="color:#FFD700;">Performance metrics&nbsp;:</h3>
                         <h4 style="color:#CCAD00;">Overall</h4>
 {{metrics_table}}
                         <br />

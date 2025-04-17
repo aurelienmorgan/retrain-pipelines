@@ -2068,6 +2068,7 @@ class UnslothFuncCallFlow(FlowSpec):
             'dataset_augmentation_rate': self.actual_augmentation_rate,
             'dataset_enrichment_rate': self.enrichment_rate,
 
+            # trained model version
             'model_repo_id': self.model_repo_id,
             'model_version_label': self.model_commit_dict["version_label"],
             'model_commit_datetime': self.model_commit_dict["commit_datetime"],
@@ -2078,6 +2079,7 @@ class UnslothFuncCallFlow(FlowSpec):
 
             'validation_completions_fig': self.validation_completions_fig,
 
+            'hf_base_model_dict': self.hf_base_model_dict,
             'pipeline_parameters_dict': {"cpt": self.cpt_training_args,
                                          "sft": self.sft_training_args},
 

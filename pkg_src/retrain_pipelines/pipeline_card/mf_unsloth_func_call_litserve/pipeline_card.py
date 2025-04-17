@@ -71,6 +71,12 @@ def get_html(
     ##########################
     #     model training     #
     ##########################
+    base_model_dict = params['hf_base_model_dict']
+    base_model_repo_id = base_model_dict['repo_id']
+    base_model_version_label = base_model_dict['version_label']
+    base_model_commit_hash = base_model_dict['commit_hash']
+    base_model_commit_datetime = base_model_dict['commit_datetime']
+
     pipeline_parameters_table = \
         pd.DataFrame([params['pipeline_parameters_dict']]
                     ).to_html(classes='wide', escape=False,
@@ -241,6 +247,11 @@ def get_html(
 
         ###################################
 
+        # pipeline execution params
+        base_model_repo_id=base_model_repo_id,
+        base_model_version_label=base_model_version_label,
+        base_model_commit_hash=base_model_commit_hash,
+        base_model_commit_datetime=base_model_commit_datetime,
         pipeline_parameters_table=indent(pipeline_parameters_table, ' '*28),
 
         # validation perf =>              #
