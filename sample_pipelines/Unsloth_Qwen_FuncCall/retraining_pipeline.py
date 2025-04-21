@@ -1864,7 +1864,7 @@ class UnslothFuncCallFlow(FlowSpec):
                     start_time = time.time()
                     data = {
                         "adapter_name": "func_caller",
-                        "queries": '["Hello.", "Is 49 a perfect square?"]'
+                        "queries_list": '["Hello.", "Is 49 a perfect square?"]'
                     }
                     print(f"inference test - data: {data}")
                     response = requests.post(url, headers=headers, data=data)
@@ -1876,7 +1876,7 @@ class UnslothFuncCallFlow(FlowSpec):
 
                     start_time = time.time()
                     data = {
-                        "queries": '["Hello.", "Is 49 a perfect square?"]'
+                        "queries_list": '["Hello.", "Is 49 a perfect square?"]'
                     }
                     print(f"inference test - data: {data}")
                     response = requests.post(url, headers=headers, data=data)

@@ -3,14 +3,15 @@ import os
 import ast
 import time
 
+from typing import List
+from fastapi import Body, HTTPException
+
 from unsloth import FastLanguageModel
 from transformers import AutoTokenizer
 from peft import get_model_status
 from peft.utils import ModulesToSaveWrapper
 
 import litserve as ls
-
-from typing import List
 
 from litserve_serverconfig import Config
 from litserve_datamodel import Request, QueryOutput, Response
@@ -27,7 +28,7 @@ class UnslothLitAPI(ls.LitAPI):
           'http://localhost:8765/predict' \
           -H 'accept: application/x-www-form-urlencoded' \
           -d 'adapter_name=func_caller' \
-          -d 'queries=["Hello.", "Is 49 a perfect square?"]'
+          -d 'queries_list=["Hello.", "Is 49 a perfect square?"]'
         ```
     """
 
@@ -96,18 +97,31 @@ class UnslothLitAPI(ls.LitAPI):
         print("---", flush=True)
 
 
+    def adapters(self) -> dict:
+        return Config.adapters
+
+
     def decode_request(self, request) -> Request:
+        queries_list = request.get("queries_list")
+        print(f"`{queries_list}`, {type(queries_list)}")
         adapter_name = request.get("adapter_name") or ""
+
         try:
-            queries = ast.literal_eval(request["queries"])
+            if not isinstance(queries_list, list):
+                queries_list = \
+                    ast.literal_eval(request["queries_list"])
+
+            request_obj = Request(
+                adapter_name=adapter_name,
+                queries_list=queries_list)
+            print(f"request_obj : {request_obj}", flush=True)
+
+            return request_obj
         except Exception as e:
-            return {"error": str(e)}, 500
-
-        request_obj = Request(
-            adapter_name=adapter_name, queries_batch=queries)
-        print(f"request_obj : {request_obj}", flush=True)
-
-        return request_obj
+            print("Error parsing queries: "
+                  f"`{queries_list}`\n{e}")
+            raise HTTPException(status_code=500,
+                                detail=str(e))
 
 
     def predict(self, request: Request) -> Response:
@@ -120,7 +134,8 @@ class UnslothLitAPI(ls.LitAPI):
                 set([request.adapter_name]) !=
                 set(self.model.active_adapters())
             ):
-                self.model.set_adapter(adapter_name=request.adapter_name)
+                self.model.set_adapter(
+                    adapter_name=request.adapter_name)
             self.model.enable_adapters()
             #################
             # BUG FIX BEGIN #
@@ -143,8 +158,9 @@ class UnslothLitAPI(ls.LitAPI):
             print("active_adapters : None")
             tokenizer = self.tokenizer
 
-        formatted_inputs = [(tokenizer.chat_template or "{}").format(query, "")
-                            for query in request.queries_batch]
+        formatted_inputs = [(tokenizer.chat_template
+                             or "{}").format(query, "")
+                            for query in request.queries_list]
 
         tokenized_inputs = tokenizer(
             formatted_inputs,
@@ -185,7 +201,7 @@ class UnslothLitAPI(ls.LitAPI):
             )
             for query, formatted_input, output,
                 new_tokens_count, input_tokens_count
-            in zip(request.queries_batch, formatted_inputs,
+            in zip(request.queries_list, formatted_inputs,
                    decoded_outputs, new_tokens_count_list,
                    input_tokens_count_list)
         ]
@@ -201,5 +217,27 @@ if __name__ == "__main__":
     api = UnslothLitAPI()
     server = ls.LitServer(api, accelerator="cuda",
                           healthcheck_path="/status")
+
+
+    @server.app.post("/predict", response_model=Response)
+    async def predict_endpoint(
+        request: Request = Body(...)
+    ) -> Response:
+        """Exposing endpoint to the FastAPI Swagger UI
+        as accepting "application/json" requests there
+        @http://localhost:8765/docs
+        """
+
+        # Real logic goes inside the server class
+        pass
+        return None
+
+
+    @server.app.post("/adapters", response_model=dict)
+    async def adapters_endpoint(
+    ) -> dict:
+        return api.adapters()
+
+
     server.run(port=Config.PORT)
 
