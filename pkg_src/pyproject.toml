@@ -4,7 +4,7 @@ requires = ["wheel", "setuptools>=60", "setuptools-scm>=8.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "retrain_pipelines"
+name = "retrain-pipelines"
 authors = [
     {name = "Aurelien-Morgan"}
 ]
@@ -104,4 +104,5 @@ retrain_pipelines_local = "retrain_pipelines.local_launcher:cli_utility"
 [project.urls]
 "Repository" = "https://github.com/aurelienmorgan/retrain-pipelines"
 "PyPI" = "https://pypi.org/project/retrain-pipelines/"
+"Hugging Face" = "https://huggingface.co/retrain-pipelines"
 
