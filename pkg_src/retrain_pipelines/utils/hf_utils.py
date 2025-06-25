@@ -598,8 +598,9 @@ def create_repo_if_not_exists(
                 )
             except HfHubHTTPError as err:
                 if (
-                    f"Reference already exists: refs/heads/{branch_name}"
-                    != err.server_message.strip()
+                    not err.server_message.startswith(
+                        f"Reference refs/heads/{branch_name} already exists"
+                    )
                 ):
                     print(f"Failed to create branch {branch_name} for " +
                           f"{repo_type} `{repo_id.split('/')[1]}` "+
