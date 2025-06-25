@@ -8,7 +8,6 @@ import json
 import regex
 import shlex
 import subprocess
-import platform
 
 
 def _split_preserve_dict(s):
@@ -45,15 +44,14 @@ def _split_preserve_dict(s):
 
 def _strip_ansi_escape_codes(text):
     # Remove ANSI escape codes from text
-    ansi_escape = regex.compile(r'\x1B\[.*?m')
+    ansi_escape = regex.compile(r'\x1b\[[0-9;]*m')
     return ansi_escape.sub('', text)
+
 
 def retrain_pipelines_local(
     command: str,
     env: os._Environ
 ) -> bool:
-
-    last_stdout_line = ""
 
     command = _split_preserve_dict(command)
 
@@ -80,21 +78,24 @@ def retrain_pipelines_local(
                     command[index] = env[env_var_name]
         ############################################
 
-    if platform.system() == 'Windows':
-        import colorama
-        from colorama import AnsiToWin32
-        colorama.init(autoreset=True)
-        output_stream = AnsiToWin32(sys.stdout).write
+    # Metaflow colored output preservation # TODO DELETE WHOLE BLOCK
+    last_stdout_line = ""
+    import pty
+    import select
+    output_stream = sys.stdout.write
+    master_fd, slave_fd = pty.openpty()
+    process = subprocess.Popen(
+                command,
+                stdout=slave_fd, stderr=slave_fd,
+                shell=False, env=env, bufsize=1, text=True)
 
-        process = subprocess.Popen(
-            command,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            shell=False, env=env, text=True
-        )
-
-        try:
-            while True:
-                output = process.stdout.read(1024)
+    try:
+        while True:
+            reads, _, _ = select.select([master_fd], [], [], 0.1)
+            if master_fd in reads:
+                output = os.read(master_fd,
+                                 1024).decode("utf-8",
+                                              errors="ignore")
                 if not output:
                     break
                 output_stream(output)
@@ -105,47 +106,19 @@ def retrain_pipelines_local(
                         last_stdout_line = lines[-1]
                     elif len(lines) > 1:
                         last_stdout_line = lines[-2]
-            process.wait()
-        finally:
-            process.stdout.close()
-            process.stderr.close()
-    else:
-        import pty
-        import select
-        output_stream = sys.stdout.write
-        master_fd, slave_fd = pty.openpty()
-        process = subprocess.Popen(
-                    command,
-                    stdout=slave_fd, stderr=slave_fd,
-                    shell=False, env=env, bufsize=1, text=True)
 
-        try:
-            while True:
-                reads, _, _ = select.select([master_fd], [], [], 0.1)
-                if master_fd in reads:
-                    output = os.read(master_fd,
-                                     1024).decode("utf-8",
-                                                  errors="ignore")
-                    if not output:
-                        break
-                    output_stream(output)
-                    sys.stdout.flush()
-                    lines = output.splitlines()
-                    if lines:
-                        if lines[-1] != "\x1b[0m":
-                            last_stdout_line = lines[-1]
-                        elif len(lines) > 1:
-                            last_stdout_line = lines[-2]
-                if process.poll() is not None:
-                    break
-        finally:
-            os.close(master_fd)
-            os.close(slave_fd)
-            process.wait()
-            last_stdout_line = _strip_ansi_escape_codes(
-                last_stdout_line.strip())
+            if process.poll() is not None:
+                break
+    finally:
+        os.close(master_fd)
+        os.close(slave_fd)
+        process.wait()
+        last_stdout_line = _strip_ansi_escape_codes(
+            last_stdout_line.strip())
+        print(last_stdout_line)
 
     return last_stdout_line.endswith("Done!")
+
 
 def cli_utility():
     args = sys.argv[1:]  # all arguments

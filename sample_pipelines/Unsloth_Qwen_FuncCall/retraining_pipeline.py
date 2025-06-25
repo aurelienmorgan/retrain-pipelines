@@ -58,6 +58,9 @@ from retrain_pipelines.utils.hf_utils import \
     push_files_to_hub_repo_branch
 from retrain_pipelines.utils import create_requirements
 
+
+logging.getLogger().setLevel(logging.INFO)
+
  
 class LocalServeReadinessEnum(Enum):
     """

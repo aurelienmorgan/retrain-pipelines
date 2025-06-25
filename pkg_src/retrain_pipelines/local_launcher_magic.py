@@ -2,6 +2,8 @@
 import os
 import sys
 
+from .utils import animate_wave
+from .__version__ import __version__
 from .local_launcher import retrain_pipelines_local \
                                 as _retrain_pipelines_local
 
@@ -12,6 +14,8 @@ from IPython.core.magic import register_line_magic
 def retrain_pipelines_local(
     command
 ):
+    animate_wave(f"retrain-pipelines {__version__}",
+                 wave_length=6, delay=0.01, loops=2)
 
     env = os.environ.copy()
     ############################################

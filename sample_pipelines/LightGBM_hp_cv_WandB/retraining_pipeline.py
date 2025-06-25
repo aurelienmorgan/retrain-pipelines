@@ -48,6 +48,9 @@ from retrain_pipelines.utils import grant_read_access, \
         tmp_os_environ
 
 
+logging.getLogger().setLevel(logging.INFO)
+
+
 class LightGbmHpCvWandbFlow(FlowSpec):
     """
     Training pipeline

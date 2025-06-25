@@ -47,6 +47,9 @@ from retrain_pipelines.utils import flatten_dict, \
         create_requirements
 
 
+logging.getLogger().setLevel(logging.INFO)
+
+
 class TabNetHpCvWandbFlow(FlowSpec):
     """
     Training pipeline

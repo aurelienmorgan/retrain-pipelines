@@ -1,5 +1,5 @@
 
-from .cli_wave import animate_wave
+from .rich_wave import animate_wave
 
 from .utils import dict_dict_list_get_all_combinations, \
                    flatten_dict, \
