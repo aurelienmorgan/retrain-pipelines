@@ -30,7 +30,7 @@ def run_alembic_upgrade_once():
         alembic_ini_path = os.path.join(file_dir, "alembic", "alembic.ini")
         # @see https://stackoverflow.com/questions/78780118/
         alembic_cfg = Config(alembic_ini_path, attributes={"configure_logger": False})
-        db_url = f"sqlite:///{os.environ['RP_ASSETS_CACHE']}local_metadatastore.db"
+        db_url = os.environ["RP_METADATASTORE_URL"]
         alembic_cfg.set_main_option(
             "sqlalchemy.url",
             db_url
