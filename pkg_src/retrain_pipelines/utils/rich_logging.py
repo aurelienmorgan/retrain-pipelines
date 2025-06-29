@@ -7,19 +7,26 @@ def framed_rich_log_str(
     border_color: str = "white",
     font_color: str = "default"
 ) -> str:
-    # Split input into lines
+    """Puts a colored rounded border around message to be rich-logged.
+
+    Params:
+        - rich_markup (str):
+            the formatted messaged to be logged
+        - border_color (str):
+            the color of the border line
+        - font_color (str):
+            the default font color
+            (for substrings not marked for specific coloring)
+    """
     markup_lines = rich_markup.splitlines()
 
     # Apply default font color to each line, if not already colored
     colored_lines = [
-        f"[{font_color}]{line}[/]" if not line.strip().startswith('[') else line
-        for line in markup_lines
+        f"[{font_color}]{line}[/]" for line in markup_lines
     ]
 
-    # Create Text object for accurate width measurement
     text_block = Text.from_markup('\n'.join(colored_lines))
     plain_lines = text_block.plain.splitlines()
-
     max_width = max(wcswidth(line) for line in plain_lines)
 
     # Frame characters

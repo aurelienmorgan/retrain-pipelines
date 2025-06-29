@@ -4,7 +4,7 @@ from retrain_pipelines.dag_engine.task import \
     task, parallel_task, execute, render_networkx, \
     render_plotly, render_svg
 
-# ---- Example: Nested Parallelism and Merging ----
+# ---- Example: Nested Parallelism and Merging with intermediary inline tasks ----
 
 
 @task
@@ -19,10 +19,24 @@ def outer_parallel(x):
     return [x["start"] * 10 + i for i in range(2)]  ######## Must be an enumerator, for following parallel task to split/distribute handling
 
 
+@task
+def inline1(results):
+    """A simple task, gets executed inline in parrallel branches."""
+    input = results["outer_parallel"]
+    return input
+
+
 @parallel_task
 def inner_parallel(y):
     """For each y, double it."""
-    return [y["outer_parallel"] * 2 for j in range(2)]  ######## Must be an enumerator, for following parallel-merging task to aggregate right
+    return [y["inline1"] * 2 for j in range(2)]  ######## Must be an enumerator, for following parallel-merging task to aggregate right
+
+
+@task
+def inline2(results):
+    """A simple task, gets executed inline in parrallel branches."""
+    input = results["inner_parallel"]
+    return input
 
 
 
@@ -36,13 +50,20 @@ def elementwise_2D_sum(matrix):
 @task(merge_func=elementwise_2D_sum)
 def merge_inner(results):
     """Merge inner parallel results per outer group"""
-    return results["inner_parallel"]  ######## Must be an enumerator, for following parallel-merging task to aggregate right
+    return results["inline2"]  ######## Must be an enumerator, for following parallel-merging task to aggregate right
+
+
+@task
+def inline3(results):
+    """A simple task, gets executed inline in parrallel branches."""
+    input = results["merge_inner"]
+    return input
 
 
 @task(merge_func=elementwise_2D_sum)
 def merge_outer(results):
     """Merge outer parallel results"""
-    return results["merge_inner"]
+    return results["inline3"]
 
 
 @task
@@ -51,7 +72,7 @@ def end(results):
 
 
 # Compose the DAG using operator overloading (>>)
-final = start >> outer_parallel >> inner_parallel >> merge_inner >> merge_outer >> end
+final = start >> outer_parallel >> inline1 >> inner_parallel >> inline2 >> merge_inner >> inline3 >> merge_outer >> end
 
 if __name__ == "__main__":
     os.environ["RP_ARTIFACTS_STORE"] = os.path.dirname(__file__)

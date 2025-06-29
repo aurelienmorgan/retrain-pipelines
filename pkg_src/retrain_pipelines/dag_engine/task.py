@@ -6,6 +6,7 @@ import uuid
 from collections import defaultdict, deque
 
 from .db.dao import DAO
+from ..utils.rich_logging import framed_rich_log_str
 
 
 # ---- Core Task and Execution Infrastructure ----
@@ -26,32 +27,38 @@ class Task:
         self.children = []  # List of child Task objects
         self.exec_id = None  # Execution ID for the task
         self.task_id = None
+        self.rank = None # list of indices of parent-branches for task-parallelism
 
     def _wrap_func(self, func):
         """Wrap the function with logging."""
 
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
-            if (docstring:=func.__doc__):
-                self.log.info(f"[bold green]{docstring}[/bold green]")
-            print(f"args: {args}")
-            print(f"kwargs: {kwargs}")
             index = kwargs.pop("index", None)
             dao = DAO(os.environ["RP_METADATASTORE_URL"])
             self.task_id = dao.add_task(self.exec_id)
 
-            if index is not None:
-                self.log.info(
-                    f"Executing task: {func.__name__}, ID: {self.id}, Index: {index}, Inputs: {args}, {kwargs}, TaskId: {self.task_id}"
+            self.log.info(
+                framed_rich_log_str(
+                    f"🔧 Entering Task "
+                    f"[#D2691E]`{func.__name__}[{self.task_id}]"
+                    f"{f'[{index}]' if index is not None else ''}`[/]:\n"
+                    f"Inputs :\n"
+                    f"  • Positional: {args}\n"
+                    f"  • Keyword   : {kwargs}" +
+                    (f"\n[bold green]{docstring}[/]" if (docstring:=func.__doc__) else ""),
+                    border_color="#FFFFE0",
+                    font_color="red"
                 )
-            else:
-                self.log.info(
-                    f"Executing task: {func.__name__}, ID: {self.id}, Inputs: {args}, {kwargs}, TaskId: {self.task_id}"
-                )
+            )
 
             result = func(*args, **kwargs)
 
-            self.log.info(f"Completed task: {func.__name__}, ID: {self.id}, Index: {index}, Result: {result}")
+            self.log.info(
+                f"\n✅ Completed Task [#D2691E]`{func.__name__}[{self.task_id}]{f'[{index}]' if index is not None else ''}`[/]:\n"
+                f"Results :\n" +
+                f"  • {result} {f'({type(result).__name__})' if result is not None else ''}\n"
+            )
 
             return result
 
@@ -67,7 +74,7 @@ class Task:
 
         if self.exec_id is None:
             self.exec_id = dao.add_execution()
-            self.log.error(self.func.__name__ + " has no exec_id")
+            self.log.info(f"[bold red]{self.func.__name__} has no exec_id[/]")
             for child in self.children:
                 self._cascade_exec_id(self.exec_id, child)
         if other.exec_id is None:
@@ -158,7 +165,7 @@ class TaskGroup:
 
         if self.exec_id is None:
             self.exec_id = dao.add_execution()
-            self.log.error(self.func.__name__ + " has no exec_id")
+            self.log.info(f"[bold red]{self.func.__name__} has no exec_id[/]")
             for child in self.children:
                 self._cascade_exec_id(self.exec_id, child)
         if other.exec_id is None:
@@ -242,14 +249,11 @@ def task(func=None, *, merge_func=None):
     return decorator(func) if func else decorator
 
 
-def parallel_task(func=None, *, merge_func=None):
-    """Decorator for parallel tasks.
-
-    Optionally takes a merge_func for merging results after parallel execution.
-    """
+def parallel_task(func=None):
+    """Decorator for parallel tasks."""
 
     def decorator(f):
-        t = Task(f, is_parallel=True, merge_func=merge_func)
+        t = Task(f, is_parallel=True, merge_func=None)
 
         @functools.wraps(f)
         def wrapper(*args, **kwargs):
@@ -359,50 +363,165 @@ def execute(task: Task, input_data=None):
     print(f"Topological order: {[t.func.__name__ for t in order]}")
 
     results = {}
-    for t in order:
+    i = 0
+
+    while i < len(order):
+        t = order[i]
 
         t.log.info(f"Executing task: [rgb(0,255,255) on #af00ff]{t.func.__name__}[/rgb(0,255,255) on #af00ff]")
-        # print(f"Children: {[p.func.__name__ for p in t.children]}")
-        # print(f"Parents: {[p.func.__name__ for p in t.parents]}")
+
         parent_results = {}
         for p in t.parents:
-            # print(f" parent {p.func.__name__}, results : {results[p.func.__name__]}")
-            parent_results.update({p.func.__name__: results[p.func.__name__]})
-        print(f"parent_results: {parent_results}")
+            if p.func.__name__ in results:
+                parent_results[p.func.__name__] = results[p.func.__name__]
+
         if t.is_parallel:
-            # For parallel tasks, run func for each item in the "parent_results"
-            # (all values shall be iterables of the same length)
-            print(f"parent_results : {parent_results}")
-            print(f"parent_results.values() : {parent_results.values()}")
+            t.log.info(f"parent_results: {parent_results}")
+
+            # Find the end of this parallel subdag
+            subdag_end = _find_subdag_end(order, i)
+            subdag_tasks = order[i:subdag_end]
+            t.log.info(f"subdag_tasks [red on yellow]{[t.func.__name__ for t in subdag_tasks]}[/]")
+
+            # Execute parallel subdag for each input
+            if parent_results:
+                first_parent_result = list(parent_results.values())[0]
+                input_count = len(first_parent_result) if isinstance(first_parent_result, list) else 1
+            else:
+                input_count = 1
+
             with concurrent.futures.ThreadPoolExecutor() as executor:
-                keys = list(parent_results.keys())
-                values = zip(*parent_results.values())
-                futures = [
-                    executor.submit(t.func, dict(zip(keys, row)), index=i)
-                    for i, row in enumerate(values)
-                ]
+                futures = []
+                for idx in range(input_count):
+                    branch_input = {}
+                    for k, v in parent_results.items():
+                        branch_input[k] = v[idx] if isinstance(v, list) else v
+                    futures.append(executor.submit(
+                        _execute_branch,
+                        subdag_tasks,
+                        branch_input,
+                        [idx]
+                    ))
+
                 sub_results = [f.result() for f in futures]
-            # Merge results if a merge_func is provided
-            t.log.info(f"3. {t.func.__name__}, [rgb(0,255,255) on #af00ff]{t.id}[/rgb(0,255,255) on #af00ff]")
-            result = t.merge_func(sub_results) if t.merge_func else sub_results
+
+            # Store results for the last task in subdag
+            last_task_name = subdag_tasks[-1].func.__name__
+            results[last_task_name] = sub_results
+
+            # Skip to after the subdag
+            i = subdag_end
+            continue
         else:
-            # For regular tasks, pass parent results as arguments
-            t.log.info(f"4. {t.func.__name__}, [rgb(0,255,255) on #af00ff]{t.id}[/rgb(0,255,255) on #af00ff]")
-            # merging tasks can only have 1 parent
+            # Regular task execution
+            parent_results = \
+                {t.parents[0].func.__name__: t.merge_func(list(parent_results.values())[0])} \
+                if t.merge_func \
+                else parent_results
+            t.log.info(f"parent_results: {parent_results}")
+
+            if t.merge_func:
+                t.log.info(
+                    f"[#FFFFE0]`{t.func.__name__}" +
+                    f"{f'[{t.rank}]' if t.rank is not None else ''}` merged "
+                    f" {t.merge_func.__name__}(parent_results) :\n" +
+                    f"Inputs :\n" +
+                    f"  • {str(parent_results)}[/]"
+                )
+
+            result = t.func(parent_results) if parent_results else t.func()
+            results[t.func.__name__] = result
+
+        i += 1
+
+    return results[order[-1].func.__name__]
+
+
+def _find_subdag_end(task_order, start_idx):
+    """Find where the parallel subdag ends, e.g.
+    at the next merge task, accounting for potential nesting."""
+    parallel_depth = 0
+    for i in range(start_idx, len(task_order)):
+        if task_order[i].is_parallel:
+            parallel_depth += 1
+        elif task_order[i].merge_func:
+            parallel_depth -= 1
+            if parallel_depth == 0:
+                return i
+
+    return len(task_order)
+
+
+def _execute_branch(branch_tasks, branch_input, branch_index):
+    """Execute a single parallel branch with recursive subdag handling."""
+    branch_results = branch_input.copy()
+    i = 0
+
+    while i < len(branch_tasks):
+        t = branch_tasks[i]
+        t.rank = branch_index
+
+        parent_results = {}
+        for p in t.parents:
+            if p.func.__name__ in branch_results:
+                parent_results[p.func.__name__] = branch_results[p.func.__name__]
+
+        if t.is_parallel and i> 0:
+            t.log.info(f"parent_results: {parent_results}")
+
+            # Find nested subdag end
+            nested_subdag_end = _find_subdag_end(branch_tasks, i)
+            nested_subdag_tasks = branch_tasks[i:nested_subdag_end]
+            t.log.info(f"nested_subdag_tasks [red on yellow]{branch_index}{[t.func.__name__ for t in nested_subdag_tasks]}[/]")
+
+            # Execute nested parallel subdag
+            parent_value = list(parent_results.values())[0]
+            if isinstance(parent_value, list):
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    nested_futures = []
+                    for nested_idx, item in enumerate(parent_value):
+                        nested_input = {list(parent_results.keys())[0]: item}
+                        nested_futures.append(executor.submit(
+                            _execute_branch,
+                            nested_subdag_tasks,
+                            nested_input,
+                            branch_index + [nested_idx]
+                        ))
+
+                    nested_results = [f.result() for f in nested_futures]
+                branch_results[nested_subdag_tasks[-1].func.__name__] = nested_results
+            else:
+                result = _execute_branch(nested_subdag_tasks, parent_results, branch_index)
+                branch_results[nested_subdag_tasks[-1].func.__name__] = result
+
+            i = nested_subdag_end
+            continue
+        else:
+            # Regular task
+            t.log.info(
+                f"Executing task: " +
+                f"[rgb(0,255,255) on #af00ff]{t.func.__name__}{branch_index}[/]"
+            )
+
             parent_results = \
                 {t.parents[0].func.__name__: t.merge_func(list(parent_results.values())[0])} if t.merge_func \
                 else parent_results
+            t.log.info(f"parent_results: {parent_results}")
+
             if t.merge_func:
-                print(
-                    f"`{t.func.__name__}` merged {t.merge_func.__name__}(parent_results) : " +
-                    str(parent_results)
+                t.log.info(
+                    f"[#FFFFE0]`{t.func.__name__}{branch_index} merged " +
+                    f" {t.merge_func.__name__}(parent_results) :\n" +
+                    f"Inputs :\n" +
+                    f"  • {str(parent_results)}[/]"
                 )
-            result = t.func(parent_results) if parent_results else t.func()
 
-        results.update({t.func.__name__: result})
+            result = t.func(parent_results, index=branch_index) if parent_results else t.func(index=branch_index)
+            branch_results[t.func.__name__] = result
 
-    # Return the result of the last task in topological order (the sink)
-    return results #[order[-1]]
+        i += 1
+
+    return branch_results[branch_tasks[-1].func.__name__]
 
 
 # ---- SVG Rendering ----

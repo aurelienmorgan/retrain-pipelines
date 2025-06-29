@@ -35,9 +35,9 @@ def snake_head_B1(snake_heads_A_results):
     we could for instance concat in a list
     """
     result = [
-        "B1_" + snake_heads_A_results["snake_head_A1"],
-        "B1_" + snake_heads_A_results["snake_head_A2"],
-        "B1_" + snake_heads_A_results["snake_head_A3"]
+        ("B1_" + snake_heads_A_results["snake_head_A1"]),
+        ("B1_" + snake_heads_A_results["snake_head_A2"]),
+        ("B1_" + snake_heads_A_results["snake_head_A3"])
     ]
     print(result)
     return result
@@ -50,9 +50,9 @@ def snake_head_B2(snake_heads_A_results):
     we could for instance concat in a list
     """
     result = [
-        "B2_" + snake_heads_A_results["snake_head_A1"],
-        "B2_" + snake_heads_A_results["snake_head_A2"],
-        "B2_" + snake_heads_A_results["snake_head_A3"]
+        ("B2_" + snake_heads_A_results["snake_head_A1"]),
+        ("B2_" + snake_heads_A_results["snake_head_A2"]),
+        ("B2_" + snake_heads_A_results["snake_head_A3"])
     ]
     print(result)
     return result
@@ -65,9 +65,9 @@ def snake_head_B3(snake_heads_A_results):
     we could for instance concat in a list
     """
     result = [
-        "B3_" + snake_heads_A_results["snake_head_A1"],
-        "B3_" + snake_heads_A_results["snake_head_A2"],
-        "B3_" + snake_heads_A_results["snake_head_A3"]
+        ("B3_" + snake_heads_A_results["snake_head_A1"]),
+        ("B3_" + snake_heads_A_results["snake_head_A2"]),
+        ("B3_" + snake_heads_A_results["snake_head_A3"])
     ]
     print(result)
     return result
@@ -79,12 +79,11 @@ def concat_snake_heads_B(snake_heads_B_results):
     we could for instance concat in a flattened list
     just for fun (and because "when not?")
     """
-    import itertools
-    result = itertools.chain.from_iterable([
-        snake_heads_B_results["snake_head_B1"],
-        snake_heads_B_results["snake_head_B2"],
+    result = (
+        snake_heads_B_results["snake_head_B1"] +
+        snake_heads_B_results["snake_head_B2"] +
         snake_heads_B_results["snake_head_B3"]
-    ])
+    )
     print(result)
     return result
 

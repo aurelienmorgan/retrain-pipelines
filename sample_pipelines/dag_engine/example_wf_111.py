@@ -4,7 +4,7 @@ from retrain_pipelines.dag_engine.task import \
     task, parallel_task, execute, render_networkx, \
     render_plotly, render_svg
 
-# ---- Example: Nested Parallelism and Merging ----
+# ---- Example: 3-levels Nested Parallelism and Merging ----
 
 
 @task
@@ -25,6 +25,12 @@ def inner_parallel(y):
     return [y["outer_parallel"] * 2 for j in range(2)]  ######## Must be an enumerator, for following parallel-merging task to aggregate right
 
 
+@parallel_task
+def inner_inner_parallel(y):
+    """passthrough."""
+    return [y["inner_parallel"] for j in range(2)]  ######## Must be an enumerator, for following parallel-merging task to aggregate right
+
+
 
 # Preserve hierarchy in merge functions
 def elementwise_2D_sum(matrix):
@@ -34,9 +40,15 @@ def elementwise_2D_sum(matrix):
     return [sum(col) for col in zip(*matrix)]
 
 @task(merge_func=elementwise_2D_sum)
+def merge_inner_inner(results):
+    """Merge inner parallel results per outer group"""
+    return results["inner_inner_parallel"]  ######## Must be an enumerator, for following parallel-merging task to aggregate right
+
+
+@task(merge_func=elementwise_2D_sum)
 def merge_inner(results):
     """Merge inner parallel results per outer group"""
-    return results["inner_parallel"]  ######## Must be an enumerator, for following parallel-merging task to aggregate right
+    return results["merge_inner_inner"]  ######## Must be an enumerator, for following parallel-merging task to aggregate right
 
 
 @task(merge_func=elementwise_2D_sum)
@@ -51,7 +63,7 @@ def end(results):
 
 
 # Compose the DAG using operator overloading (>>)
-final = start >> outer_parallel >> inner_parallel >> merge_inner >> merge_outer >> end
+final = start >> outer_parallel >> inner_parallel >> inner_inner_parallel >> merge_inner_inner >> merge_inner >> merge_outer >> end
 
 if __name__ == "__main__":
     os.environ["RP_ARTIFACTS_STORE"] = os.path.dirname(__file__)

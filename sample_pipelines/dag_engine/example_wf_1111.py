@@ -4,7 +4,7 @@ from retrain_pipelines.dag_engine.task import \
     task, parallel_task, execute, render_networkx, \
     render_plotly, render_svg
 
-# ---- Example: Nested Parallelism and Merging ----
+# ---- Example: Sequence of Nested Parallelism and Merging ----
 
 
 @task
@@ -20,7 +20,7 @@ def outer_parallel(x):
 
 
 @parallel_task
-def inner_parallel(y):
+def inner_parallel1(y):
     """For each y, double it."""
     return [y["outer_parallel"] * 2 for j in range(2)]  ######## Must be an enumerator, for following parallel-merging task to aggregate right
 
@@ -34,15 +34,27 @@ def elementwise_2D_sum(matrix):
     return [sum(col) for col in zip(*matrix)]
 
 @task(merge_func=elementwise_2D_sum)
-def merge_inner(results):
+def merge_inner1(results):
     """Merge inner parallel results per outer group"""
-    return results["inner_parallel"]  ######## Must be an enumerator, for following parallel-merging task to aggregate right
+    return results["inner_parallel1"]  ######## Must be an enumerator, for following parallel-merging task to aggregate right
+
+
+@parallel_task
+def inner_parallel2(y):
+    """For each y, double it."""
+    return [y["merge_inner1"] * 2 for j in range(2)]  ######## Must be an enumerator, for following parallel-merging task to aggregate right
+
+
+@task(merge_func=elementwise_2D_sum)
+def merge_inner2(results):
+    """Merge inner parallel results per outer group"""
+    return results["inner_parallel2"]  ######## Must be an enumerator, for following parallel-merging task to aggregate right
 
 
 @task(merge_func=elementwise_2D_sum)
 def merge_outer(results):
     """Merge outer parallel results"""
-    return results["merge_inner"]
+    return results["merge_inner2"]
 
 
 @task
@@ -51,7 +63,7 @@ def end(results):
 
 
 # Compose the DAG using operator overloading (>>)
-final = start >> outer_parallel >> inner_parallel >> merge_inner >> merge_outer >> end
+final = start >> outer_parallel >> inner_parallel1 >> merge_inner1 >> inner_parallel2 >> merge_inner2 >> merge_outer >> end
 
 if __name__ == "__main__":
     os.environ["RP_ARTIFACTS_STORE"] = os.path.dirname(__file__)

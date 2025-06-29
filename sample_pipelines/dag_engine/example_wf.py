@@ -16,10 +16,12 @@ def start():
 @parallel_task
 def parallel(x):
     """For each input x, produce a list for inner parallelism."""
-    return [x["start"] * 10 + i for i in range(2)]  ######## Must be an enumerator, for following parallel task to split/distribute handling
+    return [x["start"] * 10 + i for i in range(2)]  ######## Must be an enumerator, for following parallel-merging task to aggregate right
 
 
-elementwise_sum = lambda m: list(map(lambda *args: sum(args), *m))
+def elementwise_sum(m):
+    print(f"m : {m}")
+    return list(map(lambda *args: sum(args), *m))
 
 @task(merge_func=elementwise_sum)
 def merge(results):
