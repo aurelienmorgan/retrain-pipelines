@@ -5,7 +5,7 @@ import functools
 import concurrent.futures
 
 from collections import defaultdict, deque
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, Union
 from pydantic import BaseModel, Field, PrivateAttr, \
     model_validator
 
@@ -23,12 +23,12 @@ class Task(BaseModel):
           (such as `exec_id` and `task_id` and `rank`
            are populated at execution time).
           The class is instantiated at DAG declaration time.
-          the `id` field is used for dag rendering, for instance.
     """
     func: Callable
     is_parallel: bool = False
     merge_func: Optional[Callable] = None
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()),
+                    description="Unique ID for graph rendering")
     exec_id: Optional[int] = None
     task_id: Optional[int] = None
     rank: Optional[List[int]] = None
@@ -147,9 +147,6 @@ class Task(BaseModel):
             for child_element in child.elements:
                 self._add_child(child_element)
 
-    # def __call__(self, *args, **kwargs):
-        # return self.func(*args, **kwargs)
-
     def __hash__(self):
         return hash(self.id)
 
@@ -166,7 +163,7 @@ class MergeNotSupportedError(Exception):
     pass
 
 
-class TaskGroup:
+class TaskGroup(BaseModel):
     """Represents an ordered group of tasks that
     can be treated as a single entity in the DAG.
 
@@ -177,14 +174,28 @@ class TaskGroup:
     where result_1, result_2, result_3 are task1's result
     and task2's result and task3's result respectively and in that order.
     """
+    elements: List[Union["Task", "TaskGroup"]] = Field(
+        default_factory=list,
+        description="List of consituting items: tasks and/or taskgroups"
+    )
+    id: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        description="Unique ID for graph rendering"
+    )
+    exec_id: Optional[str] = None
 
-    def __init__(self, *elements):
-        self.log = logging.getLogger()
-        self.elements = elements
-        self.id = str(uuid.uuid4())  # Unique ID for graph rendering
-        self.parents = []  # List of level-1 parent Task objects
-        self.children = []  # List of level-1 child Task objects
-        self.exec_id = None  # Execution ID for the task group
+    # Private attributes (not validated or included in .dict())
+    _log: logging.Logger = PrivateAttr(default_factory=logging.getLogger)
+    _parents: List["Task"] = PrivateAttr(default_factory=list)
+    _children: List["Task"] = PrivateAttr(default_factory=list)
+
+
+    def __init__(self, *args, **kwargs):
+        # If there are positional args, use them as the elements list
+        if args:
+            kwargs['elements'] = list(args)
+        super().__init__(**kwargs)
+
 
     def __rshift__(self, other):
         """Operator overloading for '>>' to connect tasks in the DAG.
