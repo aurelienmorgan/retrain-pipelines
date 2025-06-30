@@ -22,10 +22,13 @@ except Exception as e:
 
 
 # RP_METADATASTORE_URL
+# We instruct SQLite to wait for a lock to be released
+# before raising a "db locked" error on conccurency issue.
+# Setting a timeout in the URL
 os.environ["RP_METADATASTORE_URL"] = (
     os.environ.get(
         "RP_METADATASTORE_URL",
-        f"sqlite:///{os.environ['RP_ASSETS_CACHE']}local_metadatastore.db"
+        f"sqlite:///{os.environ['RP_ASSETS_CACHE']}local_metadatastore.db?timeout=10.0"
     )
 )
 
