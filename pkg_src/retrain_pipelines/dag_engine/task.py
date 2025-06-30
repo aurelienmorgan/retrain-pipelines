@@ -1,9 +1,13 @@
 import os
-import concurrent.futures
-import functools
-import logging
 import uuid
+import logging
+import functools
+import concurrent.futures
+
 from collections import defaultdict, deque
+from typing import Callable, List, Optional
+from pydantic import BaseModel, Field, PrivateAttr, \
+    model_validator
 
 from .db.dao import DAO
 from ..utils.rich_logging import framed_rich_log_str
@@ -12,22 +16,50 @@ from ..utils.rich_logging import framed_rich_log_str
 # ---- Core Task and Execution Infrastructure ----
 
 
-class Task:
-    """Represents a node in the DAG."""
+class Task(BaseModel):
+    """Represents a node in the DAG, using Pydantic for validation.
 
-    def __init__(self, func, is_parallel=False, merge_func=None):
-        self.log = logging.getLogger()
-        self.log.info(f"Hello, [red on white]{func.__name__}[/red on white]")
+    Note: attributes related to DAG execution
+          (such as `exec_id` and `task_id` and `rank`
+           are populated at execution time).
+          The class is instantiated at DAG declaration time.
+          the `id` field is used for dag rendering, for instance.
+    """
+    func: Callable
+    is_parallel: bool = False
+    merge_func: Optional[Callable] = None
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    exec_id: Optional[int] = None
+    task_id: Optional[int] = None
+    rank: Optional[List[int]] = None
 
-        self.func = self._wrap_func(func)  # Wrap the function with logging
-        self.is_parallel = is_parallel  # Should this task run in parallel for a list of inputs?
-        self.merge_func = merge_func  # Optional function to merge parallel results
-        self.id = str(uuid.uuid4())  # Unique ID for graph rendering
-        self.parents = []  # List of parent Task objects
-        self.children = []  # List of child Task objects
-        self.exec_id = None  # Execution ID for the task
-        self.task_id = None
-        self.rank = None # list of indices of parent-branches for task-parallelism
+    # Private attributes (not validated or included in .dict())
+    _log: logging.Logger = PrivateAttr(default_factory=logging.getLogger)
+    _parents: List["Task"] = PrivateAttr(default_factory=list)
+    _children: List["Task"] = PrivateAttr(default_factory=list)
+
+
+    def __init__(self, **data):
+        super().__init__(**data)
+        self._log.info(f"Hello, [red on white]{self.func.__name__}[/red on white]")
+        self.func = self._wrap_func(self.func)
+
+
+    @property
+    def log(self) -> logging.Logger:
+        """Publicly expose the logger."""
+        return self._log
+
+
+    @property
+    def parents(self) -> List["Task"]:
+        return self._parents
+
+
+    @property
+    def children(self) -> List["Task"]:
+        return self._children
+
 
     def _wrap_func(self, func):
         """Wrap the function with logging."""
@@ -40,24 +72,23 @@ class Task:
 
             self.log.info(
                 framed_rich_log_str(
-                    f"🔧 Entering Task "
+                    f"\N{wrench} Entering Task "
                     f"[#D2691E]`{func.__name__}[{self.task_id}]"
                     f"{f'[{index}]' if index is not None else ''}`[/]:\n"
                     f"Inputs :\n"
-                    f"  • Positional: {args}\n"
-                    f"  • Keyword   : {kwargs}" +
+                    f"  \N{BULLET} Positional: {args}\n"
+                    f"  \N{BULLET} Keyword   : {kwargs}" +
                     (f"\n[bold green]{docstring}[/]" if (docstring:=func.__doc__) else ""),
-                    border_color="#FFFFE0",
-                    font_color="red"
+                    border_color="#FFFFE0"
                 )
             )
 
             result = func(*args, **kwargs)
 
             self.log.info(
-                f"\n✅ Completed Task [#D2691E]`{func.__name__}[{self.task_id}]{f'[{index}]' if index is not None else ''}`[/]:\n"
+                f"\n\N{WHITE HEAVY CHECK MARK} Completed Task [#D2691E]`{func.__name__}[{self.task_id}]{f'[{index}]' if index is not None else ''}`[/]:\n"
                 f"Results :\n" +
-                f"  • {result} {f'({type(result).__name__})' if result is not None else ''}\n"
+                f"  \N{BULLET} {result} {f'({type(result).__name__})' if result is not None else ''}\n"
             )
 
             return result
@@ -237,7 +268,7 @@ def task(func=None, *, merge_func=None):
     """
 
     def decorator(f):
-        t = Task(f, is_parallel=False, merge_func=merge_func)
+        t = Task(func=f, is_parallel=False, merge_func=merge_func)
 
         @functools.wraps(f)
         def wrapper(*args, **kwargs):
@@ -253,7 +284,7 @@ def parallel_task(func=None):
     """Decorator for parallel tasks."""
 
     def decorator(f):
-        t = Task(f, is_parallel=True, merge_func=None)
+        t = Task(func=f, is_parallel=True, merge_func=None)
 
         @functools.wraps(f)
         def wrapper(*args, **kwargs):
@@ -368,7 +399,11 @@ def execute(task: Task, input_data=None):
     while i < len(order):
         t = order[i]
 
-        t.log.info(f"Executing task: [rgb(0,255,255) on #af00ff]{t.func.__name__}[/rgb(0,255,255) on #af00ff]")
+        t.log.info(
+            "Executing task: " +
+            f"[rgb(0,255,255) on #af00ff]{t.func.__name__}[/]"
+        )
+
 
         parent_results = {}
         for p in t.parents:
@@ -381,12 +416,17 @@ def execute(task: Task, input_data=None):
             # Find the end of this parallel subdag
             subdag_end = _find_subdag_end(order, i)
             subdag_tasks = order[i:subdag_end]
-            t.log.info(f"subdag_tasks [red on yellow]{[t.func.__name__ for t in subdag_tasks]}[/]")
+            t.log.info(
+                "subdag_tasks " +
+                f"[red on yellow]{[t.func.__name__ for t in subdag_tasks]}[/]"
+            )
 
             # Execute parallel subdag for each input
             if parent_results:
                 first_parent_result = list(parent_results.values())[0]
-                input_count = len(first_parent_result) if isinstance(first_parent_result, list) else 1
+                input_count = len(first_parent_result) \
+                              if isinstance(first_parent_result, list) \
+                              else 1
             else:
                 input_count = 1
 
@@ -415,7 +455,8 @@ def execute(task: Task, input_data=None):
         else:
             # Regular task execution
             parent_results = \
-                {t.parents[0].func.__name__: t.merge_func(list(parent_results.values())[0])} \
+                {t.parents[0].func.__name__:
+                    t.merge_func(list(parent_results.values())[0])} \
                 if t.merge_func \
                 else parent_results
             t.log.info(f"parent_results: {parent_results}")
@@ -423,10 +464,10 @@ def execute(task: Task, input_data=None):
             if t.merge_func:
                 t.log.info(
                     f"[#FFFFE0]`{t.func.__name__}" +
-                    f"{f'[{t.rank}]' if t.rank is not None else ''}` merged "
+                    f"{f'{t.rank}' if t.rank is not None else ''}` merged "
                     f" {t.merge_func.__name__}(parent_results) :\n" +
                     f"Inputs :\n" +
-                    f"  • {str(parent_results)}[/]"
+                    f"  \N{BULLET} {str(parent_results)}[/]"
                 )
 
             result = t.func(parent_results) if parent_results else t.func()
@@ -472,7 +513,11 @@ def _execute_branch(branch_tasks, branch_input, branch_index):
             # Find nested subdag end
             nested_subdag_end = _find_subdag_end(branch_tasks, i)
             nested_subdag_tasks = branch_tasks[i:nested_subdag_end]
-            t.log.info(f"nested_subdag_tasks [red on yellow]{branch_index}{[t.func.__name__ for t in nested_subdag_tasks]}[/]")
+            t.log.info(
+                "nested_subdag_tasks " +
+                f"[red on yellow]{branch_index}" +
+                f"{[t.func.__name__ for t in nested_subdag_tasks]}[/]"
+            )
 
             # Execute nested parallel subdag
             parent_value = list(parent_results.values())[0]
@@ -491,7 +536,10 @@ def _execute_branch(branch_tasks, branch_input, branch_index):
                     nested_results = [f.result() for f in nested_futures]
                 branch_results[nested_subdag_tasks[-1].func.__name__] = nested_results
             else:
-                result = _execute_branch(nested_subdag_tasks, parent_results, branch_index)
+                result = _execute_branch(
+                    nested_subdag_tasks,
+                    parent_results,
+                    branch_index)
                 branch_results[nested_subdag_tasks[-1].func.__name__] = result
 
             i = nested_subdag_end
@@ -499,12 +547,14 @@ def _execute_branch(branch_tasks, branch_input, branch_index):
         else:
             # Regular task
             t.log.info(
-                f"Executing task: " +
+                "Executing task: " +
                 f"[rgb(0,255,255) on #af00ff]{t.func.__name__}{branch_index}[/]"
             )
 
             parent_results = \
-                {t.parents[0].func.__name__: t.merge_func(list(parent_results.values())[0])} if t.merge_func \
+                {t.parents[0].func.__name__: 
+                    t.merge_func(list(parent_results.values())[0])} \
+                if t.merge_func \
                 else parent_results
             t.log.info(f"parent_results: {parent_results}")
 
@@ -513,10 +563,12 @@ def _execute_branch(branch_tasks, branch_input, branch_index):
                     f"[#FFFFE0]`{t.func.__name__}{branch_index} merged " +
                     f" {t.merge_func.__name__}(parent_results) :\n" +
                     f"Inputs :\n" +
-                    f"  • {str(parent_results)}[/]"
+                    f"  \N{BULLET} {str(parent_results)}[/]"
                 )
 
-            result = t.func(parent_results, index=branch_index) if parent_results else t.func(index=branch_index)
+            result = t.func(parent_results, index=branch_index) \
+                     if parent_results \
+                     else t.func(index=branch_index)
             branch_results[t.func.__name__] = result
 
         i += 1
