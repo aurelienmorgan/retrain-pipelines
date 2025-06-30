@@ -5,7 +5,8 @@ import functools
 import concurrent.futures
 
 from collections import defaultdict, deque
-from typing import Callable, List, Optional, Union
+from typing import Callable, List, Optional, Union, \
+    Dict, Any
 from pydantic import BaseModel, Field, PrivateAttr, \
     model_validator
 
@@ -20,8 +21,8 @@ class Task(BaseModel):
     """Represents a node in the DAG, using Pydantic for validation.
 
     Note: attributes related to DAG execution
-          (such as `exec_id` and `task_id` and `rank`
-           are populated at execution time).
+          (such as `exec_id` and `task_id` and `rank`)
+          are populated at execution time.
           The class is instantiated at DAG declaration time.
     """
     func: Callable
@@ -72,7 +73,7 @@ class Task(BaseModel):
 
             self.log.info(
                 framed_rich_log_str(
-                    f"\N{wrench} Entering Task "
+                    f"\N{wrench} Executing Task "
                     f"[#D2691E]`{func.__name__}[{self.task_id}]"
                     f"{f'[{index}]' if index is not None else ''}`[/]:\n"
                     f"Inputs :\n"
@@ -324,6 +325,117 @@ def taskgroup(func=None, *, merge_func=None):
 # ---- DAG Traversal and Execution Utilities ----
 
 
+# Type for task input/output data
+TaskData = Dict[str, Any]
+
+
+class TaskPayload:
+    """
+    Class for tasks data exchanges. One's output and other's input.
+
+    Behaves similarly to a dict, with `task.func.__name` as key.
+
+    For instance, with DAG
+        A >> B
+    `A` returns a TaskPayload object and `def B(x)` can access
+    the result of `A`'s `return` statement via either :
+        `x["A"]` or `x.get("A")`
+    Note that, in cases (like in the above toy example)
+    where `B` has only 1 direct parent (above, `A`), then we have
+    the below equivalences, which allows for the following shorthand :
+        `x["A"] == x.get("A") == x`
+    """
+    def __init__(self, data: Dict[str, Any]):
+        self._data = data
+
+    def __getitem__(self, key: str) -> Any:
+        return self._data[key]
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        self._data[key] = value
+
+    def __contains__(self, key: str) -> bool:
+        return key in self._data
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return self._data.get(key, default)
+
+    def keys(self):
+        return self._data.keys()
+
+    def values(self):
+        return self._data.values()
+
+    def items(self):
+        return self._data.items()
+
+    def copy(self):
+        return TaskPayload(self._data.copy())
+
+    def __bool__(self):
+        return bool(self._data)
+
+    def __eq__(self, other):
+        if len(self._data) == 1:
+            return list(self._data.values())[0] == other
+        return super().__eq__(other)
+
+    def __hash__(self):
+        if len(self._data) == 1:
+            return hash(list(self._data.values())[0])
+        return hash(tuple(sorted(self._data.items())))
+
+    def __len__(self):
+        if len(self._data) == 1:
+            value = list(self._data.values())[0]
+            return len(value) if hasattr(value, '__len__') else 1
+        return len(self._data)
+
+    def __iter__(self):
+        if len(self._data) == 1:
+            value = list(self._data.values())[0]
+            if hasattr(value, '__iter__') and not isinstance(value, (str, bytes)):
+                return iter(value)
+            return iter([value])
+        return iter(self._data)
+
+    def __add__(self, other):
+        if len(self._data) == 1:
+            return list(self._data.values())[0] + other
+        return NotImplemented
+
+    def __radd__(self, other):
+        if len(self._data) == 1:
+            return other + list(self._data.values())[0]
+        return NotImplemented
+
+    def __mul__(self, other):
+        if len(self._data) == 1:
+            return list(self._data.values())[0] * other
+        return NotImplemented
+
+    def __rmul__(self, other):
+        if len(self._data) == 1:
+            return other * list(self._data.values())[0]
+        return NotImplemented
+
+    def __getattr__(self, name):
+        if len(self._data) == 1:
+            value = list(self._data.values())[0]
+            return getattr(value, name)
+        raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
+
+    def __str__(self):
+        if len(self._data) == 1:
+            return str(list(self._data.values())[0])
+        return str(self._data)
+
+    def __repr__(self):
+        if len(self._data) == 1:
+            return repr(list(self._data.values())[0])
+        return f"TaskPayload({self._data})"
+
+
 def get_all_tasks(task, seen=None) -> list[Task]:
     """Recursively collect all tasks reachable from the given task.
 
@@ -405,104 +517,6 @@ def _rich_log_execution_id_with_timestamp(execution_id: int):
             handler._log_render.omit_repeated_times = True
 
 
-def execute(task: Task, input_data=None):
-    """From the start, executes the DAG that contains the given task.
-
-    Handles parallel and nested parallel tasks, and merges results as needed.
-    """
-    _rich_log_execution_id_with_timestamp(task.exec_id)
-
-    roots = find_root_tasks(task)
-    print(f"Root tasks: {[t.func.__name__ for t in roots]}")
-
-    order = topological_sort(roots)
-    print(f"Topological order: {[t.func.__name__ for t in order]}")
-
-    results = {}
-    i = 0
-
-    while i < len(order):
-        t = order[i]
-
-        t.log.info(
-            "Executing task: " +
-            f"[rgb(0,255,255) on #af00ff]{t.func.__name__}[/]"
-        )
-
-
-        parent_results = {}
-        for p in t.parents:
-            if p.func.__name__ in results:
-                parent_results[p.func.__name__] = results[p.func.__name__]
-
-        if t.is_parallel:
-            t.log.info(f"parent_results: {parent_results}")
-
-            # Find the end of this parallel subdag
-            subdag_end = _find_subdag_end(order, i)
-            subdag_tasks = order[i:subdag_end]
-            t.log.info(
-                "subdag_tasks " +
-                f"[red on yellow]{[t.func.__name__ for t in subdag_tasks]}[/]"
-            )
-
-            # Execute parallel subdag for each input
-            if parent_results:
-                first_parent_result = list(parent_results.values())[0]
-                input_count = len(first_parent_result) \
-                              if isinstance(first_parent_result, list) \
-                              else 1
-            else:
-                input_count = 1
-
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                futures = []
-                for idx in range(input_count):
-                    branch_input = {}
-                    for k, v in parent_results.items():
-                        branch_input[k] = v[idx] if isinstance(v, list) else v
-                    futures.append(executor.submit(
-                        _execute_branch,
-                        subdag_tasks,
-                        branch_input,
-                        [idx]
-                    ))
-
-                sub_results = [f.result() for f in futures]
-
-            # Store results for the last task in subdag
-            last_task_name = subdag_tasks[-1].func.__name__
-            results[last_task_name] = sub_results
-
-            # Skip to after the subdag
-            i = subdag_end
-            continue
-        else:
-            # Regular task execution
-            parent_results = \
-                {t.parents[0].func.__name__:
-                    t.merge_func(list(parent_results.values())[0])} \
-                if t.merge_func \
-                else parent_results
-            t.log.info(f"parent_results: {parent_results}")
-
-            if t.merge_func:
-                t.log.info(
-                    f"[#FFFFE0]`{t.func.__name__}" +
-                    f"{f'{t.rank}' if t.rank is not None else ''}` merged "
-                    f" {t.merge_func.__name__}(parent_results) :\n" +
-                    f"Inputs :\n" +
-                    f"  \N{BULLET} {str(parent_results)}[/]"
-                )
-
-            result = t.func(parent_results) if parent_results else t.func()
-            results[t.func.__name__] = result
-
-        i += 1
-
-    return results[order[-1].func.__name__]
-
-
 def _find_subdag_end(task_order, start_idx):
     """Find where the parallel subdag ends, e.g.
     at the next merge task, accounting for potential nesting."""
@@ -518,87 +532,184 @@ def _find_subdag_end(task_order, start_idx):
     return len(task_order)
 
 
-def _execute_branch(branch_tasks, branch_input, branch_index):
-    """Execute a single parallel branch with recursive subdag handling."""
-    branch_results = branch_input.copy()
-    i = 0
+def execute(task: Task, input_data: TaskPayload = None):
+   """From the start, executes the DAG that contains the given task.
 
-    while i < len(branch_tasks):
-        t = branch_tasks[i]
-        t.rank = branch_index
+   Handles parallel and nested parallel tasks, and merges results as needed.
+   """
+   _rich_log_execution_id_with_timestamp(task.exec_id)
 
-        parent_results = {}
-        for p in t.parents:
-            if p.func.__name__ in branch_results:
-                parent_results[p.func.__name__] = branch_results[p.func.__name__]
+   roots = find_root_tasks(task)
+   print(f"Root tasks: {[t.func.__name__ for t in roots]}")
 
-        if t.is_parallel and i> 0:
-            t.log.info(f"parent_results: {parent_results}")
+   order = topological_sort(roots)
+   print(f"Topological order: {[t.func.__name__ for t in order]}")
 
-            # Find nested subdag end
-            nested_subdag_end = _find_subdag_end(branch_tasks, i)
-            nested_subdag_tasks = branch_tasks[i:nested_subdag_end]
-            t.log.info(
-                "nested_subdag_tasks " +
-                f"[red on yellow]{branch_index}" +
-                f"{[t.func.__name__ for t in nested_subdag_tasks]}[/]"
-            )
+   results = TaskPayload({})
+   i = 0
 
-            # Execute nested parallel subdag
-            parent_value = list(parent_results.values())[0]
-            if isinstance(parent_value, list):
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    nested_futures = []
-                    for nested_idx, item in enumerate(parent_value):
-                        nested_input = {list(parent_results.keys())[0]: item}
-                        nested_futures.append(executor.submit(
-                            _execute_branch,
-                            nested_subdag_tasks,
-                            nested_input,
-                            branch_index + [nested_idx]
-                        ))
+   while i < len(order):
+       t = order[i]
 
-                    nested_results = [f.result() for f in nested_futures]
-                branch_results[nested_subdag_tasks[-1].func.__name__] = nested_results
-            else:
-                result = _execute_branch(
-                    nested_subdag_tasks,
-                    parent_results,
-                    branch_index)
-                branch_results[nested_subdag_tasks[-1].func.__name__] = result
+       t.log.info(
+           "Executing task: " +
+           f"[rgb(0,255,255) on #af00ff]{t.func.__name__}[/]"
+       )
 
-            i = nested_subdag_end
-            continue
-        else:
-            # Regular task
-            t.log.info(
-                "Executing task: " +
-                f"[rgb(0,255,255) on #af00ff]{t.func.__name__}{branch_index}[/]"
-            )
+       parent_results = TaskPayload({})
+       for p in t.parents:
+           if p.func.__name__ in results:
+               parent_results[p.func.__name__] = results[p.func.__name__]
 
-            parent_results = \
-                {t.parents[0].func.__name__: 
-                    t.merge_func(list(parent_results.values())[0])} \
-                if t.merge_func \
-                else parent_results
-            t.log.info(f"parent_results: {parent_results}")
+       if t.is_parallel:
+           t.log.info(f"parent_results: {parent_results}")
 
-            if t.merge_func:
-                t.log.info(
-                    f"[#FFFFE0]`{t.func.__name__}{branch_index} merged " +
-                    f" {t.merge_func.__name__}(parent_results) :\n" +
-                    f"Inputs :\n" +
-                    f"  \N{BULLET} {str(parent_results)}[/]"
-                )
+           # Find the end of this parallel subdag
+           subdag_end = _find_subdag_end(order, i)
+           subdag_tasks = order[i:subdag_end]
+           t.log.info(
+               "subdag_tasks " +
+               f"[red on yellow]{[t.func.__name__ for t in subdag_tasks]}[/]"
+           )
 
-            result = t.func(parent_results, index=branch_index) \
-                     if parent_results \
-                     else t.func(index=branch_index)
-            branch_results[t.func.__name__] = result
+           # Execute parallel subdag for each input
+           if parent_results:
+               first_parent_result = list(parent_results.values())[0]
+               input_count = len(first_parent_result) \
+                             if isinstance(first_parent_result, list) \
+                             else 1
+           else:
+               input_count = 1
 
-        i += 1
+           with concurrent.futures.ThreadPoolExecutor() as executor:
+               futures = []
+               for idx in range(input_count):
+                   branch_input = TaskPayload({})
+                   for k, v in parent_results.items():
+                       branch_input[k] = v[idx] if isinstance(v, list) else v
+                   futures.append(executor.submit(
+                       _execute_branch,
+                       subdag_tasks,
+                       branch_input,
+                       [idx]
+                   ))
 
-    return branch_results[branch_tasks[-1].func.__name__]
+               sub_results = [f.result() for f in futures]
+
+           # Store results for the last task in subdag
+           last_task_name = subdag_tasks[-1].func.__name__
+           results[last_task_name] = sub_results
+
+           # Skip to after the subdag
+           i = subdag_end
+           continue
+       else:
+           # Regular task execution
+           parent_results = \
+               TaskPayload({t.parents[0].func.__name__:
+                   t.merge_func(list(parent_results.values())[0])}) \
+               if t.merge_func \
+               else parent_results
+           t.log.info(f"parent_results: {parent_results}")
+
+           if t.merge_func:
+               t.log.info(
+                   f"[#FFFFE0]`{t.func.__name__}" +
+                   f"{f'{t.rank}' if t.rank is not None else ''}` merged "
+                   f" {t.merge_func.__name__}(parent_results) :\n" +
+                   f"Inputs :\n" +
+                   f"  \N{BULLET} {str(parent_results)}[/]"
+               )
+
+           result = t.func(parent_results) if parent_results._data else t.func()
+           results[t.func.__name__] = result
+
+       i += 1
+
+   return results[order[-1].func.__name__]
+
+
+def _execute_branch(branch_tasks, branch_input: TaskPayload, branch_index):
+   """Execute a single parallel branch with recursive subdag handling."""
+   branch_results = branch_input.copy()
+   i = 0
+
+   while i < len(branch_tasks):
+       t = branch_tasks[i]
+       t.rank = branch_index
+
+       parent_results = TaskPayload({})
+       for p in t.parents:
+           if p.func.__name__ in branch_results:
+               parent_results[p.func.__name__] = branch_results[p.func.__name__]
+
+       if t.is_parallel and i> 0:
+           t.log.info(f"parent_results: {parent_results}")
+
+           # Find nested subdag end
+           nested_subdag_end = _find_subdag_end(branch_tasks, i)
+           nested_subdag_tasks = branch_tasks[i:nested_subdag_end]
+           t.log.info(
+               "nested_subdag_tasks " +
+               f"[red on yellow]{branch_index}" +
+               f"{[t.func.__name__ for t in nested_subdag_tasks]}[/]"
+           )
+
+           # Execute nested parallel subdag
+           parent_value = list(parent_results.values())[0]
+           if isinstance(parent_value, list):
+               with concurrent.futures.ThreadPoolExecutor() as executor:
+                   nested_futures = []
+                   for nested_idx, item in enumerate(parent_value):
+                       nested_input = TaskPayload({list(parent_results.keys())[0]: item})
+                       nested_futures.append(executor.submit(
+                           _execute_branch,
+                           nested_subdag_tasks,
+                           nested_input,
+                           branch_index + [nested_idx]
+                       ))
+
+                   nested_results = [f.result() for f in nested_futures]
+               branch_results[nested_subdag_tasks[-1].func.__name__] = nested_results
+           else:
+               result = _execute_branch(
+                   nested_subdag_tasks,
+                   parent_results,
+                   branch_index)
+               branch_results[nested_subdag_tasks[-1].func.__name__] = result
+
+           i = nested_subdag_end
+           continue
+       else:
+           # Regular task
+           t.log.info(
+               "Executing task: " +
+               f"[rgb(0,255,255) on #af00ff]{t.func.__name__}{branch_index}[/]"
+           )
+
+           parent_results = \
+               TaskPayload({t.parents[0].func.__name__: 
+                   t.merge_func(list(parent_results.values())[0])}) \
+               if t.merge_func \
+               else parent_results
+           t.log.info(f"parent_results: {parent_results}")
+
+           if t.merge_func:
+               t.log.info(
+                   f"[#FFFFE0]`{t.func.__name__}{branch_index} merged " +
+                   f" {t.merge_func.__name__}(parent_results) :\n" +
+                   f"Inputs :\n" +
+                   f"  \N{BULLET} {str(parent_results)}[/]"
+               )
+
+           result = t.func(parent_results, index=branch_index) \
+                    if parent_results._data \
+                    else t.func(index=branch_index)
+           branch_results[t.func.__name__] = result
+
+       i += 1
+
+   return branch_results[branch_tasks[-1].func.__name__]
 
 
 # ---- SVG Rendering ----

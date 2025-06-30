@@ -15,7 +15,9 @@ def start():
 
 @task
 def snake_head_1(x):
-    return x["start"] + " snake_head_1"
+    print(type(x))
+    assert x["start"] == x.get("start") == x
+    return x + " snake_head_1"
 
 
 @task
@@ -35,6 +37,7 @@ def snake_heads():
 
 @task()
 def concat_snake_heads(parent_group_results):
+    print(type(parent_group_results))
     # Concat results (e.g. put them into a list)
     result = [
         parent_group_results["snake_head_1"],
