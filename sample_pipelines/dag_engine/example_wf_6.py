@@ -2,7 +2,7 @@ import os
 import logging
 
 from retrain_pipelines.dag_engine.task import \
-    task, parallel_task, TaskGroup, execute, render_networkx, \
+    task, parallel_task, taskgroup, execute, render_networkx, \
     render_plotly, render_svg
 
 # ---- Example: tripple chaining of tasks-groups (mostly to validate DAG rendering) ----
@@ -10,8 +10,11 @@ from retrain_pipelines.dag_engine.task import \
 
 @task
 def start():
-    """Root task: produces a list of numbers."""
+    """Root task."""
     return
+
+
+# ----
 
 
 @task
@@ -24,6 +27,14 @@ def snake_head_A2(_):
     return "A2"
 
 
+@taskgroup
+def snake_heads_A():
+    return snake_head_A1, snake_head_A2
+
+
+# ----
+
+
 @task
 def snake_head_B1(snake_heads_A_results):
     return "B1"
@@ -34,6 +45,14 @@ def snake_head_B2(snake_heads_A_results):
     return "B2"
 
 
+@taskgroup
+def snake_heads_B():
+    return snake_head_B1, snake_head_B2
+
+
+# ----
+
+
 @task
 def snake_head_C1(snake_heads_B_results):
     return "C1"
@@ -42,6 +61,14 @@ def snake_head_C1(snake_heads_B_results):
 @task
 def snake_head_C2(snake_heads_B_results):
     return "C2"
+
+
+@taskgroup
+def snake_heads_C():
+    return snake_head_C1, snake_head_C2
+
+
+# ----
 
 
 @task
@@ -57,13 +84,10 @@ def end(results):
     return None
 
 
+# ----
+
+
 # Compose the DAG using operator overloading (>>)
-snake_heads_A = TaskGroup(snake_head_A1, snake_head_A2)
-
-snake_heads_B = TaskGroup(snake_head_B1, snake_head_B2)
-snake_heads_C = TaskGroup(snake_head_C1, snake_head_C2)
-
-
 final = start >> snake_heads_A >> snake_heads_B >> snake_heads_C >> aggreg_snake_heads >> end
 
 

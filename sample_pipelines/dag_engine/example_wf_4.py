@@ -1,7 +1,7 @@
 import os
 
 from retrain_pipelines.dag_engine.task import \
-    task, parallel_task, TaskGroup, execute, render_networkx, \
+    task, parallel_task, taskgroup, execute, render_networkx, \
     render_plotly, render_svg
 
 # ---- Example: Nested groups of tasks ----
@@ -9,33 +9,55 @@ from retrain_pipelines.dag_engine.task import \
 
 @task
 def start():
-    # Root task: produces a list of numbers
-    return
+    """Root task."""
+    return "titi"
+
+
+# ----
 
 
 @task
-def snake_head_A(_):
-    return "A"
+def snake_head_A(x):
+    return x["start"] + " A"
+
+
+# ----
 
 
 @task
-def snake_head_AA1(_):
-    return "A1"
+def snake_head_AA1(x):
+    return x["start"] + " AA1"
 
 
 @task
-def snake_head_AA2(_):
-    return "A2"
+def snake_head_AA2(x):
+    return x["start"] + " AA2"
 
 
 @task
-def snake_head_AA3(_):
-    return "A3"
+def snake_head_AA3(x):
+    return x["start"] + " AA3"
 
 
 @task
-def snake_head_AA4(_):
-    return "A4"
+def snake_head_AA4(x):
+    return x["start"] + " AA4"
+
+
+@taskgroup
+def snake_heads_AA():
+    return snake_head_AA1, snake_head_AA2, snake_head_AA3, snake_head_AA4
+
+
+# ----
+
+
+@taskgroup
+def snake_heads_A():
+    return snake_heads_AA, snake_head_A
+
+
+# ----
 
 
 @task
@@ -52,10 +74,12 @@ def end(results):
     return None
 
 
+# ----
+
+
 # Compose the DAG using operator overloading (>>)
-snake_heads_AA = TaskGroup(snake_head_AA1, snake_head_AA2, snake_head_AA3, snake_head_AA4)
-snake_heads_A = TaskGroup(snake_heads_AA, snake_head_A)
 final = start >> snake_heads_A >> concat_snake_heads >> end
+
 
 if __name__ == "__main__":
     # Run the DAG
@@ -65,3 +89,4 @@ if __name__ == "__main__":
     print("DAG SVG written to dag.svg")
     render_networkx(final, os.path.join(os.environ["RP_ARTIFACTS_STORE"], "dag.png"))
     render_plotly(final, os.path.join(os.environ["RP_ARTIFACTS_STORE"], "dag.html"))
+

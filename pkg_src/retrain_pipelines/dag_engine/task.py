@@ -307,6 +307,20 @@ def parallel_task(func=None):
     return decorator(func) if func else decorator
 
 
+def taskgroup(func=None, *, merge_func=None):
+    """Decorator for task groups."""
+    def decorator(f):
+        tasks = f()
+
+        if isinstance(tasks, (list, tuple)):
+            tg = TaskGroup(*tasks, merge_func=merge_func)
+        else:
+            tg = TaskGroup(tasks, merge_func=merge_func)
+        return tg
+
+    return decorator(func) if func else decorator
+
+
 # ---- DAG Traversal and Execution Utilities ----
 
 

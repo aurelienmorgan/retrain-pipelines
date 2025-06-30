@@ -1,7 +1,7 @@
 import os
 
 from retrain_pipelines.dag_engine.task import \
-    task, parallel_task, TaskGroup, execute, render_networkx, \
+    task, parallel_task, taskgroup, execute, render_networkx, \
     render_plotly, render_svg
 
 # ---- Example: Group of tasks ----
@@ -10,22 +10,27 @@ from retrain_pipelines.dag_engine.task import \
 @task
 def start():
     # Root task
-    return None
+    return "titi"
 
 
 @task
-def snake_head_1(_):
-    return 1
+def snake_head_1(x):
+    return x["start"] + " snake_head_1"
 
 
 @task
-def snake_head_2(_):
-    return 2
+def snake_head_2(x):
+    return x["start"] + " snake_head_2"
 
 
 @task
-def snake_head_3(_):
-    return 3
+def snake_head_3(x):
+    return x["start"] + " snake_head_3"
+
+
+@taskgroup
+def snake_heads():
+    return snake_head_2, snake_head_1, snake_head_3
 
 
 @task()
@@ -46,8 +51,8 @@ def end(results):
 
 
 # Compose the DAG using operator overloading (>>)
-snake_heads = TaskGroup(snake_head_2, snake_head_1, snake_head_3)
 final = start >> snake_heads >> concat_snake_heads >> end
+
 
 if __name__ == "__main__":
     # Run the DAG
