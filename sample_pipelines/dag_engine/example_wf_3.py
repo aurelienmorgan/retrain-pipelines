@@ -107,7 +107,7 @@ def snake_heads_B():
 
 
 @task()
-def aggreg_snake_heads(snake_heads_B_results):
+def join_snake_heads(snake_heads_B_results):
     """input is a list of tasks-results from prior group
     we could for instance concat in a flattened list
     just for fun (and because "why not?")
@@ -124,8 +124,8 @@ def aggreg_snake_heads(snake_heads_B_results):
 def end(payload):
     print(type(payload))
     # Since the herein task only has 1 direct parent =>
-    assert payload["aggreg_snake_heads"] \
-            == payload.get("aggreg_snake_heads") \
+    assert payload["join_snake_heads"] \
+            == payload.get("join_snake_heads") \
             == payload
 
     assert payload == ['B1_A1', 'B1_A2', 'B1_A3', \
@@ -135,7 +135,7 @@ def end(payload):
 
 
 # Compose the DAG using operator overloading (>>)
-final = start >> snake_heads_A >> snake_heads_B >> aggreg_snake_heads >> end
+final = start >> snake_heads_A >> snake_heads_B >> join_snake_heads >> end
 
 
 if __name__ == "__main__":

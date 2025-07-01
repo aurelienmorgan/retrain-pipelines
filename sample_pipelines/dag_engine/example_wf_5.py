@@ -16,6 +16,19 @@ def start():
 
 
 @task
+def inline1(payload):
+    """A simple task, gets executed inline."""
+    input = payload["start"]
+
+    # Do whatever you want
+
+    return None
+
+
+# ----
+
+
+@task
 def snake_head_A(_):
     return "A"
 
@@ -44,6 +57,7 @@ def snake_heads_AAA():
 
 
 # ----
+
 
 
 @task
@@ -94,7 +108,7 @@ def snake_heads_A():
 
 
 @task
-def aggreg_snake_heads(snake_heads_A_results):
+def join_snake_heads(snake_heads_A_results):
     """Task that returns a flattened raw results
     from prior nested groups of tasks."""
 
@@ -112,11 +126,21 @@ def aggreg_snake_heads(snake_heads_A_results):
 
 
 @task
+def inline2(payload):
+    """A simple task, gets executed inline."""
+    input = payload["join_snake_heads"]
+
+    # Do whatever you want
+
+    return payload
+
+
+@task
 def end(payload):
     print(type(payload))
     # Since the herein task only has 1 direct parent =>
-    assert payload["aggreg_snake_heads"] \
-            == payload.get("aggreg_snake_heads") \
+    assert payload["inline2"] \
+            == payload.get("inline2") \
             == payload
 
     assert payload == ['AAA1', 'AAA2', \
@@ -129,7 +153,7 @@ def end(payload):
 
 
 # Compose the DAG using operator overloading (>>)
-final = start >> snake_heads_A >> aggreg_snake_heads >> end
+final = start >> inline1 >> snake_heads_A >> join_snake_heads >> inline2 >> end
 
 
 if __name__ == "__main__":
