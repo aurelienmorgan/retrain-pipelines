@@ -5,6 +5,7 @@ from retrain_pipelines.dag_engine.task import \
     task, parallel_task, taskgroup, execute, render_networkx, \
     render_plotly, render_svg
 
+
 # ---- Example: tripple chaining of tasks-groups (mostly to validate DAG rendering) ----
 
 
@@ -29,6 +30,11 @@ def snake_head_A2(_):
 
 @taskgroup
 def snake_heads_A():
+    """Group of tasks with different processing logics
+    that are to be run independently,
+    in parrallel, on the same set of inputs.
+    Note that the downward task(s) will have to
+    await for all of those to complete before they can start."""
     return snake_head_A1, snake_head_A2
 
 
@@ -37,16 +43,27 @@ def snake_heads_A():
 
 @task
 def snake_head_B1(snake_heads_A_results):
+
+    # Do whatever you want
+
     return "B1"
 
 
 @task
 def snake_head_B2(snake_heads_A_results):
+
+    # Do whatever you want
+
     return "B2"
 
 
 @taskgroup
 def snake_heads_B():
+    """Group of tasks with different processing logics
+    that are to be run independently,
+    in parrallel, on the same set of inputs.
+    Note that the downward task(s) will have to
+    await for all of those to complete before they can start."""
     return snake_head_B1, snake_head_B2
 
 
@@ -55,16 +72,27 @@ def snake_heads_B():
 
 @task
 def snake_head_C1(snake_heads_B_results):
+
+    # Do whatever you want
+
     return "C1"
 
 
 @task
 def snake_head_C2(snake_heads_B_results):
+
+    # Do whatever you want
+
     return "C2"
 
 
 @taskgroup
 def snake_heads_C():
+    """Group of tasks with different processing logics
+    that are to be run independently,
+    in parrallel, on the same set of inputs.
+    Note that the downward task(s) will have to
+    await for all of those to complete before they can start."""
     return snake_head_C1, snake_head_C2
 
 
@@ -75,12 +103,22 @@ def snake_heads_C():
 def aggreg_snake_heads(snake_heads_C_results):
     """Task that returns a flattened raw results
     from prior nested groups of tasks."""
-    result = list(snake_heads_C_results.values())
-    return result
+
+    # Do whatever you want
+
+    this_task_result = list(snake_heads_C_results.values())
+    return this_task_result
 
 
 @task
-def end(results):
+def end(payload):
+    print(type(payload))
+    # Since the herein task only has 1 direct parent =>
+    assert payload["aggreg_snake_heads"] \
+            == payload.get("aggreg_snake_heads") \
+            == payload
+
+    assert payload == ['C1', 'C2']
     return None
 
 
@@ -95,6 +133,7 @@ if __name__ == "__main__":
     os.environ["RP_ARTIFACTS_STORE"] = os.path.dirname(__file__)
     # Run the DAG
     print("Final result:", execute(final))
+    print(f"execution {os.path.splitext(os.path.basename(__file__))[0]}[{final.exec_id}]")
     # Render the DAG
     render_svg(final, os.path.join(os.environ["RP_ARTIFACTS_STORE"], "dag.svg"))
     print("DAG SVG written to dag.svg")
