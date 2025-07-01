@@ -32,17 +32,25 @@ class Task(BaseModel):
                     description="Unique ID for graph rendering")
     exec_id: Optional[int] = None
     task_id: Optional[int] = None
+
+    # in case of a task part of a parallel lane (can be nested)
     rank: Optional[List[int]] = None
 
     # Private attributes (not validated or included in .dict())
     _log: logging.Logger = PrivateAttr(default_factory=logging.getLogger)
     _parents: List["Task"] = PrivateAttr(default_factory=list)
     _children: List["Task"] = PrivateAttr(default_factory=list)
+    # in case of a task part of a taskgroup
+    _task_group: Optional["TaskGroup"] = None
 
 
     def __init__(self, **data):
         super().__init__(**data)
-        self._log.info(f"Hello, [red on white]{self.func.__name__}[/red on white]")
+        self._log.info(
+            "[red on white]" +
+            f"{self.func.__name__}" +
+            f"{f' ([#6f00d6 on white]parallel[/])' if self.is_parallel else f' ([#2d97ba on white]merge[/])' if self.merge_func else ''}" +
+            "[/]")
         self.func = self._wrap_func(self.func)
 
 
@@ -60,6 +68,11 @@ class Task(BaseModel):
     @property
     def children(self) -> List["Task"]:
         return self._children
+
+
+    @property
+    def task_group(self) -> "TaskGroup":
+        return self._task_group
 
 
     def _wrap_func(self, func):
@@ -156,6 +169,16 @@ class Task(BaseModel):
             return self.id == other.id
         return False
 
+    def __str__(self):
+        return (f"Task({self.func.__name__!r}, is_parallel={self.is_parallel}, "
+                f"merge_func={{self.merge_func.__name__!r if self.merge_func else None}}, "
+                f"id={self.id!r}, exec_id={self.exec_id!r}, task_id={self.task_id!r}, "
+                f"rank={self.rank!r})")
+
+
+    def __repr__(self):
+        return f"{self.__str__()}"
+
 
 class MergeNotSupportedError(Exception):
     """Raised when attempting to chain a taskgroup
@@ -175,9 +198,10 @@ class TaskGroup(BaseModel):
     where result_1, result_2, result_3 are task1's result
     and task2's result and task3's result respectively and in that order.
     """
+    name: str = Field(..., description="Name of the task group (required)")
     elements: List[Union["Task", "TaskGroup"]] = Field(
         default_factory=list,
-        description="List of consituting items: tasks and/or taskgroups"
+        description="List of consituent items: tasks and/or taskgroups"
     )
     id: str = Field(
         default_factory=lambda: str(uuid.uuid4()),
@@ -185,17 +209,45 @@ class TaskGroup(BaseModel):
     )
     exec_id: Optional[str] = None
 
+
     # Private attributes (not validated or included in .dict())
     _log: logging.Logger = PrivateAttr(default_factory=logging.getLogger)
     _parents: List["Task"] = PrivateAttr(default_factory=list)
     _children: List["Task"] = PrivateAttr(default_factory=list)
+    # in case of a taskgroup itself part of a taskgroup
+    _task_group: Optional["TaskGroup"] = None
 
 
     def __init__(self, *args, **kwargs):
+        name = kwargs.pop("name", None)
+
         # If there are positional args, use them as the elements list
-        if args:
-            kwargs['elements'] = list(args)
+        if name is None:
+            if not args:
+                raise TypeError("Missing required 'name' argument.")
+            name, *elements = args
+        else:
+            elements = list(args)
+
+        if not isinstance(name, str):
+            raise TypeError("The 'name' must be a string.")
+
+        # Assign values to kwargs
+        kwargs["name"] = name
+        kwargs["elements"] = elements
         super().__init__(**kwargs)
+
+        for elmt in self.elements:
+            elmt._task_group = self
+
+        logging.getLogger().info(
+            f"[red on white]TaskGroup {self}[/red on white]"
+        )
+
+
+    @property
+    def task_group(self) -> "TaskGroup":
+        return self._task_group
 
 
     def __rshift__(self, other):
@@ -207,10 +259,15 @@ class TaskGroup(BaseModel):
         dao = DAO(os.environ["RP_METADATASTORE_URL"])
 
         if self.exec_id is None:
+            # SHOULD NEVER OCCUR !
+            # (since in the most extreme case
+            #  of that group opening the DAG,
+            #  the "start" node cascaded to it)
             self.exec_id = dao.add_execution()
             self.log.info(f"[bold red]{self.func.__name__} has no exec_id[/]")
             for child in self.children:
                 self._cascade_exec_id(self.exec_id, child)
+
         if other.exec_id is None:
             other.exec_id = self.exec_id
             if isinstance(other, Task):
@@ -269,6 +326,19 @@ class TaskGroup(BaseModel):
             return self.id == other.id
         return False
 
+    def _get_elements_names(self):
+        return [
+            elmt.name if isinstance(elmt, TaskGroup)
+            else elmt.func.__name__
+            for elmt in self.elements
+        ]
+
+    def __str__(self):
+        return f"TaskGroup({self.name}{self._get_elements_names()})"
+
+    def __repr__(self):
+        return self.__str__()
+
 
 # ---- Decorators for Task Declaration ----
 
@@ -314,12 +384,13 @@ def taskgroup(func=None, *, merge_func=None):
         tasks = f()
 
         if isinstance(tasks, (list, tuple)):
-            tg = TaskGroup(*tasks, merge_func=merge_func)
+            tg = TaskGroup(func.__name__, *tasks, merge_func=merge_func)
         else:
-            tg = TaskGroup(tasks, merge_func=merge_func)
+            tg = TaskGroup(func.__name__, tasks, merge_func=merge_func)
+
         return tg
 
-    return decorator(func) if func else decorator
+    return decorator(func)
 
 
 # ---- DAG Traversal and Execution Utilities ----
@@ -327,7 +398,6 @@ def taskgroup(func=None, *, merge_func=None):
 
 # Type for task input/output data
 TaskData = Dict[str, Any]
-
 
 class TaskPayload:
     """
@@ -394,7 +464,10 @@ class TaskPayload:
     def __iter__(self):
         if len(self._data) == 1:
             value = list(self._data.values())[0]
-            if hasattr(value, '__iter__') and not isinstance(value, (str, bytes)):
+            if (
+                hasattr(value, '__iter__') and
+                not isinstance(value, (str, bytes))
+            ):
                 return iter(value)
             return iter([value])
         return iter(self._data)
@@ -423,20 +496,31 @@ class TaskPayload:
         if len(self._data) == 1:
             value = list(self._data.values())[0]
             return getattr(value, name)
-        raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
+        raise AttributeError(
+            f"'{self.__class__.__name__}' object has no attribute '{name}'")
 
     def __str__(self):
         if len(self._data) == 1:
-            return str(list(self._data.values())[0])
-        return str(self._data)
+            return f"TaskPayload(list(self._data.values())[0])"
+        return f"TaskPayload(self._data)"
 
     def __repr__(self):
-        if len(self._data) == 1:
-            return repr(list(self._data.values())[0])
-        return f"TaskPayload({self._data})"
+        return self.__str__()
 
 
-def get_all_tasks(task, seen=None) -> list[Task]:
+def _find_root_tasks(task) -> list[Task]:
+    """Find all root tasks in the DAG starting from the given task."""
+    all_tasks = set()
+    stack = [task]
+    while stack:
+        current = stack.pop()
+        if current not in all_tasks:
+            all_tasks.add(current)
+            stack.extend(current.parents)
+    return [t for t in all_tasks if not t.parents]
+
+
+def _get_all_tasks(task, seen=None) -> list[Task]:
     """Recursively collect all tasks reachable from the given task.
 
     Used for graph traversal and rendering.
@@ -450,32 +534,20 @@ def get_all_tasks(task, seen=None) -> list[Task]:
     for child in task.children:
         if isinstance(child, TaskGroup):
             for t in child.tasks:
-                tasks += get_all_tasks(t, seen)
+                tasks += _get_all_tasks(t, seen)
         else:
-            tasks += get_all_tasks(child, seen)
+            tasks += _get_all_tasks(child, seen)
     return tasks
 
 
-def find_root_tasks(task) -> list[Task]:
-    """Find all root tasks in the DAG starting from the given task."""
-    all_tasks = set()
-    stack = [task]
-    while stack:
-        current = stack.pop()
-        if current not in all_tasks:
-            all_tasks.add(current)
-            stack.extend(current.parents)
-    return [t for t in all_tasks if not t.parents]
-
-
-def topological_sort(tasks) -> list[Task]:
+def _topological_sort(tasks) -> list[Task]:
     """Standard Kahn's algorithm for topological sorting of the DAG.
 
     Ensures tasks are executed in dependency order.
     """
     all_tasks = set()
     for t in tasks:
-        all_tasks.update(get_all_tasks(t))
+        all_tasks.update(_get_all_tasks(t))
     print(f"all_tasks {[t.func.__name__ for t in all_tasks]}")
     in_degree = defaultdict(int)
     for t in all_tasks:
@@ -504,6 +576,44 @@ def topological_sort(tasks) -> list[Task]:
 
     return order
 
+#################   TMP   #######################
+
+
+# def _topological_sort2(tasks) -> list:
+    # sorted_tasks = _topological_sort(tasks)
+
+    # order = []
+    # for t in reversed(sorted_tasks):
+        # if not (taskgroup:= t.task_group):
+            # order.insert(0, t)
+        # elif not (taskgroup.task_group):
+            # # keeping first-level task-groups only
+            # # print(f"taskgroup : {taskgroup}")
+            # order.insert(0, taskgroup)
+
+    # # drop duplicates
+    # ordered_set = list(dict.fromkeys(order))
+    # return ordered_set
+
+
+def _topological_sort2(tasks) -> list:
+    sorted_tasks = _topological_sort(tasks)
+
+    order = []
+    for t in sorted_tasks:
+        if not (taskgroup:= t.task_group):
+            order.append(t)
+        elif not (taskgroup.task_group):
+            # keeping first-level task-groups only
+            # print(f"taskgroup : {taskgroup}")
+            order.append(taskgroup)
+
+    # drop duplicates
+    ordered_set = list(dict.fromkeys(order))
+    return ordered_set
+
+
+#################   TMP   #######################
 
 def _rich_log_execution_id_with_timestamp(execution_id: int):
     """Force the timestamp to show on execution start log with rich logger."""
@@ -654,11 +764,14 @@ def execute(task: Task, input_data: TaskPayload = None):
     """
     _rich_log_execution_id_with_timestamp(task.exec_id)
 
-    roots = find_root_tasks(task)
+    roots = _find_root_tasks(task)
     print(f"Root tasks: {[t.func.__name__ for t in roots]}")
 
-    order = topological_sort(roots)
-    print(f"Topological order: {[t.func.__name__ for t in order]}")
+    order = _topological_sort(roots)
+    print(f"Topological order:   {[t.func.__name__ for t in order]}")
+    print(f"Topological order 2: {[(e.func.__name__ if isinstance(e, Task) else e.name) for e in _topological_sort2(roots)]}")
+
+    # raise Exception("DEBUG")
 
     results = TaskPayload({})
     i = 0
@@ -804,7 +917,7 @@ def render_svg(task, filename="dag.svg"):
             max_y = max(max_y, cy)
         return (max_x, max_y)
 
-    roots = find_root_tasks(task)
+    roots = _find_root_tasks(task)
     positions = {}
     max_x, max_y = 0, 0
     for i, root in enumerate(roots):
@@ -850,7 +963,7 @@ def render_networkx(task, filename="dag.png"):
             add_nodes_edges(child)
             G.add_edge(task.id, child.id)
 
-    roots = find_root_tasks(task)
+    roots = _find_root_tasks(task)
     for root in roots:
         add_nodes_edges(root)
 
@@ -914,7 +1027,7 @@ def render_plotly(task, filename="dag.html"):
                 trace.y = [pos[node_id][1]]
         return pos
 
-    roots = find_root_tasks(task)
+    roots = _find_root_tasks(task)
     for root in roots:
         add_nodes(root)
 
