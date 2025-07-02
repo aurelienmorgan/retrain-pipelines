@@ -27,7 +27,7 @@ def run_alembic_upgrade_once():
     global _alembic_upgraded
     if not _alembic_upgraded:
         file_dir = os.path.dirname(os.path.abspath(__file__))
-        alembic_ini_path = os.path.join(file_dir, "alembic", "alembic.ini")
+        alembic_ini_path = os.path.join(file_dir, "db", "alembic", "alembic.ini")
         # @see https://stackoverflow.com/questions/78780118/
         alembic_cfg = Config(alembic_ini_path, attributes={"configure_logger": False})
         db_url = os.environ["RP_METADATASTORE_URL"]
