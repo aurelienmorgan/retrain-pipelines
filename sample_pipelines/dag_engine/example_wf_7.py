@@ -3,9 +3,12 @@ import logging
 
 from typing import List, Union
 
-from retrain_pipelines.dag_engine.task import \
-    TaskPayload, task, taskgroup, parallel_task, execute, \
-    render_networkx, render_plotly, render_svg
+from retrain_pipelines.dag_engine.core import \
+    TaskPayload, task, taskgroup, parallel_task
+from retrain_pipelines.dag_engine.runtime import \
+    execute
+from retrain_pipelines.dag_engine.renderer import \
+    render_svg, render_networkx, render_plotly
 
 
 # ---- Example: TaskGroup in Parallelism and Merging ----

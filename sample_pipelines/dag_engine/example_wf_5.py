@@ -1,9 +1,12 @@
 import os
 import logging
 
-from retrain_pipelines.dag_engine.task import \
-    TaskPayload, task, taskgroup, execute, \
-    render_networkx, render_plotly, render_svg
+from retrain_pipelines.dag_engine.core import \
+    TaskPayload, task, taskgroup
+from retrain_pipelines.dag_engine.runtime import \
+    execute
+from retrain_pipelines.dag_engine.renderer import \
+    render_svg, render_networkx, render_plotly
 
 
 # ---- Example: 3-levels nesting of groups of tasks ----

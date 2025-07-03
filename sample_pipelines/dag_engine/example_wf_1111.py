@@ -2,9 +2,12 @@ import os
 
 from typing import List, Union
 
-from retrain_pipelines.dag_engine.task import \
-    TaskPayload, task, parallel_task, execute, \
-    render_networkx, render_plotly, render_svg
+from retrain_pipelines.dag_engine.core import \
+    TaskPayload, task, parallel_task
+from retrain_pipelines.dag_engine.runtime import \
+    execute
+from retrain_pipelines.dag_engine.renderer import \
+    render_svg, render_networkx, render_plotly
 
 
 # ---- Example: Sequence of Nested Parallelism and Merging ----
