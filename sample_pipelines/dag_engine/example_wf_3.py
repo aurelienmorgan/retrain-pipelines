@@ -1,11 +1,11 @@
 import os
 
 from retrain_pipelines.dag_engine.task import \
-    task, parallel_task, taskgroup, execute, render_networkx, \
-    render_plotly, render_svg
+    TaskPayload, task, taskgroup, execute, \
+    render_networkx, render_plotly, render_svg
 
 
-# ---- Example: Several groups of tasks ----
+# ---- Example: Several groups of tasks, chained ----
 
 
 @task
@@ -52,9 +52,14 @@ def snake_heads_A():
 
 
 @task
-def snake_head_B1(snake_heads_A_results):
+def snake_head_B1(snake_heads_A_results: TaskPayload):
     """input is a list of tasks-results from prior group
-    as a treatment of that input,
+
+    Direct parent is a task-group, which means that
+    the herein task gets all the inputs from its priors
+    from that parent group.
+
+    As a treatment of that input,
     we could for instance concat in a list
     """
     this_task_result = [
@@ -66,9 +71,14 @@ def snake_head_B1(snake_heads_A_results):
 
 
 @task
-def snake_head_B2(snake_heads_A_results):
+def snake_head_B2(snake_heads_A_results: TaskPayload):
     """input is a list of tasks-results from prior group
-    as a treatment of that input,
+
+    Direct parent is a task-group, which means that
+    the herein task gets all the inputs from its priors
+    from that parent group.
+
+    As a treatment of that input,
     we could for instance concat in a list
     """
     this_task_result = [
@@ -80,9 +90,14 @@ def snake_head_B2(snake_heads_A_results):
 
 
 @task
-def snake_head_B3(snake_heads_A_results):
-    """input is a list of tasks-results from prior group
-    as a treatment of that input,
+def snake_head_B3(snake_heads_A_results: TaskPayload):
+    """input is a list of tasks-results from prior group.
+
+    Direct parent is a task-group, which means that
+    the herein task gets all the inputs from its priors
+    from that parent group.
+
+    As a treatment of that input,
     we could for instance concat in a list
     """
     this_task_result = [
@@ -100,6 +115,11 @@ def snake_heads_B():
     in parrallel, on the same set of inputs.
     Note that the downward task(s) will have to
     await for all of those to complete before they can start."""
+
+    # Direct parent is a task-group itself,
+    # which means each task in the herein group
+    # gets all the inputs from its priors from that other group
+
     return snake_head_B1, snake_head_B2, snake_head_B3
 
 
@@ -107,7 +127,7 @@ def snake_heads_B():
 
 
 @task()
-def join_snake_heads(snake_heads_B_results):
+def join_snake_heads(snake_heads_B_results: TaskPayload):
     """input is a list of tasks-results from prior group
     we could for instance concat in a flattened list
     just for fun (and because "why not?")
@@ -121,8 +141,7 @@ def join_snake_heads(snake_heads_B_results):
 
 
 @task
-def end(payload):
-    print(type(payload))
+def end(payload: TaskPayload):
     # Since the herein task only has 1 direct parent =>
     assert payload["join_snake_heads"] \
             == payload.get("join_snake_heads") \
@@ -141,7 +160,7 @@ final = start >> snake_heads_A >> snake_heads_B >> join_snake_heads >> end
 if __name__ == "__main__":
     os.environ["RP_ARTIFACTS_STORE"] = os.path.dirname(__file__)
     # Run the DAG
-    print("Final result:", execute(final))
+    print("Final result:", execute(final, dag_params=None))
     print(f"execution {os.path.splitext(os.path.basename(__file__))[0]}[{final.exec_id}]")
     # Render the DAG
     render_svg(final, os.path.join(os.environ["RP_ARTIFACTS_STORE"], "dag.svg"))

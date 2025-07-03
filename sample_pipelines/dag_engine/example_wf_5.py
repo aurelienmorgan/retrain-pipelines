@@ -2,8 +2,8 @@ import os
 import logging
 
 from retrain_pipelines.dag_engine.task import \
-    task, parallel_task, taskgroup, execute, render_networkx, \
-    render_plotly, render_svg
+    TaskPayload, task, taskgroup, execute, \
+    render_networkx, render_plotly, render_svg
 
 
 # ---- Example: 3-levels nesting of groups of tasks ----
@@ -16,7 +16,7 @@ def start():
 
 
 @task
-def inline1(payload):
+def inline1(payload: TaskPayload):
     """A simple task, gets executed inline."""
     input = payload["start"]
 
@@ -108,7 +108,7 @@ def snake_heads_A():
 
 
 @task
-def join_snake_heads(snake_heads_A_results):
+def join_snake_heads(snake_heads_A_results: TaskPayload):
     """Task that returns a flattened raw results
     from prior nested groups of tasks."""
 
@@ -126,7 +126,7 @@ def join_snake_heads(snake_heads_A_results):
 
 
 @task
-def inline2(payload):
+def inline2(payload: TaskPayload):
     """A simple task, gets executed inline."""
     input = payload["join_snake_heads"]
 
@@ -136,8 +136,7 @@ def inline2(payload):
 
 
 @task
-def end(payload):
-    print(type(payload))
+def end(payload: TaskPayload):
     # Since the herein task only has 1 direct parent =>
     assert payload["inline2"] \
             == payload.get("inline2") \

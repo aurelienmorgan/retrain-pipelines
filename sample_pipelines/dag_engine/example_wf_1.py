@@ -1,8 +1,10 @@
 import os
 
+from typing import List, Union
+
 from retrain_pipelines.dag_engine.task import \
-    task, parallel_task, execute, render_networkx, \
-    render_plotly, render_svg
+    TaskPayload, task, parallel_task, execute, \
+    render_networkx, render_plotly, render_svg
 
 
 # ---- Example: Nested Parallelism and Merging ----
@@ -24,7 +26,7 @@ def start():
 
 
 @parallel_task
-def outer_parallel(payload):
+def outer_parallel(payload: TaskPayload):
     """For each input x, produce a list for inner parallelism.
     Given payload["start"] = x, returns [x * 10, x * 10 + 1]."""
 
@@ -39,33 +41,24 @@ def outer_parallel(payload):
 
 
 @parallel_task
-def inner_parallel(payload):
+def inner_parallel(payload: TaskPayload):
     """For each input, returns a list containing
     the result of doubling that value,
     repeated in a 2D list."""
-    print(type(payload))
     # Since the herein task only has 1 direct parent =>
     assert payload["outer_parallel"] == payload.get("outer_parallel") == payload
 
     return [payload["outer_parallel"] * 2 for j in range(2)]
 
 
-def elementwise_2D_sum(matrix):
+def matrix_sum_cols(matrix: List[List[Union[int, float]]]):
     """Computes the sum of each column in a 2D matrix
     returning a 1D list of numerics."""
-    if not all(isinstance(row, list) for row in matrix):
-        raise TypeError("Matrix must be a list of lists.")
-    if not all(len(row) == len(matrix[0]) for row in matrix):
-        raise ValueError("All rows must be the same length.")
-    if not all(isinstance(x, (int, float)) for row in matrix for x in row):
-        raise TypeError("All elements must be int or float.")
-
-    print(__name__)
-    print(matrix)
+    print(f"matrix_sum_cols - {matrix}")
     return [sum(col) for col in zip(*matrix)]
 
-@task(merge_func=elementwise_2D_sum)
-def merge_inner(payload):
+@task(merge_func=matrix_sum_cols)
+def merge_inner(payload: TaskPayload):
     """Merge inner parallel results per outer group"""
 
     # Do whatever you want
@@ -73,8 +66,8 @@ def merge_inner(payload):
     return payload["inner_parallel"]
 
 
-@task(merge_func=elementwise_2D_sum)
-def merge_outer(payload):
+@task(merge_func=matrix_sum_cols)
+def merge_outer(payload: TaskPayload):
     """Merge outer parallel results"""
 
     # Do whatever you want
@@ -83,8 +76,7 @@ def merge_outer(payload):
 
 
 @task
-def end(payload):
-    print(type(payload))
+def end(payload: TaskPayload):
     # Since the herein task only has 1 direct parent =>
     assert payload["merge_outer"] == payload.get("merge_outer") == payload
 

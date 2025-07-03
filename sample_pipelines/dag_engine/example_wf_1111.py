@@ -1,8 +1,10 @@
 import os
 
+from typing import List, Union
+
 from retrain_pipelines.dag_engine.task import \
-    task, parallel_task, execute, render_networkx, \
-    render_plotly, render_svg
+    TaskPayload, task, parallel_task, execute, \
+    render_networkx, render_plotly, render_svg
 
 
 # ---- Example: Sequence of Nested Parallelism and Merging ----
@@ -24,7 +26,7 @@ def start():
 
 
 @parallel_task
-def outer_parallel(payload):
+def outer_parallel(payload: TaskPayload):
     """For each input x, produce a list for inner parallelism.
     Given payload["start"] = x, returns [x * 10, x * 10 + 1]."""
 
@@ -39,11 +41,10 @@ def outer_parallel(payload):
 
 
 @parallel_task
-def inner_parallel1(payload):
+def inner_parallel1(payload: TaskPayload):
     """For each input, returns a list containing
     the result of doubling that value,
     repeated in a 2D list."""
-    print(type(payload))
     # Since the herein task only has 1 direct parent =>
     assert payload["outer_parallel"] == payload.get("outer_parallel") == payload
 
@@ -58,15 +59,14 @@ def inner_parallel1(payload):
 
 
 # Preserve hierarchy in merge functions
-def elementwise_2D_sum(matrix):
+def matrix_sum_cols(matrix: List[List[Union[int, float]]]):
     """Computes the sum of each column in a 2D matrix
     returning a 1D list of numerics."""
-    print(__name__)
-    print(matrix)
+    print(f"matrix_sum_cols - {matrix}")
     return [sum(col) for col in zip(*matrix)]
 
-@task(merge_func=elementwise_2D_sum)
-def merge_inner1(payload):
+@task(merge_func=matrix_sum_cols)
+def merge_inner1(payload: TaskPayload):
     """Merge inner parallel results per outer group"""
 
     # Do whatever you want
@@ -75,7 +75,7 @@ def merge_inner1(payload):
 
 
 @parallel_task
-def inner_parallel2(payload):
+def inner_parallel2(payload: TaskPayload):
     """For each input, returns a list containing
     the result of doubling that value,
     repeated in a 2D list."""
@@ -90,8 +90,8 @@ def inner_parallel2(payload):
     return [payload["merge_inner1"] * 2 for j in range(2)]
 
 
-@task(merge_func=elementwise_2D_sum)
-def merge_inner2(payload):
+@task(merge_func=matrix_sum_cols)
+def merge_inner2(payload: TaskPayload):
     """Merge inner parallel results per outer group"""
 
     # Do whatever you want
@@ -99,8 +99,8 @@ def merge_inner2(payload):
     return payload["inner_parallel2"]
 
 
-@task(merge_func=elementwise_2D_sum)
-def merge_outer(payload):
+@task(merge_func=matrix_sum_cols)
+def merge_outer(payload: TaskPayload):
     """Merge outer parallel results"""
 
     # Do whatever you want
@@ -109,8 +109,7 @@ def merge_outer(payload):
 
 
 @task
-def end(payload):
-    print(type(payload))
+def end(payload: TaskPayload):
     # Since the herein task only has 1 direct parent =>
     assert payload["merge_outer"] == payload.get("merge_outer") == payload
 
@@ -124,7 +123,7 @@ final = start >> outer_parallel >> inner_parallel1 >> merge_inner1 >> inner_para
 if __name__ == "__main__":
     os.environ["RP_ARTIFACTS_STORE"] = os.path.dirname(__file__)
     # Run the DAG
-    print("Final result:", execute(final))
+    print("Final result:", execute(final, dag_params=None))
     print(f"execution {os.path.splitext(os.path.basename(__file__))[0]}[{final.exec_id}]")
     # Render the DAG
     render_svg(final, os.path.join(os.environ["RP_ARTIFACTS_STORE"], "dag.svg"))

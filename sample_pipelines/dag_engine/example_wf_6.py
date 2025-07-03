@@ -1,9 +1,8 @@
 import os
-import logging
 
 from retrain_pipelines.dag_engine.task import \
-    task, parallel_task, taskgroup, execute, render_networkx, \
-    render_plotly, render_svg
+    TaskPayload, task, taskgroup, execute, \
+    render_networkx, render_plotly, render_svg
 
 
 # ---- Example: tripple chaining of tasks-groups (mostly to validate DAG rendering) ----
@@ -42,7 +41,7 @@ def snake_heads_A():
 
 
 @task
-def snake_head_B1(snake_heads_A_results):
+def snake_head_B1(snake_heads_A_results: TaskPayload):
 
     # Do whatever you want
 
@@ -50,7 +49,7 @@ def snake_head_B1(snake_heads_A_results):
 
 
 @task
-def snake_head_B2(snake_heads_A_results):
+def snake_head_B2(snake_heads_A_results: TaskPayload):
 
     # Do whatever you want
 
@@ -71,7 +70,7 @@ def snake_heads_B():
 
 
 @task
-def snake_head_C1(snake_heads_B_results):
+def snake_head_C1(snake_heads_B_results: TaskPayload):
 
     # Do whatever you want
 
@@ -79,7 +78,7 @@ def snake_head_C1(snake_heads_B_results):
 
 
 @task
-def snake_head_C2(snake_heads_B_results):
+def snake_head_C2(snake_heads_B_results: TaskPayload):
 
     # Do whatever you want
 
@@ -100,7 +99,7 @@ def snake_heads_C():
 
 
 @task
-def join_snake_heads(snake_heads_C_results):
+def join_snake_heads(snake_heads_C_results: TaskPayload):
     """Task that returns a flattened raw results
     from prior nested groups of tasks."""
 
@@ -111,8 +110,7 @@ def join_snake_heads(snake_heads_C_results):
 
 
 @task
-def end(payload):
-    print(type(payload))
+def end(payload: TaskPayload):
     # Since the herein task only has 1 direct parent =>
     assert payload["join_snake_heads"] \
             == payload.get("join_snake_heads") \
@@ -132,7 +130,7 @@ final = start >> snake_heads_A >> snake_heads_B >> snake_heads_C >> join_snake_h
 if __name__ == "__main__":
     os.environ["RP_ARTIFACTS_STORE"] = os.path.dirname(__file__)
     # Run the DAG
-    print("Final result:", execute(final))
+    print("Final result:", execute(final, dag_params=None))
     print(f"execution {os.path.splitext(os.path.basename(__file__))[0]}[{final.exec_id}]")
     # Render the DAG
     render_svg(final, os.path.join(os.environ["RP_ARTIFACTS_STORE"], "dag.svg"))

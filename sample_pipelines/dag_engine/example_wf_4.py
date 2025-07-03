@@ -1,8 +1,8 @@
 import os
 
 from retrain_pipelines.dag_engine.task import \
-    task, parallel_task, taskgroup, execute, render_networkx, \
-    render_plotly, render_svg
+    TaskPayload, task, taskgroup, execute, \
+    render_networkx, render_plotly, render_svg
 
 
 # ---- Example: Nested groups of tasks ----
@@ -18,8 +18,7 @@ def start():
 
 
 @task
-def snake_head_A(payload):
-    print(type(payload))
+def snake_head_A(payload: TaskPayload):
     # Since the herein task only has 1 direct parent =>
     assert payload["start"] == payload.get("start") == payload
 
@@ -32,8 +31,7 @@ def snake_head_A(payload):
 
 
 @task
-def snake_head_AA1(payload):
-    print(type(payload))
+def snake_head_AA1(payload: TaskPayload):
     # Since the herein task only has 1 direct parent =>
     assert payload["start"] == payload.get("start") == payload
 
@@ -43,8 +41,7 @@ def snake_head_AA1(payload):
 
 
 @task
-def snake_head_AA2(payload):
-    print(type(payload))
+def snake_head_AA2(payload: TaskPayload):
     # Since the herein task only has 1 direct parent =>
     assert payload["start"] == payload.get("start") == payload
 
@@ -54,8 +51,7 @@ def snake_head_AA2(payload):
 
 
 @task
-def snake_head_AA3(payload):
-    print(type(payload))
+def snake_head_AA3(payload: TaskPayload):
     # Since the herein task only has 1 direct parent =>
     assert payload["start"] == payload.get("start") == payload
 
@@ -65,8 +61,7 @@ def snake_head_AA3(payload):
 
 
 @task
-def snake_head_AA4(payload):
-    print(type(payload))
+def snake_head_AA4(payload: TaskPayload):
     # Since the herein task only has 1 direct parent =>
     assert payload["start"] == payload.get("start") == payload
 
@@ -102,7 +97,7 @@ def snake_heads_A():
 
 
 @task
-def join_snake_heads(snake_heads_A_results):
+def join_snake_heads(snake_heads_A_results: TaskPayload):
     """Task that returns a flattened raw results
     from prior nested groups of tasks."""
     this_task_result = list(snake_heads_A_results.values())
@@ -110,8 +105,7 @@ def join_snake_heads(snake_heads_A_results):
 
 
 @task
-def end(payload):
-    print(type(payload))
+def end(payload: TaskPayload):
     # Since the herein task only has 1 direct parent =>
     assert payload["join_snake_heads"] \
             == payload.get("join_snake_heads") \
@@ -132,7 +126,7 @@ final = start >> snake_heads_A >> join_snake_heads >> end
 if __name__ == "__main__":
     os.environ["RP_ARTIFACTS_STORE"] = os.path.dirname(__file__)
     # Run the DAG
-    print("Final result:", execute(final))
+    print("Final result:", execute(final, dag_params=None))
     print(f"execution {os.path.splitext(os.path.basename(__file__))[0]}[{final.exec_id}]")
     # Render the DAG
     render_svg(final, os.path.join(os.environ["RP_ARTIFACTS_STORE"], "dag.svg"))
