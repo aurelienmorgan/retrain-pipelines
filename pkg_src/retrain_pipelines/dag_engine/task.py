@@ -1,6 +1,7 @@
 import os
 import uuid
 import logging
+import textwrap
 import functools
 import concurrent.futures
 
@@ -33,8 +34,14 @@ class Task(BaseModel):
     exec_id: Optional[int] = None
     task_id: Optional[int] = None
 
-    # in case of a task part of a parallel lane (can be nested)
-    rank: Optional[List[int]] = None
+    rank: Optional[List[int]] = Field(
+        default=None,
+        description=(
+            "In case of a task part of a parallel lane (can be nested): "
+            "indice n corresponds to the rank to which the task belongs "
+            "after parallel task n in the chain of nested parallelism."
+        )
+    )
 
     # Private attributes (not validated or included in .dict())
     _log: logging.Logger = PrivateAttr(default_factory=logging.getLogger)
@@ -48,11 +55,16 @@ class Task(BaseModel):
         super().__init__(**data)
         self._log.info(
             "[red on white]" +
-            f"{self.func.__name__}" +
+            f"{self.name}" +
             f"{f' ([#6f00d6 on white]parallel[/])' if self.is_parallel else f' ([#2d97ba on white]merge[/])' if self.merge_func else ''}" +
             "[/]")
         self.func = self._wrap_func(self.func)
 
+
+    @property
+    def name(self) -> str:
+        """Publicly expose the logger."""
+        return self.func.__name__
 
     @property
     def log(self) -> logging.Logger:
@@ -80,19 +92,27 @@ class Task(BaseModel):
 
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
-            index = kwargs.pop("index", None)
+            rank = kwargs.pop("rank", None)
             dao = DAO(os.environ["RP_METADATASTORE_URL"])
             self.task_id = dao.add_task(self.exec_id)
+
+            docstring = '\n'.join(
+                f'[bold green]{line}[/]'
+                for line in filter(None, [
+                    func.__doc__.splitlines()[0],
+                    *textwrap.dedent('\n'.join(func.__doc__.splitlines()[1:])).splitlines()
+                ])) \
+                if func.__doc__ else None
 
             self.log.info(
                 framed_rich_log_str(
                     f"\N{wrench} Executing Task "
-                    f"[#D2691E]`{func.__name__}[{self.task_id}]"
-                    f"{f'[{index}]' if index is not None else ''}`[/]:\n"
+                    f"[#D2691E]`{self.name}[{self.task_id}]"
+                    f"{f'[{rank}]' if rank is not None else ''}`[/]:\n"
                     f"Inputs :\n"
                     f"  \N{BULLET} Positional: {args}\n"
                     f"  \N{BULLET} Keyword   : {kwargs}" +
-                    (f"\n[bold green]{docstring}[/]" if (docstring:=func.__doc__) else ""),
+                    (f"\n[bold green]{docstring}[/]" if docstring else ""),
                     border_color="#FFFFE0"
                 )
             )
@@ -100,7 +120,7 @@ class Task(BaseModel):
             result = func(*args, **kwargs)
 
             self.log.info(
-                f"\n\N{WHITE HEAVY CHECK MARK} Completed Task [#D2691E]`{func.__name__}[{self.task_id}]{f'[{index}]' if index is not None else ''}`[/]:\n"
+                f"\n\N{WHITE HEAVY CHECK MARK} Completed Task [#D2691E]`{self.name}[{self.task_id}]{f'[{rank}]' if rank is not None else ''}`[/]:\n"
                 f"Results :\n" +
                 f"  \N{BULLET} {result} {f'({type(result).__name__})' if result is not None else ''}\n"
             )
@@ -119,7 +139,7 @@ class Task(BaseModel):
 
         if self.exec_id is None:
             self.exec_id = dao.add_execution()
-            self.log.info(f"[bold red]{self.func.__name__} has no exec_id[/]")
+            self.log.info(f"[bold red]{self.name} has no exec_id[/]")
             for child in self.children:
                 self._cascade_exec_id(self.exec_id, child)
         if other.exec_id is None:
@@ -170,7 +190,7 @@ class Task(BaseModel):
         return False
 
     def __str__(self):
-        return (f"Task({self.func.__name__!r}, is_parallel={self.is_parallel}, "
+        return (f"Task({self.name!r}, is_parallel={self.is_parallel}, "
                 f"merge_func={{self.merge_func.__name__!r if self.merge_func else None}}, "
                 f"id={self.id!r}, exec_id={self.exec_id!r}, task_id={self.task_id!r}, "
                 f"rank={self.rank!r})")
@@ -241,13 +261,19 @@ class TaskGroup(BaseModel):
             elmt._task_group = self
 
         logging.getLogger().info(
-            f"[red on white]TaskGroup {self}[/red on white]"
+            f"[red on white]{self}[/red on white]"
         )
 
 
     @property
     def task_group(self) -> "TaskGroup":
         return self._task_group
+
+
+    @property
+    def log(self) -> logging.Logger:
+        """Publicly expose the logger."""
+        return self._log
 
 
     def __rshift__(self, other):
@@ -264,7 +290,7 @@ class TaskGroup(BaseModel):
             #  of that group opening the DAG,
             #  the "start" node cascaded to it)
             self.exec_id = dao.add_execution()
-            self.log.info(f"[bold red]{self.func.__name__} has no exec_id[/]")
+            self.log.info(f"[bold red]{self.name} has no exec_id[/]")
             for child in self.children:
                 self._cascade_exec_id(self.exec_id, child)
 
@@ -327,17 +353,13 @@ class TaskGroup(BaseModel):
         return False
 
     def _get_elements_names(self):
-        return [
-            elmt.name if isinstance(elmt, TaskGroup)
-            else elmt.func.__name__
-            for elmt in self.elements
-        ]
+        return [elmt.name for elmt in self.elements]
 
     def __str__(self):
-        return f"TaskGroup({self.name}{self._get_elements_names()})"
+        return f"{self.name}{self._get_elements_names()}"
 
     def __repr__(self):
-        return self.__str__()
+        return f"TaskGroup({self.__str__()})"
 
 
 # ---- Decorators for Task Declaration ----
@@ -500,15 +522,13 @@ class TaskPayload:
             f"'{self.__class__.__name__}' object has no attribute '{name}'")
 
     def __str__(self):
-        if len(self._data) == 1:
-            return f"TaskPayload(list(self._data.values())[0])"
-        return f"TaskPayload(self._data)"
+        return f"TaskPayload({self._data})"
 
     def __repr__(self):
         return self.__str__()
 
 
-def _find_root_tasks(task) -> list[Task]:
+def _find_root_tasks(task: Task) -> list[Task]:
     """Find all root tasks in the DAG starting from the given task."""
     all_tasks = set()
     stack = [task]
@@ -520,100 +540,67 @@ def _find_root_tasks(task) -> list[Task]:
     return [t for t in all_tasks if not t.parents]
 
 
-def _get_all_tasks(task, seen=None) -> list[Task]:
-    """Recursively collect all tasks reachable from the given task.
+def _topological_sort(
+    tasks: List[Task]
+) -> List[Union[Task, TaskGroup]]:
+    """Topological sort of first-level elements of DAG.
 
-    Used for graph traversal and rendering.
+    i.e. elements of task-groups are not referenced,
+    just the top-level task-groups themselves
+
+    Params:
+        - tasks (List[Task]):
+            roots of the DAG to be considered.
+
+    Results:
+        - List of first level elements of the DAG.
     """
-    if seen is None:
-        seen = set()
-    if task in seen:
-        return []
-    seen.add(task)
-    tasks = [task] if isinstance(task, Task) else []
-    for child in task.children:
-        if isinstance(child, TaskGroup):
-            for t in child.tasks:
-                tasks += _get_all_tasks(t, seen)
-        else:
-            tasks += _get_all_tasks(child, seen)
-    return tasks
-
-
-def _topological_sort(tasks) -> list[Task]:
-    """Standard Kahn's algorithm for topological sorting of the DAG.
-
-    Ensures tasks are executed in dependency order.
-    """
-    all_tasks = set()
-    for t in tasks:
-        all_tasks.update(_get_all_tasks(t))
-    print(f"all_tasks {[t.func.__name__ for t in all_tasks]}")
     in_degree = defaultdict(int)
-    for t in all_tasks:
-        for child in t.children:
+    children_map = defaultdict(list)
+    all_tasks = set()
+    
+    # Stack-based traversal to gather tasks
+    # and build in-degree graph
+    stack = list(tasks)
+    while stack:
+        node = stack.pop()
+        if not isinstance(node, Task):
+            continue
+        if node in all_tasks:
+            continue
+        all_tasks.add(node)
+        for child in node.children:
             if isinstance(child, TaskGroup):
-                for task in child.tasks:
-                    in_degree[task] += 1
+                for t in child.tasks:
+                    in_degree[t] += 1
+                    children_map[node].append(t)
+                    stack.append(t)
             else:
                 in_degree[child] += 1
+                children_map[node].append(child)
+                stack.append(child)
 
-    queue = deque([t for t in all_tasks if in_degree[t] == 0])
+    queue = deque(t for t in all_tasks if in_degree[t] == 0)
+    seen_groups = set()
     order = []
+
     while queue:
         t = queue.popleft()
-        order.append(t)
-        for child in t.children:
-            if isinstance(child, TaskGroup):
-                for task in child.tasks:
-                    in_degree[task] -= 1
-                    if in_degree[task] == 0:
-                        queue.append(task)
-            else:
-                in_degree[child] -= 1
-                if in_degree[child] == 0:
-                    queue.append(child)
+
+        group = t.task_group
+        if group is None:
+            order.append(t)
+        elif group.task_group is None and group not in seen_groups:
+            seen_groups.add(group)
+            order.append(group)
+
+        for child in children_map[t]:
+            in_degree[child] -= 1
+            if in_degree[child] == 0:
+                queue.append(child)
 
     return order
 
-#################   TMP   #######################
-
-
-# def _topological_sort2(tasks) -> list:
-    # sorted_tasks = _topological_sort(tasks)
-
-    # order = []
-    # for t in reversed(sorted_tasks):
-        # if not (taskgroup:= t.task_group):
-            # order.insert(0, t)
-        # elif not (taskgroup.task_group):
-            # # keeping first-level task-groups only
-            # # print(f"taskgroup : {taskgroup}")
-            # order.insert(0, taskgroup)
-
-    # # drop duplicates
-    # ordered_set = list(dict.fromkeys(order))
-    # return ordered_set
-
-
-def _topological_sort2(tasks) -> list:
-    sorted_tasks = _topological_sort(tasks)
-
-    order = []
-    for t in sorted_tasks:
-        if not (taskgroup:= t.task_group):
-            order.append(t)
-        elif not (taskgroup.task_group):
-            # keeping first-level task-groups only
-            # print(f"taskgroup : {taskgroup}")
-            order.append(taskgroup)
-
-    # drop duplicates
-    ordered_set = list(dict.fromkeys(order))
-    return ordered_set
-
-
-#################   TMP   #######################
 
 def _rich_log_execution_id_with_timestamp(execution_id: int):
     """Force the timestamp to show on execution start log with rich logger."""
@@ -632,7 +619,9 @@ def _find_subdag_end(task_order, start_idx):
     at the next merge task, accounting for potential nesting."""
     parallel_depth = 0
     for i in range(start_idx, len(task_order)):
-        if task_order[i].is_parallel:
+        if isinstance(task_order[i], TaskGroup):
+            continue
+        elif task_order[i].is_parallel:
             parallel_depth += 1
         elif task_order[i].merge_func:
             parallel_depth -= 1
@@ -642,13 +631,17 @@ def _find_subdag_end(task_order, start_idx):
     return len(task_order)
 
 
-def _collect_parent_results(t, results):
+def _collect_parent_results(
+    elmt: Union[Task, TaskGroup],
+    results: TaskPayload
+) -> TaskPayload:
     """
-    Collects results from parent tasks for a given task.
+    Collects results from parent tasks
+    for a given task or taskgroup.
 
     Params:
-        - t (Task):
-            The current task.
+        - t (Union[Task, TaskGroup]):
+            The current task or taskgroup.
         - results (TaskPayload):
             The dictionary of previously computed results.
 
@@ -658,9 +651,15 @@ def _collect_parent_results(t, results):
             the results from all available parent tasks.
     """
     parent_results = TaskPayload({})
-    for p in t.parents:
-        if p.func.__name__ in results:
-            parent_results[p.func.__name__] = results[p.func.__name__]
+    if isinstance(elmt, Task):
+        for p in elmt.parents:
+            if p.name in results:
+                parent_results[p.name] = results[p.name]
+    elif isinstance(elmt, TaskGroup):
+        # Since all elements in a TaskGroup share relatives
+        # (both parents and children), we look into the first only.
+        parent_results = _collect_parent_results(elmt.elements[0], results)
+
     return parent_results
 
 
@@ -683,22 +682,29 @@ def _parallel_input_count(parent_results):
     return len(first) if isinstance(first, list) else 1
 
 
-def _run_parallel_branches(subdag_tasks, parent_results, count, branch_index=None):
+def _run_parallel_branches(
+    subdag_elements: List[Union[Task, TaskGroup]],
+    parent_results: TaskPayload,
+    count: int,
+    rank: Optional[List[int]] = None
+) -> List[TaskPayload]:
     """
     Executes a subdag in parallel across multiple input branches.
 
     Params:
-        - subdag_tasks (List[Task]):
-            The tasks forming the parallel subdag.
+        - subdag_elements (List[Union[Task, TaskGroup]]):
+            The first-level tasks and taskgroups
+            forming the parallel subdag.
         - parent_results (TaskPayload):
             Input values for the branches.
         - count (int):
             Number of parallel executions to perform.
-        - branch_index (List[int], optional):
+        - rank (List[int], optional):
             Index path for nested branches.
+            Indices of branches if branch inside a parallel lane.
 
     Results:
-        - List[Any]:
+        - List[TaskPayload]:
             Results from each parallel branch.
     """
     with concurrent.futures.ThreadPoolExecutor() as executor:
@@ -710,14 +716,18 @@ def _run_parallel_branches(subdag_tasks, parent_results, count, branch_index=Non
             })
             futures.append(executor.submit(
                 _execute_branch,
-                subdag_tasks,
+                subdag_elements,
                 branch_input,
-                (branch_index or []) + [idx]
+                (rank or []) + [idx]
             ))
         return [f.result() for f in futures]
 
 
-def _run_regular_task(t, parent_results, index=None):
+def _run_regular_task(
+    t: Task,
+    parent_results: TaskPayload,
+    rank: Optional[List[int]] = None
+) -> TaskPayload:
     """
     Executes a single non-parallel task,
     optionally applying a merge function.
@@ -727,135 +737,219 @@ def _run_regular_task(t, parent_results, index=None):
             The task to execute.
         - parent_results (TaskPayload):
             Input values from parent tasks.
-        - index (List[int], optional):
-            Branch index for logging
-            and function context.
+        - rank (List[int], optional):
+            Index path for nested branches.
+            Indices of branches if inside a parallel lane.
 
     Results:
-        - Any:
+        - TaskPayload:
             The result produced by the task.
     """
     if t.merge_func:
         merged = t.merge_func(list(parent_results.values())[0])
-        parent_results = TaskPayload({t.parents[0].func.__name__: merged})
+        parent_results = TaskPayload({t.parents[0].name: merged})
 
         t.log.info(
-            f"[#FFFFE0]`{t.func.__name__}{index if index else ''} merged "
+            f"[#FFFFE0]`{t.name}{rank if rank else ''} merged "
             f" {t.merge_func.__name__}(parent_results) :\n"
             f"Inputs :\n"
             f"  \N{BULLET} {str(parent_results)}[/]"
         )
 
-    t.log.info(f"parent_results: {parent_results}")
-
     if parent_results._data:
-        return t.func(parent_results, index=index) \
-               if index \
+        return t.func(parent_results, rank=rank) \
+               if rank \
                else t.func(parent_results)
     else:
-        return t.func(index=index) if index else t.func()
+        return t.func(rank=rank) if rank else t.func()
 
 
-def execute(task: Task, input_data: TaskPayload = None):
+def _run_regular_taskgroup(
+    tg: TaskGroup,
+    parent_results: TaskPayload,
+    rank: Optional[List[int]] = None
+) -> TaskPayload:
+    """Executes tasks (and potential nested taskgroups) asynchronously.
+
+    Params:
+        - tg (TaskGroup):
+            The task to execute.
+        - parent_results (TaskPayload):
+            Input values from parent tasks.
+        - rank (List[int], optional):
+            Index path for nested branches.
+            Indices of branches if inside a parallel lane.
+
+    Results:
+        - TaskPayload:
+            The result produced by the tasks
+            (potentially nested) of the taskgroup.
+    """
+    result = TaskPayload({})
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        for elmt in tg.elements:
+            result[elmt.name] = None  # to preserve keys ordering
+            if isinstance(elmt, Task):
+                elmt.log.error(f"[bold red]{parent_results} - rank {rank}[/]")
+                f = executor.submit(
+                    _run_regular_task,
+                    elmt,
+                    parent_results,
+                    (rank or [])
+                )
+                result[elmt.name] = f.result()
+            else:
+                nested_tg_results = _run_regular_taskgroup(
+                    elmt, parent_results, rank
+                )
+                for task_name, task_result in nested_tg_results.items():
+                    result[task_name] = task_result
+
+    return result
+
+
+def execute(
+    task: Task,
+    dag_params: Any = None
+) -> TaskPayload:
     """From the start, executes the DAG that contains the given task.
 
     Handles task-groups, parallel and nested parallel tasks,
     and merges results as needed.
+
+    Params:
+        - task (Task):
+            A task from the DAG to be executed.
+        - dag_params (Any)
+            Parameters for this DAG execution.
+
+    Results:
+        - (TaskPayload)
+            results of the last task in the DAG.
     """
     _rich_log_execution_id_with_timestamp(task.exec_id)
 
     roots = _find_root_tasks(task)
-    print(f"Root tasks: {[t.func.__name__ for t in roots]}")
+    print(f"Root tasks: {[t.name for t in roots]}")
 
     order = _topological_sort(roots)
-    print(f"Topological order:   {[t.func.__name__ for t in order]}")
-    print(f"Topological order 2: {[(e.func.__name__ if isinstance(e, Task) else e.name) for e in _topological_sort2(roots)]}")
-
-    # raise Exception("DEBUG")
+    print(f"Topological order: {[e.name for e in order]}")
 
     results = TaskPayload({})
     i = 0
 
     while i < len(order):
-        t = order[i]
+        elmt = order[i]
 
-        t.log.info("Executing task: " +
-                   f"[rgb(0,255,255) on #af00ff]{t.func.__name__}[/]")
+        parent_results = _collect_parent_results(elmt, results)
 
-        parent_results = _collect_parent_results(t, results)
+        if isinstance(elmt, Task):
+            elmt.log.info("Executing task: " +
+                       f"[rgb(0,255,255) on #af00ff]{elmt.name}[/]")
 
-        if t.is_parallel:
-            t.log.info(f"parent_results: {parent_results}")
+            if elmt.is_parallel:
+                elmt.log.info(f"sub-DAG parent_results: {parent_results}")
 
-            # Find the end of this parallel subdag
-            subdag_end = _find_subdag_end(order, i)
-            subdag_tasks = order[i:subdag_end]
-            t.log.info("subdag_tasks [red on yellow]{}[/]".format(
-                [t.func.__name__ for t in subdag_tasks]))
+                # Find the end of this parallel subdag
+                subdag_end = _find_subdag_end(order, i)
+                subdag_tasks = order[i:subdag_end]
+                elmt.log.info("subdag_tasks [red on yellow]{}[/]".format(
+                    [elmt.name for elmt in subdag_tasks]))
 
-            # Execute parallel subdag for each input
-            input_count = _parallel_input_count(parent_results)
-            sub_results = _run_parallel_branches(
-                subdag_tasks, parent_results, input_count)
+                # Execute parallel subdag for each input
+                input_count = _parallel_input_count(parent_results)
+                sub_results = _run_parallel_branches(
+                    subdag_tasks, parent_results, input_count)
 
-            # Store results for the last task in subdag
-            results[subdag_tasks[-1].func.__name__] = sub_results
+                # Store results for the last task in subdag
+                results[subdag_tasks[-1].name] = sub_results
 
-            # Skip to after the subdag
-            i = subdag_end
-            continue
+                # Skip to after the subdag
+                i = subdag_end
+                continue
+            else:
+                result = _run_regular_task(elmt, parent_results)
+                results[elmt.name] = result
         else:
-            result = _run_regular_task(t, parent_results)
-            results[t.func.__name__] = result
+            elmt.log.info("Executing taskgroup: " +
+                       f"[rgb(0,255,255) on #af00ff]{elmt.name}[/]")
+            tg_results = _run_regular_taskgroup(elmt, parent_results)
+            for task_name, task_result in tg_results.items():
+                results[task_name] = task_result
 
         i += 1
 
-    return results[order[-1].func.__name__]
+    return results[order[-1].name]
 
 
-def _execute_branch(branch_tasks, branch_input: TaskPayload, branch_index):
-    """Execute a single parallel branch with recursive subdag handling."""
+def _execute_branch(
+    branch_elements: List[Union[Task, TaskGroup]],
+    branch_input: TaskPayload,
+    rank: List[int]
+) -> TaskPayload:
+    """Execute a single parallel branch with recursive subdag handling.
+
+    Params:
+        - branch_elements
+        - branch_input: (TaskPayload):
+            outputs from task parents
+        - rank: List[int]:
+            Index path for nested branches.
+            Indices of branches if inside a parallel lane.
+
+    Results:
+        - (TaskPayload)
+            results of the last task in the branch.
+    """
     branch_results = branch_input.copy()
     i = 0
 
-    while i < len(branch_tasks):
-        t = branch_tasks[i]
-        t.rank = branch_index
+    while i < len(branch_elements):
+        elmt = branch_elements[i]
+        parent_results = _collect_parent_results(elmt, branch_results)
 
-        parent_results = _collect_parent_results(t, branch_results)
+        if isinstance(elmt, Task):
+            elmt.rank = rank
+            if elmt.is_parallel and i > 0:
+                # Nested Parallelism
+                elmt.log.info(f"nested sub-DAG parent_results: {parent_results}")
 
-        if t.is_parallel and i > 0:
-            t.log.info(f"parent_results: {parent_results}")
+                # Find nested subdag end
+                nested_subdag_end = _find_subdag_end(branch_elements, i)
+                nested_subdag_tasks = branch_elements[i:nested_subdag_end]
+                elmt.log.info("nested_subdag_tasks [red on yellow]{}{}[/]".format(
+                    rank, [elmt.name for t in nested_subdag_tasks]))
 
-            # Find nested subdag end
-            nested_subdag_end = _find_subdag_end(branch_tasks, i)
-            nested_subdag_tasks = branch_tasks[i:nested_subdag_end]
-            t.log.info("nested_subdag_tasks [red on yellow]{}{}[/]".format(
-                branch_index, [t.func.__name__ for t in nested_subdag_tasks]))
+                # Execute nested parallel subdag
+                parent_value = list(parent_results.values())[0]
+                if isinstance(parent_value, list):
+                    nested_results = _run_parallel_branches(
+                        nested_subdag_tasks, parent_results,
+                        len(parent_value), rank)
+                else:
+                    nested_results = _execute_branch(
+                        nested_subdag_tasks, parent_results, rank)
 
-            # Execute nested parallel subdag
-            parent_value = list(parent_results.values())[0]
-            if isinstance(parent_value, list):
-                nested_results = _run_parallel_branches(
-                    nested_subdag_tasks, parent_results,
-                    len(parent_value), branch_index)
+                branch_results[nested_subdag_tasks[-1].name] = nested_results
+                i = nested_subdag_end
+                continue
             else:
-                nested_results = _execute_branch(
-                    nested_subdag_tasks, parent_results, branch_index)
-
-            branch_results[nested_subdag_tasks[-1].func.__name__] = nested_results
-            i = nested_subdag_end
-            continue
+                # Regular task
+                elmt.log.info("Executing task: " +
+                              f"[rgb(0,255,255) on #af00ff]{elmt.name}{rank}[/]")
+                result = _run_regular_task(elmt, parent_results, rank)
+                branch_results[elmt.name] = result
         else:
-            # Regular task
-            t.log.info("Executing task: " +
-                       f"[rgb(0,255,255) on #af00ff]{t.func.__name__}{branch_index}[/]")
-            result = _run_regular_task(t, parent_results, branch_index)
-            branch_results[t.func.__name__] = result
+            # TaskGroup
+            elmt.log.info("Executing taskgroup: " +
+                          f"[rgb(0,255,255) on #af00ff]{elmt.name}{rank}[/]")
+            result = _run_regular_taskgroup(elmt, parent_results, rank)
+            for task_name, task_result in result.items():
+                branch_results[task_name] = task_result
 
         i += 1
 
-    return branch_results[branch_tasks[-1].func.__name__]
+    return branch_results[branch_elements[-1].name]
 
 
 # ---- SVG Rendering ----
@@ -880,7 +974,7 @@ def render_svg(task, filename="dag.svg"):
         color = "#b3e6ff" if not task.is_parallel else "#ffe6b3"  # Blue for normal, orange for parallel
         rect = ET.SubElement(svg, "rect", x=str(x), y=str(y), width="160", height="40", fill=color, stroke="#333")
         text = ET.SubElement(svg, "text", x=str(x + 10), y=str(y + 25), class_="task")
-        text.text = task.func.__name__
+        text.text = task.name
         return rect
 
     def add_edge(svg, x1, y1, x2, y2):
@@ -958,7 +1052,7 @@ def render_networkx(task, filename="dag.png"):
     G = nx.DiGraph()
 
     def add_nodes_edges(task):
-        G.add_node(task.id, label=task.func.__name__)
+        G.add_node(task.id, label=task.name)
         for child in task.children:
             add_nodes_edges(child)
             G.add_edge(task.id, child.id)
@@ -1007,7 +1101,7 @@ def render_plotly(task, filename="dag.html"):
                     x=[0],  # Placeholder x value, will be updated later
                     y=[0],  # Placeholder y value, will be updated later
                     mode="markers+text",
-                    text=task.func.__name__,
+                    text=task.name,
                     textposition="bottom center",
                     marker=dict(size=20, color="skyblue"),
                     name=task.id,
