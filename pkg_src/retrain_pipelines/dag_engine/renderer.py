@@ -95,11 +95,6 @@ def render_svg(task, filename="dag.svg"):
 
 def render_networkx(task, filename="dag.png"):
     """Renders the DAG using NetworkX."""
-    logger = logging.getLogger("matplotlib")
-    logger.setLevel(logging.ERROR)
-
-    logger = logging.getLogger("PIL.PngImagePlugin")
-    logger.setLevel(logging.ERROR)
 
     G = nx.DiGraph()
 

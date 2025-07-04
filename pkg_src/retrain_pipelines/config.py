@@ -52,6 +52,22 @@ except Exception as e:
     print(f"Error creating cache directory: {e}")
 
 
+# RP_WEB_SERVER_LOGS
+# for 'local' installs with web UI
+os.environ["RP_WEB_SERVER_LOGS"] = (
+    os.environ.get(
+        "RP_WEB_SERVER_LOGS",
+        os.path.expanduser("~/.cache/retrain-pipelines/logs/web_server/")
+    ).rstrip(os.sep) + os.sep
+)
+try:
+    os.makedirs(os.environ["RP_WEB_SERVER_LOGS"], exist_ok=True)
+except PermissionError as e:
+    print(f"Permission denied: {e}")
+except Exception as e:
+    print(f"Error creating cache directory: {e}")
+
+
 ################################################################
 
 # https://rich.readthedocs.io/en/stable/markup.html
@@ -75,6 +91,10 @@ logging.basicConfig(
     datefmt=DATEFMT,
     handlers=[CustomRichHandler(markup=True)],
 )
+# for overly noisy dependencies
+logging.getLogger("matplotlib").setLevel(logging.ERROR)
+logging.getLogger("PIL.PngImagePlugin").setLevel(logging.ERROR)
+logging.getLogger("graphviz").setLevel(logging.ERROR)
 
 
 ################################################################

@@ -37,6 +37,9 @@ env/
 __pycache__/
 *.py[cod]
 
+# Fast Html
+.sesskey
+
 # Coverage reports
 htmlcov/
 .coverage

@@ -68,6 +68,11 @@ dependencies = [
 
     "colorama>=0.4"
 ]
+[project.optional-dependencies]
+local = [
+    "uvicorn>=0.34.0",
+    "python-fasthtml>=0.12.21"
+]
 dynamic = ["version"]
 
 [tool.setuptools_scm]
