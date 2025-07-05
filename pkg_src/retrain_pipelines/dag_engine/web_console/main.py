@@ -72,7 +72,9 @@ def start_server_once():
     # Create the ASGI server (uvicorn.Server)
     config = uvicorn.Config(
         app, host="0.0.0.0", port=5001,
-        log_level="info", access_log=True, log_config=get_log_config()
+        log_level="info", access_log=True,
+        proxy_headers=True, forwarded_allow_ips="*",
+        log_config=get_log_config()
     )
     _server = uvicorn.Server(config)
 

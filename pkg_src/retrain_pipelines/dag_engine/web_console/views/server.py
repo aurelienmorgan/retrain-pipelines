@@ -135,21 +135,21 @@ def register(app, rt, prefix=""):
 
                 // Close WebSocket when tab/window is closed
                 window.addEventListener('beforeunload', () => {
-                 ws.close();
+                  setTimeout(() => ws.close(), 1000);
                 });
 
-                // Handle visibility changes - close when hidden, reconnect when visible
-                document.addEventListener('visibilitychange', () => {
-                 if (document.hidden) {
-                   console.log("WebSocket closing on hidden event.");
-                   ws.close();
-                 } else {
-                   if (ws.readyState === WebSocket.CLOSED) {
-                     console.log("WebSocket connecting on unhidden event.");
-                     connectWebSocket();
-                   }
-                 }
-                });
+                // // Handle visibility changes - close when hidden, reconnect when visible
+                // document.addEventListener('visibilitychange', () => {
+                //  if (document.hidden) {
+                //    console.log("WebSocket closing on hidden event.");
+                //    setTimeout(() => ws.close(), 1000);
+                //  } else {
+                //    if (ws.readyState === WebSocket.CLOSED) {
+                //      console.log("WebSocket connecting on unhidden event.");
+                //      connectWebSocket();
+                //    }
+                //  }
+                // });
             """)
         )
 

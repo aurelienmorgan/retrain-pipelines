@@ -88,37 +88,71 @@ class WebSocketLogHandler(logging.Handler):
             self.clients.discard(ws)
 
     def register(self, websocket):
-        # print(f"Registering: {websocket.client}")
         self.clients.add(websocket)
 
     def unregister(self, websocket):
         self.clients.discard(websocket)
 
+    async def broadcast_to_others(self, message, exclude_ws):
+        dead = []
+        for ws in self.clients:
+            if ws != exclude_ws:
+                try:
+                    await ws.send_text(message)
+                except Exception:
+                    dead.append(ws)
+        for ws in dead:
+            self.clients.discard(ws)
 
+ws_log_handler = WebSocketLogHandler()
+ 
 async def websocket_endpoint(websocket):
     await websocket.accept()
-    ws_log_handler = WebSocketLogHandler()
-    ws_log_handler.setFormatter(logging.Formatter(
-        "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-    ))
-    uvicorn_logger = logging.getLogger("uvicorn")
-    error_logger = logging.getLogger("uvicorn.error")
-    access_logger = logging.getLogger("uvicorn.access")
     
-    uvicorn_logger.addHandler(ws_log_handler)
-    error_logger.addHandler(ws_log_handler)
-    access_logger.addHandler(ws_log_handler)
+    # Only add handlers once
+    if not hasattr(ws_log_handler, '_handlers_added'):
+        import json
+        from uvicorn.logging import AccessFormatter
+        
+        class JSONFormatter(AccessFormatter):
+            def format(self, record):
+                # Let AccessFormatter do its work first to populate client_addr
+                formatted_msg = super().format(record)
+                client_addr, method, message, http_version, status_code \
+                    = record.args
+                # print(record.__dict__)
+                log_entry = {
+                    "timestamp": self.formatTime(record),
+                    "level": record.levelname,
+                    "client_addr": client_addr,
+                    "method": method,
+                    "message": message,
+                    "thread": record.thread,
+                    "threadName": record.threadName,
+                    "process": record.process,
+                    "processName": record.processName,
+                }
+                return json.dumps(log_entry)
+        
+        ws_log_handler.setFormatter(JSONFormatter(
+            "%(asctime)s [%(levelname)s] %(client_addr)s: %(message)s"
+        ))
+        logging.getLogger("uvicorn.access").addHandler(ws_log_handler)
+        ws_log_handler._handlers_added = True
 
     ws_log_handler.register(websocket)
 
     try:
         while True:
-            await websocket.receive_text()  # Keep connection open (you can ignore input)
+            await websocket.receive_text()
     except:
-        pass
+        # in case more than 1 webbrowser tab is opened
+        # on the streaming page
+        await ws_log_handler.broadcast_to_others(
+            f"WebSocket client {websocket.client} disconnected",
+            websocket
+        )
     finally:
         ws_log_handler.unregister(websocket)
-        uvicorn_logger.removeHandler(ws_log_handler)
-        error_logger.removeHandler(ws_log_handler)
-        access_logger.removeHandler(ws_log_handler)
+
 
