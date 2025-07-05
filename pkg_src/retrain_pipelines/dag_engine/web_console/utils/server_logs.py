@@ -71,7 +71,11 @@ class WebSocketLogHandler(logging.Handler):
 
     def emit(self, record):
         log_entry = self.format(record)
-        asyncio.run(self.broadcast(log_entry))
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            loop.create_task(self.broadcast(log_entry))
+        else:
+            asyncio.run(self.broadcast(log_entry))
 
     async def broadcast(self, message):
         dead = []
@@ -84,8 +88,37 @@ class WebSocketLogHandler(logging.Handler):
             self.clients.discard(ws)
 
     def register(self, websocket):
+        # print(f"Registering: {websocket.client}")
         self.clients.add(websocket)
 
     def unregister(self, websocket):
         self.clients.discard(websocket)
+
+
+async def websocket_endpoint(websocket):
+    await websocket.accept()
+    ws_log_handler = WebSocketLogHandler()
+    ws_log_handler.setFormatter(logging.Formatter(
+        "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+    ))
+    uvicorn_logger = logging.getLogger("uvicorn")
+    error_logger = logging.getLogger("uvicorn.error")
+    access_logger = logging.getLogger("uvicorn.access")
+    
+    uvicorn_logger.addHandler(ws_log_handler)
+    error_logger.addHandler(ws_log_handler)
+    access_logger.addHandler(ws_log_handler)
+
+    ws_log_handler.register(websocket)
+
+    try:
+        while True:
+            await websocket.receive_text()  # Keep connection open (you can ignore input)
+    except:
+        pass
+    finally:
+        ws_log_handler.unregister(websocket)
+        uvicorn_logger.removeHandler(ws_log_handler)
+        error_logger.removeHandler(ws_log_handler)
+        access_logger.removeHandler(ws_log_handler)
 

@@ -90,16 +90,66 @@ def register(app, rt, prefix=""):
                         style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 15px;"
                     ),
                     Div(id="log-container", hx_get="/web_server/logs", hx_trigger="load, every 5s"),
+                    Div(id="log-container2"),
                     style="background: #f8f9fa; padding: 15px; border-radius: 8px;"
                 )
             ),
             Script("""
-            document.body.addEventListener('htmx:afterSettle', function(evt) {
-                var logContainer = document.getElementById('log-items');
-                if (logContainer) {
-                    logContainer.scrollTop = logContainer.scrollHeight;
+                document.body.addEventListener('htmx:afterSettle', function(evt) {
+                    var logContainer = document.getElementById('log-items');
+                    if (logContainer) {
+                        logContainer.scrollTop = logContainer.scrollHeight;
+                    }
+                });
+            """),
+            Script("""
+                const logContainer = document.getElementById("log-container2");
+
+                let ws;
+
+                function connectWebSocket() {
+                 ws = new WebSocket(`ws://${location.host}/ws/logs2`);
+                 
+                 ws.onmessage = (event) => {
+                   const message = document.createElement("div");
+                   message.textContent = event.data;
+                   logContainer.appendChild(message);
+                   logContainer.scrollTop = logContainer.scrollHeight;
+                 };
+
+                 ws.onopen = () => {
+                   console.log("WebSocket connected.");
+                 };
+
+                 ws.onclose = () => {
+                   console.log("WebSocket disconnected.");
+                 };
+
+                 ws.onerror = (err) => {
+                   console.error("WebSocket error:", err);
+                 };
                 }
-            });
+
+                // Initial connection
+                connectWebSocket();
+
+                // Close WebSocket when tab/window is closed
+                window.addEventListener('beforeunload', () => {
+                 ws.close();
+                });
+
+                // Handle visibility changes - close when hidden, reconnect when visible
+                document.addEventListener('visibilitychange', () => {
+                 if (document.hidden) {
+                   console.log("WebSocket closing on hidden event.");
+                   ws.close();
+                 } else {
+                   if (ws.readyState === WebSocket.CLOSED) {
+                     console.log("WebSocket connecting on unhidden event.");
+                     connectWebSocket();
+                   }
+                 }
+                });
             """)
         )
 
@@ -148,7 +198,7 @@ def register(app, rt, prefix=""):
             Div(*log_items, id="log-items", style="max-height: 600px; overflow-y: auto;")
         )
 
-    @rt(f"{prefix}/web_server/status")
+    @rt(f"{prefix}/web_server/status", methods=["HEAD"])
     def web_server_status():
         # TODO, will even probably move
         return "web server status"

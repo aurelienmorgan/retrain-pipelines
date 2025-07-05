@@ -1,8 +1,8 @@
 
-from fasthtml.common import Response, WebSocket
+from fasthtml.common import Response, WebSocket, Div
 
 from ..utils.cookies import set_ui_state
-# from ..utils.server_logs import WebSocketLogHandler
+from ..utils.server_logs import WebSocketLogHandler
 
 
 def register(app, rt, prefix=""):
@@ -21,6 +21,13 @@ def register(app, rt, prefix=""):
 
         headers = {"Content-Type": "text/plain"}
         return Response("Missing key or view", status=400, headers=headers)
+
+
+    @app.ws(f"{prefix}/ws/test")
+    async def on_message(message: str, send):
+        # print(f"msg type: {type(message)}, msg: {message}")
+        await send(Div('Hello ' + message, id='notifications'))
+        await send(Div('Goodbye ' + message, id='notifications'))
 
 
     @app.ws(f"{prefix}/ws/logs")

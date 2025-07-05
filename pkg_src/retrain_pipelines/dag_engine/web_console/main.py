@@ -10,8 +10,10 @@ from datetime import datetime
 from collections import deque
 
 from fasthtml.common import fast_app
+from starlette.routing import WebSocketRoute
 
-from .utils.server_logs import get_log_config
+from .utils.server_logs import get_log_config, \
+    websocket_endpoint
 from .views import home, server, ui
 
 
@@ -37,6 +39,36 @@ def start_server_once():
     for view in [home, server, ui]:
         view.register(app, rt)
 
+    # Add the server-logs WebSocket route
+    app.router.routes.append(
+        WebSocketRoute("/ws/logs2", websocket_endpoint)
+    )
+
+
+    http_routes = []
+    ws_routes = []
+
+    for route in getattr(app, "routes", []):
+        if isinstance(route, WebSocketRoute):
+            methods = ["WS"]
+        else:
+            methods = route.methods
+
+        path = route.path
+        handle_name = getattr(route.handle, '__name__', str(route.handle))
+
+        if 'WS' in methods:
+            ws_routes.append((path, handle_name))
+        else:
+            http_routes.append((methods, path, handle_name))
+
+    print("\n--- Registered HTTP Routes ---")
+    for methods, path, handle in http_routes:
+        print(f"{methods} {path} -> {handle}")
+    print("--- Registered WebSocket Endpoints ---")
+    for path, handle in ws_routes:
+        print(f"WS {path} -> {handle}")
+
     # Create the ASGI server (uvicorn.Server)
     config = uvicorn.Config(
         app, host="0.0.0.0", port=5001,
@@ -49,6 +81,12 @@ def start_server_once():
 
     _server_thread = threading.Thread(target=run, daemon=True)
     _server_thread.start()
+
+    display_host = config.host
+    if display_host == "0.0.0.0":
+        display_host = "localhost"
+    server_url = f"http://{display_host}:{config.port}"
+    logging.getLogger().info(f"\N{glowing star} Server started at {server_url}")
 
 
 def shutdown_server():
