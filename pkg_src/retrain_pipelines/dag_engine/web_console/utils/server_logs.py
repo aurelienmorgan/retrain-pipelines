@@ -1,7 +1,10 @@
 
 import os
+import json
 import asyncio
 import logging
+
+from fasthtml.common import Div, Span
 
 
 # ---- Standard daily journalisation ----
@@ -77,12 +80,39 @@ class WebSocketLogHandler(logging.Handler):
         else:
             asyncio.run(self.broadcast(log_entry))
 
-    async def broadcast(self, message):
+    async def broadcast(self, payload: str):
+        message = json.loads(payload)
+        level_color = {
+            'INFO': '#28a745',
+            'WARNING': '#ffc107', 
+            'ERROR': '#dc3545',
+            'DEBUG': '#6c757d'
+        }.get(message['level'], '#333')
+        
+        level_icon = {
+            'INFO': 'ℹ️',
+            'WARNING': '⚠️',
+            'ERROR': '❌',
+            'DEBUG': '🔍'
+        }.get(message['level'], '📝')
+        div = Div(
+            Div(
+                Span(f"{level_icon} {message['level']}", 
+                     style=f"color: {level_color}; font-weight: bold; margin-right: 10px;"),
+                Span(message['timestamp'], 
+                     style="color: #666; font-size: 0.9em; margin-right: 10px;")
+            ),
+            Div(message['message'], 
+                style="margin-top: 5px; padding-left: 10px; border-left: 3px solid #eee;"),
+            style="background: white; padding: 12px; margin-bottom: 8px; border-radius: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); border-left: 4px solid " + level_color
+        )
+
         dead = []
         for ws in self.clients:
             try:
-                await ws.send_text(message)
-            except Exception:
+                await ws.send_text(str(div))
+            except Exception as ex:
+                print(ex)
                 dead.append(ws)
         for ws in dead:
             self.clients.discard(ws)
@@ -105,15 +135,15 @@ class WebSocketLogHandler(logging.Handler):
             self.clients.discard(ws)
 
 ws_log_handler = WebSocketLogHandler()
- 
+
 async def websocket_endpoint(websocket):
     await websocket.accept()
-    
+
     # Only add handlers once
     if not hasattr(ws_log_handler, '_handlers_added'):
         import json
         from uvicorn.logging import AccessFormatter
-        
+
         class JSONFormatter(AccessFormatter):
             def format(self, record):
                 # Let AccessFormatter do its work first to populate client_addr
@@ -133,7 +163,7 @@ async def websocket_endpoint(websocket):
                     "processName": record.processName,
                 }
                 return json.dumps(log_entry)
-        
+
         ws_log_handler.setFormatter(JSONFormatter(
             "%(asctime)s [%(levelname)s] %(client_addr)s: %(message)s"
         ))
@@ -154,5 +184,4 @@ async def websocket_endpoint(websocket):
         )
     finally:
         ws_log_handler.unregister(websocket)
-
 

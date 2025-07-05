@@ -109,10 +109,10 @@ def register(app, rt, prefix=""):
 
                 function connectWebSocket() {
                  ws = new WebSocket(`ws://${location.host}/ws/logs2`);
-                 
+
                  ws.onmessage = (event) => {
                    const message = document.createElement("div");
-                   message.textContent = event.data;
+                   message.innerHTML = event.data;
                    logContainer.appendChild(message);
                    logContainer.scrollTop = logContainer.scrollHeight;
                  };
