@@ -81,7 +81,6 @@ final = start >> snake_heads >> join_snake_heads >> end
 
 
 if __name__ == "__main__":
-    os.environ["RP_ARTIFACTS_STORE"] = os.path.dirname(__file__)
     # Run the DAG
     print("Final result:", execute(final, dag_params=None))
     print(f"execution {os.path.splitext(os.path.basename(__file__))[0]}[{final.exec_id}]")

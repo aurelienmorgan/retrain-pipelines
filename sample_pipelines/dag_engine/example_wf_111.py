@@ -122,7 +122,6 @@ def end(payload: TaskPayload):
 final = start >> outer_parallel >> inner_parallel >> inner_inner_parallel >> merge_inner_inner >> merge_inner >> merge_outer >> end
 
 if __name__ == "__main__":
-    os.environ["RP_ARTIFACTS_STORE"] = os.path.dirname(__file__)
     # Run the DAG
     print("Final result:", execute(final, dag_params=None))
     print(f"execution {os.path.splitext(os.path.basename(__file__))[0]}[{final.exec_id}]")

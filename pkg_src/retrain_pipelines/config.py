@@ -41,7 +41,7 @@ os.environ["RP_METADATASTORE_URL"] = (
 os.environ["RP_ARTIFACTS_STORE"] = (
     os.environ.get(
         "RP_ARTIFACTS_STORE",
-        os.path.expanduser("~/.cache/retrain-pipelines/artifacts/")
+        os.path.expanduser(f"{os.environ['RP_ASSETS_CACHE']}/artifacts/")
     ).rstrip(os.sep) + os.sep
 )
 try:
@@ -57,7 +57,7 @@ except Exception as e:
 os.environ["RP_WEB_SERVER_LOGS"] = (
     os.environ.get(
         "RP_WEB_SERVER_LOGS",
-        os.path.expanduser("~/.cache/retrain-pipelines/logs/web_server/")
+        os.path.expanduser(f"{os.environ['RP_ASSETS_CACHE']}/logs/web_server/")
     ).rstrip(os.sep) + os.sep
 )
 try:
