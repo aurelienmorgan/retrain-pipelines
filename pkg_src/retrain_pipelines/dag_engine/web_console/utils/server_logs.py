@@ -133,6 +133,9 @@ class WebSocketLogHandler(logging.Handler):
                     dead.append(ws)
         for ws in dead:
             self.clients.discard(ws)
+        if len(self.clients) == 1:
+            # if only "exclude_ws" remains (the one being sut-down)
+            delattr(ws_log_handler, '_handlers_added')
 
 ws_log_handler = WebSocketLogHandler()
 
