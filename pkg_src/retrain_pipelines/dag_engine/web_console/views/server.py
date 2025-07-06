@@ -6,12 +6,6 @@ from fasthtml.common import *
 from ..utils.cookies import get_ui_state, set_ui_state
 
 
-#     !! TODO  -  DELETE !!    #
-from collections import deque
-_server_logs = deque(maxlen=100)  
-################################
-
-
 def register(app, rt, prefix=""):
     @rt(f"{prefix}/web_server")
     def server_dashboard(req):
@@ -25,7 +19,7 @@ def register(app, rt, prefix=""):
                 H1("🖥️ Web Server Logs", style="color: #333; margin-bottom: 20px;"),
                 Div(
                     Button("🔄 Refresh Logs", 
-                           hx_get="/web_server/logs", 
+                           hx_get=f"{prefix}/web_server/stream_logs", 
                            hx_target="#log-container",
                            style="margin-bottom: 15px; padding: 8px 16px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;"),
                     Div(
@@ -34,7 +28,7 @@ def register(app, rt, prefix=""):
                           style="margin-bottom: 10px;"),
                         P(f"📅 Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", 
                           style="margin-bottom: 10px;"),
-                        P(f"📈 Total Logs: {len(_server_logs)}", 
+                        P(f"📈 Total Logs: {0}", 
                           style="margin-bottom: 20px;"),
                         style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 20px;"
                     )
@@ -89,45 +83,42 @@ def register(app, rt, prefix=""):
                         """),
                         style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 15px;"
                     ),
-                    Div(id="log-container", hx_get="/web_server/logs", hx_trigger="load, every 5s"),
-                    Div(id="log-container2"),
+                    Div(id="log-container", style="max-height: 600px; overflow-y: auto;"),
                     style="background: #f8f9fa; padding: 15px; border-radius: 8px;"
                 )
             ),
             Script("""
-                document.body.addEventListener('htmx:afterSettle', function(evt) {
-                    var logContainer = document.getElementById('log-items');
-                    if (logContainer) {
-                        logContainer.scrollTop = logContainer.scrollHeight;
-                    }
-                });
-            """),
-            Script("""
-                const logContainer = document.getElementById("log-container2");
+                /* *********************************************
+                * append log item on WebSocket message receive *
+                ********************************************* */
+                const logContainer = document.getElementById("log-container");
 
                 let ws;
 
                 function connectWebSocket() {
-                 ws = new WebSocket(`ws://${location.host}/ws/logs2`);
+                  ws = new WebSocket(`ws://${location.host}/{prefix}ws/stream_logs`);
 
-                 ws.onmessage = (event) => {
-                   const message = document.createElement("div");
-                   message.innerHTML = event.data;
-                   logContainer.appendChild(message);
-                   logContainer.scrollTop = logContainer.scrollHeight;
-                 };
+                  ws.onmessage = (event) => {
+                    const message = document.createElement("div");
+                    message.innerHTML = event.data;
+                    logContainer.appendChild(message);
+                    var autoScrollCheckbox = document.getElementById('autoscroll');
+                    if (logContainer && autoScrollCheckbox && autoScrollCheckbox.checked) {
+                        logContainer.scrollTop = logContainer.scrollHeight;
+                    }
+                  };
 
-                 ws.onopen = () => {
-                   console.log("WebSocket connected.");
-                 };
+                  ws.onopen = () => {
+                    console.log("WebSocket connected.");
+                  };
 
-                 ws.onclose = () => {
-                   console.log("WebSocket disconnected.");
-                 };
+                  ws.onclose = () => {
+                    console.log("WebSocket disconnected.");
+                  };
 
-                 ws.onerror = (err) => {
-                   console.error("WebSocket error:", err);
-                 };
+                  ws.onerror = (err) => {
+                    console.error("WebSocket error:", err);
+                  };
                 }
 
                 // Initial connection
@@ -150,53 +141,60 @@ def register(app, rt, prefix=""):
                 //    }
                 //  }
                 // });
-            """)
+            """.replace("{prefix}", prefix+"/" if prefix > "" else "")
+            ),
+            Script("""
+                /* ******************************************
+                * Cold start of logs list at page load time *
+                ****************************************** */
+                function loadLogs() {
+                    // Get how many log-entries to return from selection list
+                    const linesSelect = document.getElementById('lines');
+                    const count = linesSelect ? parseInt(linesSelect.value, 10) : 0;
+
+                    // form data for the html POST
+                    const formData = new FormData();
+                    formData.append('count', count);
+
+                    fetch('/{prefix}web_server/load_logs', {
+                        method: 'POST',
+                        headers: { "HX-Request": "true" },
+                        body: formData
+                    })
+                    .then(response => response.text())
+                    .then(html => {
+                        const logContainer = document.getElementById("log-container");
+                        logContainer.innerHTML = html;
+                        var autoScrollCheckbox = document.getElementById('autoscroll');
+                        if (logContainer && autoScrollCheckbox && autoScrollCheckbox.checked) {
+                            logContainer.scrollTop = logContainer.scrollHeight;
+                        }
+                    });
+                }
+
+                // Assign to DOMContentLoaded event
+                window.addEventListener('DOMContentLoaded', loadLogs);
+
+                // Assign to selection list change event
+                document.addEventListener('DOMContentLoaded', function() {
+                    const linesSelect = document.getElementById('lines');
+                    if (linesSelect) {
+                        linesSelect.addEventListener('change', function() {
+                            // Clear log-container content
+                            const logContainer = document.getElementById('log-container');
+                            if (logContainer) {
+                                logContainer.innerHTML = '';
+                                // Once cleared, call loadLogs
+                                // (Since .innerHTML = '' is synchronous, we can call immediately)
+                                loadLogs();
+                            }
+                        });
+                    }
+                });
+            """.replace("{prefix}", prefix+"/" if prefix > "" else "")
+            )
         )
 
-
-    @rt(f"{prefix}/web_server/logs")
-    def get_logs():
-        if not _server_logs:
-            return Div(
-                P("📝 No logs available yet...", 
-                  style="text-align: center; color: #666; padding: 20px;")
-            )
-        
-        log_items = []
-        for log in list(_server_logs):  # Show newest last
-            level_color = {
-                'INFO': '#28a745',
-                'WARNING': '#ffc107', 
-                'ERROR': '#dc3545',
-                'DEBUG': '#6c757d'
-            }.get(log['level'], '#333')
-            
-            level_icon = {
-                'INFO': 'ℹ️',
-                'WARNING': '⚠️',
-                'ERROR': '❌',
-                'DEBUG': '🔍'
-            }.get(log['level'], '📝')
-            
-            log_items.append(
-                Div(
-                    Div(
-                        Span(f"{level_icon} {log['level']}", 
-                             style=f"color: {level_color}; font-weight: bold; margin-right: 10px;"),
-                        Span(log['timestamp'], 
-                             style="color: #666; font-size: 0.9em; margin-right: 10px;"),
-                        Span(f"[{log['module']}]", 
-                             style="color: #007bff; font-size: 0.8em; margin-right: 10px;")
-                    ),
-                    Div(log['message'], 
-                        style="margin-top: 5px; padding-left: 10px; border-left: 3px solid #eee;"),
-                    style="background: white; padding: 12px; margin-bottom: 8px; border-radius: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); border-left: 4px solid " + level_color
-                )
-            )
-        
-        return Div(
-            Div(*log_items, id="log-items", style="max-height: 600px; overflow-y: auto;")
-        )
 
     @rt(f"{prefix}/web_server/status", methods=["HEAD"])
     def web_server_status():

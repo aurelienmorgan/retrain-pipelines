@@ -41,7 +41,7 @@ def start_server_once():
 
     # Add the server-logs WebSocket route
     app.router.routes.append(
-        WebSocketRoute("/ws/logs2", websocket_endpoint)
+        WebSocketRoute("/ws/stream_logs", websocket_endpoint)
     )
 
 

@@ -1,8 +1,11 @@
 
+import os
+
 from fasthtml.common import Response, WebSocket, Div
 
 from ..utils.cookies import set_ui_state
-from ..utils.server_logs import WebSocketLogHandler
+from ..utils.server_logs import WebSocketLogHandler, \
+    read_last_access_logs
 
 
 def register(app, rt, prefix=""):
@@ -23,30 +26,26 @@ def register(app, rt, prefix=""):
         return Response("Missing key or view", status=400, headers=headers)
 
 
+    @rt(f"{prefix}/web_server/load_logs", methods=["POST"])
+    async def get_log_entries(request):
+        # Retrieve "count" from form data (POST)
+        form = await request.form()  # <-- Call the form() method
+        count = form.get("count", 50)
+        try:
+            count = int(count)
+        except (ValueError, TypeError):
+            count = 50  # Fallback to 50 if conversion fails
+
+        log_entries = read_last_access_logs(
+            os.path.join(os.environ["RP_WEB_SERVER_LOGS"], "access.log"),
+            count
+        )
+        return log_entries
+
+
     @app.ws(f"{prefix}/ws/test")
     async def on_message(message: str, send):
         # print(f"msg type: {type(message)}, msg: {message}")
         await send(Div('Hello ' + message, id='notifications'))
         await send(Div('Goodbye ' + message, id='notifications'))
-
-
-    @app.ws(f"{prefix}/ws/logs")
-    async def log_socket(websocket: WebSocket):
-        await websocket.accept()
-
-        ws_log_handler = WebSocketLogHandler()
-        ws_log_handler.setFormatter(logging.Formatter(
-            "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-        ))
-        logging.getLogger().addHandler(ws_log_handler)
-
-        ws_log_handler.register(websocket)
-
-        try:
-            while True:
-                await websocket.receive_text()  # Keep connection open (you can ignore input)
-        except Exception:
-            pass
-        finally:
-            ws_log_handler.unregister(websocket)
 

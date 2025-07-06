@@ -1,7 +1,8 @@
 
 from .rich_wave import animate_wave
 
-from .utils import dict_dict_list_get_all_combinations, \
+from .utils import strip_ansi_escape_codes, \
+                   dict_dict_list_get_all_combinations, \
                    flatten_dict, \
                    get_preprocess_data_fct, \
                    system_has_conda, \

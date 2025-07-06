@@ -1,5 +1,4 @@
 
-
 import os
 import sys
 
@@ -8,6 +7,8 @@ import json
 import regex
 import shlex
 import subprocess
+
+from .utils import strip_ansi_escape_codes
 
 
 def _split_preserve_dict(s):
@@ -40,12 +41,6 @@ def _split_preserve_dict(s):
                   for token in tokens]
 
     return tokens
-
-
-def _strip_ansi_escape_codes(text):
-    # Remove ANSI escape codes from text
-    ansi_escape = regex.compile(r'\x1b\[[0-9;]*m')
-    return ansi_escape.sub('', text)
 
 
 def retrain_pipelines_local(
@@ -113,7 +108,7 @@ def retrain_pipelines_local(
         os.close(master_fd)
         os.close(slave_fd)
         process.wait()
-        last_stdout_line = _strip_ansi_escape_codes(
+        last_stdout_line = strip_ansi_escape_codes(
             last_stdout_line.strip())
         print(last_stdout_line)
 

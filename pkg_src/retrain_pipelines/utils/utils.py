@@ -3,8 +3,8 @@ import os
 import sys
 import json
 
-import re
 import stat
+import regex
 import shutil
 import logging
 import tempfile
@@ -27,6 +27,12 @@ from contextlib import contextmanager
 retrain_pipeline_type = os.getenv("retrain_pipeline_type")
 
 logger = logging.getLogger(__name__)
+
+
+def strip_ansi_escape_codes(text):
+    # Remove ANSI escape codes from text
+    ansi_escape = regex.compile(r'\x1b\[[0-9;]*m')
+    return ansi_escape.sub('', text)
 
 
 def _load_and_get_function(
@@ -257,7 +263,7 @@ def _create_requirements_from_conda(
     for line in pip_freeze_output_lines:
         if '==' in line:
             pkg_name, pip_version = line.split('==')
-            if any(re.fullmatch(pattern, pkg_name)
+            if any(regex.fullmatch(pattern, pkg_name)
                    for pattern in exclude
             ):
                 logger.info(f"excluding package '{pkg_name}' "+
@@ -309,7 +315,7 @@ def _create_requirements_from_pip(
     entries = result.stdout.splitlines()
     filtered_entries = [
         entry for entry in entries
-        if not any(re.fullmatch(pattern, re.split(r'(==| @ )', entry)[0])
+        if not any(regex.fullmatch(pattern, re.split(r'(==| @ )', entry)[0])
                    for pattern in exclude)
     ]
     with open(os.path.join(target_dir, 'requirements.txt')
