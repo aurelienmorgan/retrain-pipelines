@@ -96,6 +96,7 @@ logging.getLogger("matplotlib").setLevel(logging.ERROR)
 logging.getLogger("PIL.PngImagePlugin").setLevel(logging.ERROR)
 logging.getLogger("graphviz").setLevel(logging.ERROR)
 logging.getLogger("python_multipart").setLevel(logging.ERROR)
+logging.getLogger("asyncio").setLevel(logging.WARNING)
 
 ################################################################
 

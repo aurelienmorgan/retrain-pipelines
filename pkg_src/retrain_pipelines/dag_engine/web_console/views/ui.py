@@ -23,21 +23,23 @@ def register(app, rt, prefix=""):
             return resp
 
         headers = {"Content-Type": "text/plain"}
-        return Response("Missing key or view", status=400, headers=headers)
+        return Response("Missing key or view",
+                        status=400, headers=headers)
 
 
     @rt(f"{prefix}/web_server/load_logs", methods=["POST"])
     async def get_log_entries(request):
         # Retrieve "count" from form data (POST)
-        form = await request.form()  # <-- Call the form() method
+        form = await request.form()
         count = form.get("count", 50)
         try:
             count = int(count)
         except (ValueError, TypeError):
-            count = 50  # Fallback to 50 if conversion fails
+            count = 50  # if conversion fails
 
         log_entries = read_last_access_logs(
-            os.path.join(os.environ["RP_WEB_SERVER_LOGS"], "access.log"),
+            os.path.join(os.environ["RP_WEB_SERVER_LOGS"],
+                         "access.log"),
             count
         )
         return log_entries

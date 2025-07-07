@@ -3,6 +3,7 @@ from datetime import datetime
 
 from fasthtml.common import *
 
+from .page_template import page_layout
 from ..utils.cookies import get_ui_state, set_ui_state
 
 
@@ -13,7 +14,7 @@ def register(app, rt, prefix=""):
         lines = get_ui_state(req, "server_dashboard", "lines", "100")
         autoscroll = get_ui_state(req, "server_dashboard", "autoscroll", "true") == "true"
 
-        return Titled(
+        return page_layout(title="WebServer Logs", content=Titled(
             "Server Logs",
             Div(
                 H1("🖥️ Web Server Logs", style="color: #333; margin-bottom: 20px;"),
@@ -193,7 +194,7 @@ def register(app, rt, prefix=""):
                 });
             """.replace("{prefix}", prefix+"/" if prefix > "" else "")
             )
-        )
+        ))
 
 
     @rt(f"{prefix}/web_server/status", methods=["HEAD"])
