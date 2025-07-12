@@ -41,7 +41,8 @@ os.environ["RP_METADATASTORE_URL"] = (
 os.environ["RP_ARTIFACTS_STORE"] = (
     os.environ.get(
         "RP_ARTIFACTS_STORE",
-        os.path.expanduser(f"{os.environ['RP_ASSETS_CACHE']}/artifacts/")
+        os.path.join(os.path.expanduser(os.environ["RP_ASSETS_CACHE"]),
+                     "artifacts")
     ).rstrip(os.sep) + os.sep
 )
 try:
@@ -57,7 +58,8 @@ except Exception as e:
 os.environ["RP_WEB_SERVER_LOGS"] = (
     os.environ.get(
         "RP_WEB_SERVER_LOGS",
-        os.path.expanduser(f"{os.environ['RP_ASSETS_CACHE']}/logs/web_server/")
+        os.path.join(os.path.expanduser(os.environ["RP_ASSETS_CACHE"]),
+                     "logs", "web_server")
     ).rstrip(os.sep) + os.sep
 )
 try:
@@ -97,6 +99,7 @@ logging.getLogger("PIL.PngImagePlugin").setLevel(logging.ERROR)
 logging.getLogger("graphviz").setLevel(logging.ERROR)
 logging.getLogger("python_multipart").setLevel(logging.ERROR)
 logging.getLogger("asyncio").setLevel(logging.WARNING)
+logging.getLogger("tzlocal").setLevel(logging.ERROR)
 
 ################################################################
 

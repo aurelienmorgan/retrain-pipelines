@@ -12,9 +12,10 @@ from collections import deque
 from fasthtml.common import fast_app
 from starlette.routing import WebSocketRoute
 
+from ...utils.rich_logging import framed_rich_log_str
 from .utils.server_logs import get_log_config, \
-    websocket_endpoint
-from .views import home, server, ui
+    get_log_websocket_endpoint
+from .views import home, server
 from . import APP_STATIC_DIR
 
 
@@ -29,21 +30,25 @@ def start_server_once():
         print("✅ Server already running.")
         return
 
-    logging.getLogger().info("\N{rocket} Starting server...")
-    logging.getLogger().info(f"logs going to {os.environ['RP_WEB_SERVER_LOGS']}")
+    logger = logging.getLogger()
+    logger.info("\N{rocket} Starting server...")
+    logger.info(f"logs going to {os.environ['RP_WEB_SERVER_LOGS']}")
 
     # Create FastHTML app and route
-    app, rt = fast_app(exts="ws", static_path=APP_STATIC_DIR)
-    # from fasthtml import FastHTML
-    # app = FastHTML(exts="ws")
-    # rt = app.route
+    # app, rt = fast_app(exts="ws", static_path=APP_STATIC_DIR)
+    from fasthtml import FastHTML
+    app = FastHTML(exts="ws")
+    rt = app.route
 
-    for view in [home, server, ui]:
+    for view in [home, server]:
         view.register(app, rt)
 
     # Add the server-logs WebSocket route
+    web_socket_endpoint_route = "/ws/stream_logs"
     app.router.routes.append(
-        WebSocketRoute("/ws/stream_logs", websocket_endpoint)
+        WebSocketRoute(
+            web_socket_endpoint_route,
+            get_log_websocket_endpoint(web_socket_endpoint_route))
     )
 
 
@@ -57,19 +62,29 @@ def start_server_once():
             methods = route.methods
 
         path = route.path
-        handle_name = getattr(route.handle, '__name__', str(route.handle))
+        handle_name = getattr(
+            route.handle, '__name__', str(route.handle)
+        )
 
-        if 'WS' in methods:
+        if "WS" in methods:
             ws_routes.append((path, handle_name))
         else:
             http_routes.append((methods, path, handle_name))
 
-    print("\n--- Registered HTTP Routes ---")
+    logger.info("\n--- Registered HTTP Routes ---")
+    registered_routes_str = ""
     for methods, path, handle in http_routes:
-        print(f"{methods} {path} -> {handle}")
-    print("--- Registered WebSocket Endpoints ---")
+        registered_routes_str += "\n" + \
+            f"{methods} {path} -> {handle}"
+    logger.info(framed_rich_log_str(registered_routes_str[1:]))
+    logger.info("--- Registered WebSocket Endpoints ---")
+    registered_routes_str = ""
     for path, handle in ws_routes:
-        print(f"WS {path} -> {handle}")
+        registered_routes_str += "\n" + \
+            f"['ws'] {path} -> {handle}"
+    logger.info(framed_rich_log_str(registered_routes_str[1:]))
+    logger.info("--- Registered ServerSideEvent Endpoints ---")
+    logger.info(framed_rich_log_str(" "))
 
     # Create the ASGI server (uvicorn.Server)
     config = uvicorn.Config(
@@ -90,7 +105,9 @@ def start_server_once():
     if display_host == "0.0.0.0":
         display_host = "localhost"
     server_url = f"http://{display_host}:{config.port}"
-    logging.getLogger().info(f"\N{glowing star} Server started at {server_url}")
+    logger.info(
+        f"\N{glowing star} Server started at {server_url}"
+    )
 
 
 def shutdown_server():

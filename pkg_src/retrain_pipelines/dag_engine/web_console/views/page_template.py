@@ -10,14 +10,16 @@ def header(current_page="/"):
     nav_items = [
         ("Home", "/"),
         ("About", "/about"),
-        ("Contact", "/contact")
+        ("Logs", "/web_server")
     ]
     nav_links = []
     for title, path in nav_items:
         is_current = current_page == path
         link_style = (
             "color: white; margin-left: 16px; text-decoration: none;"
-            + (" font-weight: bold; text-decoration: underline;" if is_current else "")
+            + (" font-weight: bold; text-decoration: underline;"
+               if is_current
+               else "")
         )
         nav_links.append(
             A(title, href=path, style=link_style)
@@ -26,19 +28,28 @@ def header(current_page="/"):
     # Left: image + nav, in normal document flow (not fixed, not floating)
     left = Div(
         A(
-            Img(src="logo.png", alt="Logo", style="height:40px; vertical-align: middle;"),
+            Img(
+                src="pkg_logo_small.png", alt="retrain-pipelines",
+                style="height:40px; vertical-align: middle;"
+            ),
             href="/",
             style="display: inline-block; vertical-align: middle;"
         ),
         *nav_links,
-        style="position: absolute; top: 12px; left: 16px; z-index: 200; display: flex; align-items: center;"
+        style=(
+            "position: absolute; top: 12px; left: 16px; "
+            "z-index: 200; display: flex; align-items: center;"
+        )
     )
 
     # Right: fixed green circle
     right = Div(
         Div(
             "",  # Just the circle
-            style="width: 32px; height: 32px; background: #27c93f; border-radius: 50%;"
+            style=(
+                "width: 32px; height: 32px; background: #27c93f; "
+                "border-radius: 50%;"
+            )
         ),
         style=(
             "position: fixed; top: 12px; right: 24px; z-index: 200; "
@@ -79,7 +90,6 @@ def footer():
                         target="_blank",
                         style="text-decoration: none;"
                     ),
-                    " \u00A0 - \u00A0 Open\u00A0Source\u00A0FTW\u00A0!",
                     style="color: white;"
                 )
             ),
@@ -90,20 +100,87 @@ def footer():
             ),
             style=(
                 "margin-top: 8px; margin-bottom: 8px; "
-                "display: flex; justify-content: space-between; align-items: center;"
+                "display: flex; justify-content: space-between; "
+                "align-items: center;"
             )
         ),
         cls="footer"
     )
 
 
-footer_css = Style("""
+page_template_css = Style("""
 html {
     scroll-behavior: smooth;
 }
 
 body {
     background-color: #4d0066;
+    font-family: 'Roboto', sans-serif;
+    font-size: 0.95rem;
+}
+
+/* Webkit browsers (Chrome, Safari, Edge) */
+::-webkit-scrollbar {
+    height: 12px;
+    width: 12px;
+}
+::-webkit-scrollbar-track {
+    background: #f1f1f1;
+    border: 2px solid #FFFFCC;
+}
+::-webkit-scrollbar-thumb {
+    background-color: #4d0066;
+    border: 2px solid #FFFFCC80;
+}
+/* Firefox */
+html {
+    scrollbar-width: thin;
+    scrollbar-color: #4d0066 #FFFFCC80;
+}
+
+input.gcheckbox {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 6px;
+  background: linear-gradient(135deg, rgba(255,255,255,0.8), rgba(230,240,255,0.6));
+  border: 1px solid rgba(180,200,230,0.5);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1), inset 0 1px 0 rgba(255,255,255,0.7);
+  backdrop-filter: blur(1.5px);
+  cursor: pointer;
+  display: inline-block;
+  position: relative;
+  margin: 0 2px 0 2px; align-self: center;
+}
+input.gcheckbox::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  text-align: center;
+  font-size: 14px;
+  font-weight: bold;
+  color: #4d0066;
+  pointer-events: none;
+  line-height: 18px;
+}
+input.gcheckbox:checked::before {
+  content: "✓";
+}
+
+.glass-engraved {
+  font-size: 1.1em;
+  color: rgba(154,102,179,0.3);
+  letter-spacing: 0.1em;
+  text-shadow:
+    0.05em 0.05em 0.1em rgba(0,0,0,0.6),
+   -0.05em -0.05em 0.05em rgba(255,255,255,0.8),
+    0 0.1em 0.3em rgba(0,0,0,0.3);
+  opacity: 0.3;
 }
 
 .shiny-silver-text {
@@ -154,15 +231,29 @@ def page_layout(title, content, current_page="/"):
     return Html(
         Head(
             Title(title or "retrain-pipelines"),
-            Meta(name="viewport", content="width=device-width, initial-scale=1.0"),
-            Meta(name="description", content=f"{title} - MyWebsite built with FastHTML"),
+            Meta(
+                name="viewport",
+                content="width=device-width, initial-scale=1.0"
+            ),
+            Meta(
+                name="description",
+                content=f"{title} - WebConsole built with FastHTML"
+            ),
+            Link(
+                rel="stylesheet",
+                href="https://fonts.googleapis.com/css2?family=Lobster&display=swap"
+            ),
+            Link(
+                rel="stylesheet",
+                href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap"
+            ),
             Script(src="https://cdn.tailwindcss.com"),
-            footer_css
+            page_template_css
         ),
-        Br(),
         Body(
             header(current_page),
             Main(
+                Br(),
                 Div(content, cls="container mx-auto px-4 py-8"),
                 cls="min-h-screen"
             ),

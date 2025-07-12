@@ -64,14 +64,13 @@ dependencies = [
     "numpy>=1.17.3,<2",
     "regex>=2022.10.31",
     "rich>=14.0.0",
-    "alembic>=1.16.2",
-
-    "colorama>=0.4"
+    "alembic>=1.16.2"
 ]
 [project.optional-dependencies]
 local = [
     "uvicorn>=0.34.0",
-    "python-fasthtml>=0.12.21"
+    "python-fasthtml>=0.12.21",
+    "tzlocal>=5.3.1"
 ]
 dynamic = ["version"]
 
