@@ -1,9 +1,12 @@
 
+import os
 import json
 
 from datetime import datetime
 
-from fasthtml.common import *
+from fasthtml.common import Response, \
+    Div, H3, Span, Select, Input, Option, \
+    Script
 
 from .page_template import page_layout
 from ..utils.cookies import get_ui_state
@@ -11,6 +14,10 @@ from ..utils.server_logs import read_last_access_logs
 
 
 def register(app, rt, prefix=""):
+    @rt(f"{prefix}/web_server/heartbeat", methods=["GET"])
+    async def heartbeat(request):
+        return Response(status_code=200)
+
     @rt(f"{prefix}/web_server/load_logs", methods=["POST"])
     async def get_log_entries(request):
         # Retrieve "count" from form data (POST)
@@ -30,7 +37,7 @@ def register(app, rt, prefix=""):
         )
         return log_entries
 
-    @rt(f"{prefix}/web_server")
+    @rt(f"{prefix}/web_server", methods=["GET"])
     def server_dashboard(req):
         # Get stored UI state or defaults
         lines = get_ui_state(
@@ -114,7 +121,8 @@ def register(app, rt, prefix=""):
                                 spellcheck="false",
                                 style=(
                                     "height: 18px; min-width: 0; width: 0; "
-                                    "transition: width 0.4s ease, padding 0.4s ease, opacity 0.4s ease; "
+                                    "transition: width 0.4s ease, padding 0.4s ease, "
+                                    "   opacity 0.4s ease; "
                                     "transform-origin: right; box-sizing: border-box; "
                                     "margin-left: 5px; margin-right: 8px; "
                                     "padding: 0 6px; border: 1px solid rgba(180,200,230,0.5); "
@@ -124,7 +132,7 @@ def register(app, rt, prefix=""):
                                         "rgba(200,220,255,0.6) 100%); "
                                     "box-shadow: 0 1px 3px rgba(0,0,0,0.06), "
                                         "inset 0 1px 0 rgba(255,255,255,0.7); "
-                                    "backdrop-filter: blur(1.5px); outline: none; opacity: 1;"
+                                    "backdrop-filter: blur(1.5px); outline: none; opacity: 0;"
                                 ),
                                 _oninput="""
                                     this.style.fontStyle = 'italic';
@@ -177,7 +185,9 @@ def register(app, rt, prefix=""):
                                             setTimeout(() => {
                                               errorDiv.style.opacity = '0';
                                               setTimeout(() => {
-                                                if (errorDiv.parentNode) errorDiv.parentNode.removeChild(errorDiv);
+                                                if (errorDiv.parentNode) {
+                                                    errorDiv.parentNode.removeChild(errorDiv);
+                                                }
                                               }, 1000);
                                             }, 6000);
                                         }
@@ -216,15 +226,16 @@ def register(app, rt, prefix=""):
                             """),
                             Script("""// converts boolean-logic string into regex patter
                                 // e.g. `OR(AND(NOT("cool"), NOT ("man")), AND("really", "not"))`
-                                //      gives `^(?:(?:(?!.*cool)(?!.*man))|(?:(?=.*really)(?=.*not))).*$`
+                                //      gives `^(?:(?!.*cool)(?!.*man)|(?=.*really)(?=.*not)).*$`
                                 // e.g. `AND(NOT("hello Kitty"), "cat")`
-                                //      gives `^(?:(?!.*hello Kitty)(?=.*cat)).*$`
+                                //      gives `^(?!.*hello Kitty)(?=.*cat).*$`
+                                // e.g. `OR("Mario", "Luigi")`
+                                //      gives `^(?:(?=.*Mario)|(?=.*Luigi)).*$`
                                 function parseToRegex(input) {
                                     function escapeRegex(str) {
                                         return str.replace(/[.*+?^${}()|[\]\\\]/g, '\\\$&');
                                     }
 
-                                    // Remove spaces OUTSIDE of quotes only
                                     function stripSpacesOutsideQuotes(str) {
                                         let out = '';
                                         let inQuotes = false;
@@ -238,105 +249,131 @@ def register(app, rt, prefix=""):
 
                                     function parse(expr) {
                                         expr = stripSpacesOutsideQuotes(expr);
-                                        let parenDepth = 0;
-                                        function parseRec(i) {
+                                        let i = 0, parenDepth = 0;
+                                        function parseRec() {
                                             let tokens = [];
+                                            let expectArg = false;
                                             while (i < expr.length) {
                                                 if (expr[i] === '"') {
                                                     let j = i + 1;
                                                     while (j < expr.length && expr[j] !== '"') j++;
-                                                    if (j >= expr.length) {
-                                                        throw new Error(
-                                                            'Unclosed quoted string at position ' + i);
-                                                    }
+                                                    if (j >= expr.length) throw new Error(
+                                                        'Unclosed quoted string at position ' + i);
                                                     tokens.push(expr.slice(i + 1, j));
                                                     i = j + 1;
+                                                    expectArg = false;
                                                 } else if (expr.startsWith('AND(', i)) {
                                                     parenDepth++;
-                                                    let [sub, ni] = parseRec(i + 4);
-                                                    tokens.push({ op: 'AND', args: sub });
-                                                    i = ni;
+                                                    i += 4;
+                                                    let args = parseRec();
+                                                    if (!args.length) throw new Error(
+                                                        'Operator "AND" requires at least one argument');
+                                                    tokens.push({ op: 'AND', args });
+                                                    expectArg = false;
                                                 } else if (expr.startsWith('OR(', i)) {
                                                     parenDepth++;
-                                                    let [sub, ni] = parseRec(i + 3);
-                                                    tokens.push({ op: 'OR', args: sub });
-                                                    i = ni;
+                                                    i += 3;
+                                                    let args = parseRec();
+                                                    if (!args.length) throw new Error(
+                                                        'Operator "OR" requires at least one argument');
+                                                    tokens.push({ op: 'OR', args });
+                                                    expectArg = false;
                                                 } else if (expr.startsWith('NOT(', i)) {
                                                     parenDepth++;
-                                                    let [sub, ni] = parseRec(i + 4);
-                                                    tokens.push({ op: 'NOT', args: sub });
-                                                    i = ni;
+                                                    i += 4;
+                                                    let args = parseRec();
+                                                    if (args.length !== 1) throw new Error(
+                                                        'Operator "NOT" requires exactly one argument');
+                                                    tokens.push({ op: 'NOT', args });
+                                                    expectArg = false;
                                                 } else if (expr[i] === ',') {
+                                                    if (expectArg) throw new Error(
+                                                        'Missing argument before comma at position ' + i);
                                                     i++;
+                                                    expectArg = true;
                                                 } else if (expr[i] === ')') {
                                                     parenDepth--;
-                                                    if (parenDepth < 0) {
-                                                        throw new Error(
-                                                            'Unmatched closing parenthesis at position ' + i);
-                                                    }
-                                                    return [tokens, i + 1];
+                                                    if (parenDepth < 0) throw new Error(
+                                                        'Unmatched closing parenthesis at position ' + i);
+                                                    i++;
+                                                    return tokens;
                                                 } else if (expr[i] === '(') {
-                                                    throw new Error('Unexpected "(" at position ' + i);
+                                                    throw new Error(
+                                                        'Unexpected "(" at position ' + i);
                                                 } else {
                                                     i++;
                                                 }
                                             }
-                                            return [tokens, i];
+                                            if (parenDepth > 0) throw new Error(
+                                                'Unmatched opening parenthesis');
+                                            return tokens;
                                         }
-
-                                        const [result, pos] = parseRec(0);
-                                        if (parenDepth > 0) {
-                                            throw new Error('Unmatched opening parenthesis');
-                                        }
-                                        if (parenDepth < 0) {
-                                            throw new Error('Unmatched closing parenthesis');
-                                        }
-                                        if (pos !== expr.length) {
-                                            throw new Error(
-                                                'Unexpected characters after parsing at position ' + pos);
-                                        }
-                                        return result[0];
+                                        const result = parseRec();
+                                        if (parenDepth > 0) throw new Error('Unmatched opening parenthesis');
+                                        if (parenDepth < 0) throw new Error('Unmatched closing parenthesis');
+                                        if (i !== expr.length) throw new Error('Unexpected characters after parsing at position ' + i);
+                                        return result;
                                     }
 
                                     function toRegex(node) {
-                                    if (typeof node === 'undefined') {
-                                        throw new Error('Missing argument in operator');
-                                    }
-                                    if (typeof node === 'string') {
-                                        if (!node.length) throw new Error(
-                                            'Empty quoted string is not allowed');
-                                    return escapeRegex(node);
-                                    }
-                                    if (!node.args || !Array.isArray(node.args) || node.args.length === 0) {
-                                        throw new Error(
-                                            `Operator "${node.op}" requires at least one argument`);
-                                    }
-                                    if (node.op === 'AND') {
-                                        const notArgs = node.args.filter(a => a && a.op === 'NOT');
-                                        const posArgs = node.args.filter(a => !a || a.op !== 'NOT');
-                                        let parts = [];
-                                        for (const na of notArgs) {
-                                            parts.push(`(?!.*${toRegex(na.args[0])})`);
+                                        if (typeof node === 'string') {
+                                            if (!node.length) throw new Error(
+                                                'Empty quoted string is not allowed');
+                                            return `(?=.*${escapeRegex(node)})`;
                                         }
-                                        for (const pa of posArgs) {
-                                            parts.push(`(?=.*${toRegex(pa)})`);
+                                        if (!node.args || !Array.isArray(node.args)) {
+                                            throw new Error('Malformed node');
                                         }
-                                        return parts.join('');
-                                    }
-                                    if (node.op === 'OR') {
-                                        return node.args.map(arg => `(?:${toRegex(arg)})`).join('|');
-                                    }
-                                    if (node.op === 'NOT') {
-                                        if (node.args.length !== 1) {
-                                            throw new Error('Operator "NOT" requires exactly one argument');
+                                        if (node.op === 'AND') {
+                                            if (node.args.length === 0) throw new Error(
+                                                'Operator "AND" requires at least one argument');
+                                            const notArgs = node.args.filter(a => a && a.op === 'NOT');
+                                            const posArgs = node.args.filter(a => !a || a.op !== 'NOT');
+                                            let parts = [];
+                                            for (const na of notArgs) {
+                                                let inner = na.args[0];
+                                                if (typeof inner === 'string') {
+                                                    parts.push(`(?!.*${escapeRegex(inner)})`);
+                                                } else {
+                                                    parts.push(`(?!.*${toRegex(inner)})`);
+                                                }
+                                            }
+                                            for (const pa of posArgs) {
+                                                parts.push(toRegex(pa));
+                                            }
+                                            return parts.join('');
                                         }
-                                        return `(?!.*${toRegex(node.args[0])})`;
-                                    }
+                                        if (node.op === 'OR') {
+                                            if (node.args.length === 0) throw new Error(
+                                                'Operator "OR" requires at least one argument');
+                                            return `(?:${node.args.map(arg => toRegex(arg)).join('|')})`;
+                                        }
+                                        if (node.op === 'NOT') {
+                                            if (node.args.length !== 1) throw new Error(
+                                                'Operator "NOT" requires exactly one argument');
+                                            let inner = node.args[0];
+                                            if (typeof inner === 'string') {
+                                                return `(?!.*${escapeRegex(inner)})`;
+                                            } else {
+                                                return `(?!.*${toRegex(inner)})`;
+                                            }
+                                        }
                                         throw new Error('Unknown operator: ' + node.op);
                                     }
 
+                                    // --- Handle root as array or node ---
                                     const parsed = parse(input);
-                                    return `^(?:${toRegex(parsed)}).*$`;
+                                    let pattern;
+                                    if (parsed.length === 1 && parsed[0] && parsed[0].op) {
+                                        pattern = toRegex(parsed[0]);
+                                    } else if (parsed.length > 1) {
+                                        pattern = toRegex({ op: 'AND', args: parsed });
+                                    } else if (parsed.length === 1 && typeof parsed[0] === 'string') {
+                                        pattern = toRegex(parsed[0]);
+                                    } else {
+                                        throw new Error('Empty expression');
+                                    }
+                                    return `^${pattern}.*$`;
                                 }
                             """),
                             Div(
@@ -431,10 +468,7 @@ def register(app, rt, prefix=""):
                                         expandButton.textContent = '+';
                                         loadLogs();
                                     }
-                                    setTimeout(() => {
-                                        // Wait for anim-complete and property-update
-                                        updateExpandCookie();
-                                    }, 1000);
+                                    updateExpandCookie();
                                 }
 
                                 window.addEventListener('resize', function() {
@@ -515,7 +549,8 @@ def register(app, rt, prefix=""):
                             // Function that will be called on expansion event
                             const textfield = document.getElementById("expand-textfield")
                             function updateExpandCookie() {{
-                                const isExpanded = textfield.offsetWidth > 0;
+                                const expandButton = document.getElementById('expand-button');
+                                const isExpanded = expandButton.textContent === '-';
                                 setCookie(COOKIE_PREFIX + textfield.id, isExpanded);
                             }}
                             // Set textfield component its width at load time
