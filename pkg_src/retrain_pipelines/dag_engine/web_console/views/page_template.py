@@ -45,16 +45,40 @@ def header(current_page="/"):
     # Right: fixed green circle
     right = Div(
         Div(
-            "",  # Just the circle
+            "",  # Just the status indicator
+            id="status-circle",
             style=(
                 "width: 32px; height: 32px; background: #27c93f; "
                 "border-radius: 50%;"
             )
         ),
+        Script("""
+            document.addEventListener('htmx:sendError', function(event) {
+                if (event.detail.elt.id === 'status-circle-container') {
+                    document.getElementById('status-circle').style.background = '#ff4444';
+                    const container = event.detail.elt;
+                    container.setAttribute('hx-trigger', 'load, every 2s');
+                    htmx.process(container);
+                }
+            });
+
+            document.addEventListener('htmx:afterRequest', function(event) {
+                if (event.detail.elt.id === 'status-circle-container' && event.detail.xhr.status === 200) {
+                    document.getElementById('status-circle').style.background = '#27c93f';
+                    const container = event.detail.elt;
+                    container.setAttribute('hx-trigger', 'load, every 5s');
+                    htmx.process(container);
+                }
+            });
+        """),
+        id="status-circle-container",
         style=(
             "position: fixed; top: 12px; right: 24px; z-index: 200; "
             "display: flex; align-items: center;"
-        )
+        ),
+        hx_get="/web_server/heartbeat",
+        hx_trigger="load, every 5s",
+        hx_swap="none"
     )
 
     return (left, right)
@@ -248,12 +272,18 @@ def page_layout(title, content, current_page="/"):
                 href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap"
             ),
             Script(src="https://cdn.tailwindcss.com"),
+            Script(src="https://unpkg.com/htmx.org@1.9.2"),
             page_template_css
         ),
         Body(
             header(current_page),
             Main(
                 Br(),
+                # Script("""//htmlx debugging
+                    # htmx.logger = function (elt, event, data) {
+                    # console.log("HTMX event:", event, data);
+                    # }
+                # """),
                 Div(content, cls="container mx-auto px-4 py-8"),
                 cls="min-h-screen"
             ),
