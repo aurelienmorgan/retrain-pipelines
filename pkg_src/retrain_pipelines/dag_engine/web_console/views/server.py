@@ -113,22 +113,23 @@ def register(app, rt, prefix=""):
                                 value=logic_filter,
                                 spellcheck="false",
                                 style=(
-                                    "min-width: 0; width: 0; "
-                                    "transition: width 0.4s ease, padding 0.4s ease, "
-                                        "opacity 0.4s ease; "
+                                    "height: 18px; min-width: 0; width: 0; "
+                                    "transition: width 0.4s ease, padding 0.4s ease, opacity 0.4s ease; "
                                     "transform-origin: right; box-sizing: border-box; "
                                     "margin-left: 5px; margin-right: 8px; "
-                                    "padding: 0; border: none; opacity: 0; "
-                                    "font-size: 13px; color: #4d0066; "
+                                    "padding: 0 6px; border: 1px solid rgba(180,200,230,0.5); "
+                                    "border-radius: 6px; font-size: 13px; color: #4d0066; "
                                     "background: linear-gradient(135deg, "
-                                        "rgba(255,255,255,0.8) 0%, "
-                                            "rgba(230,240,255,0.6) 100%); "
-                                    "border-radius: 6px; "
+                                        "rgba(230,240,255,0.7) 0%, "
+                                        "rgba(200,220,255,0.6) 100%); "
                                     "box-shadow: 0 1px 3px rgba(0,0,0,0.06), "
                                         "inset 0 1px 0 rgba(255,255,255,0.7); "
-                                    "backdrop-filter: blur(1.5px); "
-                                    "outline: none;"
+                                    "backdrop-filter: blur(1.5px); outline: none; opacity: 1;"
                                 ),
+                                _oninput="""
+                                    this.style.fontStyle = 'italic';
+                                    this.style.color = 'black';
+                                """,
                                 _onkeydown=("""
                                     if (event.key === 'Enter') {
                                         try {
@@ -138,10 +139,14 @@ def register(app, rt, prefix=""):
                                             }
                                             const regex_pattern = parseToRegex(this.value);
                                             document.getElementById('regex-filter').value = regex_pattern;
+                                            this.style.fontStyle = 'normal';
+                                            this.style.color = '#4d0066';
                                             let errorDiv = document.getElementById('regex-error-tooltip');
                                             if (errorDiv) errorDiv.remove();
                                         } catch (error) {
                                             document.getElementById('regex-filter').value = "";
+                                            this.style.fontStyle = 'italic';
+                                            this.style.color = 'red';
                                             // Format error tooltip
                                             let errorDiv = document.getElementById('regex-error-tooltip');
                                             if (!errorDiv) {
