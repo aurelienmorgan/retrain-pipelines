@@ -43,8 +43,10 @@ def start_server_once():
     for view in [home, server]:
         view.register(app, rt)
 
-    # Add the server-logs WebSocket route
-    web_socket_endpoint_route = "/ws/stream_logs"
+    # Add the server-logs WebSocket route.
+    # Route of a non-standard FastHTML websocket,
+    # streams from logging.Handler
+    web_socket_endpoint_route = "/web_server/stream_logs"
     app.router.routes.append(
         WebSocketRoute(
             web_socket_endpoint_route,

@@ -9,7 +9,8 @@ from retrain_pipelines import __version__
 def header(current_page="/"):
     nav_items = [
         ("Home", "/"),
-        ("About", "/about"),
+        ("Not-Found", "/not-exists"),
+        ("Error", "/a_page_in_error"),
         ("Logs", "/web_server")
     ]
     nav_links = []
@@ -45,17 +46,146 @@ def header(current_page="/"):
     # Right: fixed green circle
     right = Div(
         Div(
-            "",  # Just the status indicator
+            "",  # Status indicator
             id="status-circle",
-            style=(
-                "width: 32px; height: 32px; background: #27c93f; "
-                "border-radius: 50%;"
-            )
+            cls="connected"
         ),
+        Style("""
+            @keyframes pulse {
+                0% { transform: scale(1); opacity: 1; }
+                50% { transform: scale(1.5); opacity: 0.6; }
+                100% { transform: scale(1); opacity: 1; }
+            }
+
+            #status-circle {
+                width: 32px;
+                height: 32px;
+                border-radius: 50%;
+                transition: background 0.3s ease;
+                box-shadow:
+                    inset -2px -2px 5px rgba(0,0,0,0.2),
+                    inset 2px 2px 5px rgba(255,255,255,0.1),
+                    0 2px 6px rgba(0,0,0,0.2);
+            }
+
+            .connected {
+                background: radial-gradient(circle at 30% 30%, #3cff76, #27c93f);
+            }
+
+            .disconnected {
+                background: radial-gradient(circle at 30% 30%, #ff8888, #ff4444);
+            }
+
+            .pulsing {
+                animation: pulse 1.2s infinite;
+            }
+
+            @keyframes swirl {
+                0% { transform: rotate(0deg); }
+                100% { transform: rotate(360deg); }
+            }
+            #status-circle.swirling {
+                animation: swirl 1s linear infinite;
+            }
+
+            @keyframes dashSpin {
+                0% { transform: rotate(0deg); }
+                100% { transform: rotate(360deg); }
+            }
+            #status-circle.spinning {
+                border: 2px dashed #ffa500;
+                animation: dashSpin 1s linear infinite;
+            }
+
+            @keyframes glowPulseOrange {
+                0%, 100% { box-shadow: 0 0 8px #ffd700; }
+                50% { box-shadow: 0 0 20px #ffcc00; }
+            }
+            #status-circle.orangePulsing {
+                background: radial-gradient(circle at 30% 30%, #ffe066, #ffae00);
+                animation: glowPulseOrange 1s ease-in-out infinite;
+            }
+
+            /* squishy ball */
+            @keyframes jelly {
+                  0%, 100% { transform: scale(1, 1); }
+                  25% { transform: scale(1.2, 0.8); }
+                  50% { transform: scale(0.8, 1.2); }
+                  75% { transform: scale(1.1, 0.9); }
+            }
+            .squishing {
+                transition: background 0.3s ease;
+                box-shadow:
+                  inset -2px -2px 5px rgba(0,0,0,0.2),
+                  inset 2px 2px 5px rgba(255,255,255,0.1),
+                  0 2px 6px rgba(0,0,0,0.2);
+
+                animation: jelly 0.8s infinite;
+            }
+
+            /* orange orbiting ball */
+            .orbited::before {
+                content: '';
+                position: absolute;
+                width: 8px;
+                height: 8px;
+                background: #ffae00;
+                border-radius: 50%;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%, -50%) rotate(0deg) translateX(20px);
+                animation: orbit 1.2s linear infinite;
+            }
+            @keyframes orbit {
+                0% { transform: translate(-50%, -50%) rotate(0deg) translateX(20px); }
+                100% { transform: translate(-50%, -50%) rotate(360deg) translateX(20px); }
+            }
+            .orbited {
+                position: relative;
+            }
+
+            /* pulsar bursting */
+            .bursting::after {
+                content: '';
+                position: absolute;
+                top: 50%;
+                left: 50%;
+                width: 100%;
+                height: 100%;
+                border: 2px solid rgba(255, 94, 0, 0.85);
+                border-radius: 50%;
+                transform: translate(-50%, -50%) scale(1);
+                animation: violentPing 0.8s cubic-bezier(0.2, 0.6, 0.4, 1) infinite;
+                box-shadow: 0 0 20px rgba(255, 94, 0, 0.6);
+            }
+            @keyframes violentPing {
+                0% {
+                    transform: translate(-50%, -50%) scale(0.6);
+                    opacity: 1;
+                }
+                70% {
+                    transform: translate(-50%, -50%) scale(2.2);
+                    opacity: 0.4;
+                }
+                100% {
+                    transform: translate(-50%, -50%) scale(2.5);
+                    opacity: 0;
+                }
+            }
+            .bursting {
+                position: relative;
+                box-shadow:
+                    0 0 12px rgba(255, 102, 0, 0.6),
+                    inset 0 0 6px rgba(255, 200, 0, 0.4);
+            }
+        """),
         Script("""
             document.addEventListener('htmx:sendError', function(event) {
                 if (event.detail.elt.id === 'status-circle-container') {
-                    document.getElementById('status-circle').style.background = '#ff4444';
+                    const circle = document.getElementById('status-circle');
+                    circle.classList.remove('connected');
+                    circle.classList.add('disconnected', 'pulsing');
+
                     const container = event.detail.elt;
                     container.setAttribute('hx-trigger', 'load, every 2s');
                     htmx.process(container);
@@ -64,7 +194,10 @@ def header(current_page="/"):
 
             document.addEventListener('htmx:afterRequest', function(event) {
                 if (event.detail.elt.id === 'status-circle-container' && event.detail.xhr.status === 200) {
-                    document.getElementById('status-circle').style.background = '#27c93f';
+                    const circle = document.getElementById('status-circle');
+                    circle.classList.remove('disconnected', 'pulsing');
+                    circle.classList.add('connected');
+
                     const container = event.detail.elt;
                     container.setAttribute('hx-trigger', 'load, every 5s');
                     htmx.process(container);

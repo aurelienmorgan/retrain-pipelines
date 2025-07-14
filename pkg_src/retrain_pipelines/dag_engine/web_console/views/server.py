@@ -18,6 +18,7 @@ def register(app, rt, prefix=""):
     async def heartbeat(request):
         return Response(status_code=200)
 
+
     @rt(f"{prefix}/web_server/load_logs", methods=["POST"])
     async def get_log_entries(request):
         # Retrieve "count" from form data (POST)
@@ -36,6 +37,7 @@ def register(app, rt, prefix=""):
             regex_filter=regex_filter
         )
         return log_entries
+
 
     @rt(f"{prefix}/web_server", methods=["GET"])
     def server_dashboard(req):
@@ -861,8 +863,25 @@ def register(app, rt, prefix=""):
                     const logContainer = document.getElementById("log-container");
                     let ws;
 
-                    function connectWebSocket() {
-                        ws = new WebSocket(`ws://${location.host}/{prefix}ws/stream_logs`);
+                    async function connectWebSocket() {
+                        let ws;
+                        const ws_url = `ws://${location.host}/{prefix}web_server/stream_logs`;
+                        // start and allow for restart on connection lost
+                        while (true) {
+                            try {
+                                ws = new WebSocket(ws_url);
+                                // Wait for the connection to open
+                                await new Promise((resolve, reject) => {
+                                    ws.onopen = resolve;
+                                    ws.onerror = reject;
+                                });
+                                // Connection established, exit loop
+                                break;
+                            } catch (e) {
+                                // Connection failed, wait before retrying
+                                await new Promise(res => setTimeout(res, 3000));
+                            }
+                        }
 
                         ws.onmessage = (event) => {
                             if (document.getElementById('expand-button').textContent === '-') {
@@ -896,6 +915,10 @@ def register(app, rt, prefix=""):
 
                         ws.onclose = () => {
                             console.log("WebSocket disconnected.");
+                            // attempt to reconnect
+                            // from that very webpage if not itself closed
+                            // (i.e. in case of a server restart)
+                            connectWebSocket(ws_url);
                         };
 
                         ws.onerror = (err) => {
@@ -927,6 +950,9 @@ def register(app, rt, prefix=""):
                 ),
                 Script("""// Cold start of logs list at page load time
                     function loadLogs() {
+                        const server_status_circle = document.getElementById('status-circle');
+                        server_status_circle.classList.add('spinning');
+
                         // Get how many log-entries to return from selection list
                         const linesSelect = document.getElementById('lines');
                         const count = linesSelect ? parseInt(linesSelect.value, 10) : 0;
@@ -959,6 +985,8 @@ def register(app, rt, prefix=""):
                             if (logContainer && autoScrollCheckbox && autoScrollCheckbox.checked) {
                                 logContainer.scrollTop = logContainer.scrollHeight;
                             }
+
+                            server_status_circle.classList.remove('spinning');
                         });
                     }
 

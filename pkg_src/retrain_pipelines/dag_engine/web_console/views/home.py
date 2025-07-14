@@ -51,3 +51,8 @@ def register(app, rt, prefix=""):
             current_page="/"  # Home link in the header
         )
 
+
+    @rt(f"{prefix}/a_page_in_error", methods=["GET"])
+    def throw_error():
+        raise Exception("DEBUG");
+
