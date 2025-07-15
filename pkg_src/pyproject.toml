@@ -14,7 +14,7 @@ maintainers = [
 description = "retrain-pipelines lowers the barrier to entry for the creation and management of professional machine learning retraining pipelines."
 readme = { file = "README.md", content-type = "text/markdown" }
 license = {text = "Apache License 2.0"}
-requires-python = ">=3.3"
+requires-python = ">=3.8"
 keywords = [
     "machine-learning",
     "ml-pipelines",
@@ -70,7 +70,11 @@ dependencies = [
 local = [
     "uvicorn>=0.34.0",
     "python-fasthtml>=0.12.21",
-    "tzlocal>=5.3.1"
+    "tzlocal>=5.3.1",
+    "aiosqlite>=0.21.0"
+]
+dev = [
+    "sqlite-web"
 ]
 dynamic = ["version"]
 

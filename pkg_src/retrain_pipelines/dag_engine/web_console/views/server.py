@@ -964,14 +964,14 @@ def register(app, rt, prefix=""):
                             regexValue = regexFilterInput ? regexFilterInput.value : "";
                         }
 
+                        const logContainer = document.getElementById("log-container");
+                        logContainer.innerHTML = '';
+
                         // form data for the html POST
                         const formData = new FormData();
                         formData.append('count', count);
                         if (regexValue > "") formData.append('regex_filter', regexValue);
 
-                        const logContainer = document.getElementById("log-container");
-                        logContainer.innerHTML = '';
-                        console.log("fetching");
                         fetch('/{prefix}web_server/load_logs', {
                             method: 'POST',
                             headers: { "HX-Request": "true" },

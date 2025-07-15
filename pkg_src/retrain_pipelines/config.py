@@ -31,6 +31,14 @@ os.environ["RP_METADATASTORE_URL"] = (
         f"sqlite:///{os.environ['RP_ASSETS_CACHE']}local_metadatastore.db?timeout=10.0"
     )
 )
+# RP_METADATASTORE_ASYNC_URL
+# For the WebConsole connection pool
+os.environ["RP_METADATASTORE_ASYNC_URL"] = (
+    os.environ.get(
+        "RP_METADATASTORE_ASYNC_URL",
+        f"sqlite+aiosqlite:///{os.environ['RP_ASSETS_CACHE']}local_metadatastore.db"
+    )
+)
 
 
 # RP_ARTIFACTS_STORE
@@ -100,6 +108,7 @@ logging.getLogger("graphviz").setLevel(logging.ERROR)
 logging.getLogger("python_multipart").setLevel(logging.ERROR)
 logging.getLogger("asyncio").setLevel(logging.WARNING)
 logging.getLogger("tzlocal").setLevel(logging.ERROR)
+logging.getLogger("aiosqlite").setLevel(logging.ERROR)
 
 ################################################################
 
