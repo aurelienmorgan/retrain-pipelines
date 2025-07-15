@@ -872,8 +872,14 @@ def register(app, rt, prefix=""):
                                 ws = new WebSocket(ws_url);
                                 // Wait for the connection to open
                                 await new Promise((resolve, reject) => {
-                                    ws.onopen = resolve;
-                                    ws.onerror = reject;
+                                    ws.onopen = () => {
+                                        console.log("WebSocket connected.");
+                                        resolve();
+                                    };
+                                    ws.onerror = (err) => {
+                                        console.error("WebSocket error:", err);
+                                        reject(err);
+                                    };
                                 });
                                 // Connection established, exit loop
                                 break;
@@ -909,20 +915,12 @@ def register(app, rt, prefix=""):
                             }
                         };
 
-                        ws.onopen = () => {
-                            console.log("WebSocket connected.");
-                        };
-
                         ws.onclose = () => {
                             console.log("WebSocket disconnected.");
                             // attempt to reconnect
                             // from that very webpage if not itself closed
                             // (i.e. in case of a server restart)
                             connectWebSocket(ws_url);
-                        };
-
-                        ws.onerror = (err) => {
-                            console.error("WebSocket error:", err);
                         };
                     }
 
@@ -971,7 +969,9 @@ def register(app, rt, prefix=""):
                         formData.append('count', count);
                         if (regexValue > "") formData.append('regex_filter', regexValue);
 
-                        document.getElementById('log-container').innerHTML = '';
+                        const logContainer = document.getElementById("log-container");
+                        logContainer.innerHTML = '';
+                        console.log("fetching");
                         fetch('/{prefix}web_server/load_logs', {
                             method: 'POST',
                             headers: { "HX-Request": "true" },
@@ -979,8 +979,7 @@ def register(app, rt, prefix=""):
                         })
                         .then(response => response.text())
                         .then(html => {
-                            const logContainer = document.getElementById("log-container");
-                            logContainer.innerHTML = html;
+                            logContainer.insertAdjacentHTML('afterbegin', html);
                             var autoScrollCheckbox = document.getElementById('autoscroll');
                             if (logContainer && autoScrollCheckbox && autoScrollCheckbox.checked) {
                                 logContainer.scrollTop = logContainer.scrollHeight;
@@ -991,7 +990,11 @@ def register(app, rt, prefix=""):
                     }
 
                     // Assign to DOMContentLoaded event
-                    window.addEventListener('DOMContentLoaded', loadLogs);
+                    window.addEventListener('DOMContentLoaded', function() {
+                        // leave time for WebSocket to connect
+                        // so loadLogs event is streamed
+                        setTimeout(loadLogs, 500);
+                    });
 
                     // Assign to selection list change event
                     document.addEventListener('DOMContentLoaded', function() {
@@ -1009,7 +1012,7 @@ def register(app, rt, prefix=""):
                 """.replace("{prefix}", prefix+"/" if prefix > "" else "")
                 ),
                 style=(
-                    "background: rgba(248, 249, 250, 0.3); padding: 20px; "
+                    "background: rgba(248, 249, 250, 0.3); padding: 8px 16px 4px 16px; "
                     "border-radius: 12px; "
                     "box-shadow: 0 4px 12px rgba(0,0,0,0.1), "
                         "inset 0 1px 0 rgba(255,255,255,0.6); "
