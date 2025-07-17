@@ -1,7 +1,9 @@
 
 import os
+import sys
 import uuid
 import getpass
+import inspect
 import logging
 import textwrap
 import functools
@@ -28,6 +30,11 @@ class TaskFuncException(Exception):
 
 class TaskMergeFuncException(Exception):
     """Exception raised when a task merge-function fails."""
+    def __init__(self, message):
+        super().__init__
+
+class TaskGroupException(Exception):
+    """Exception raised when declaring a TaskGroup."""
     def __init__(self, message):
         super().__init__(message)
 
@@ -228,7 +235,6 @@ class Task(BaseModel):
         dao = DAO(os.environ["RP_METADATASTORE_URL"])
 
         if self.exec_id is None:
-            import inspect
             # Get the calling frame (1 level up)
             frame = inspect.currentframe()
             caller_frame = frame.f_back
@@ -356,7 +362,13 @@ class TaskGroup(BaseModel):
         # Assign values to kwargs
         kwargs["name"] = name
         kwargs["elements"] = elements
-        super().__init__(**kwargs)
+        try:
+            super().__init__(**kwargs)
+        except Exception as ex:
+            # typical error include pydantic validation
+            raise TaskGroupException(
+                    f"Error instanciating taskgroup `{name}`"
+                ) from ex
 
         for elmt in self.elements:
             elmt._task_group = self
@@ -501,15 +513,27 @@ def parallel_task(func=None):
     return decorator(func) if func else decorator
 
 
-def taskgroup(func=None, *, merge_func=None):
+def taskgroup(func):
     """Decorator for task groups."""
     def decorator(f):
-        tasks = f()
+        try:
+            tasks = f()
+        except Exception as ex:
+            # REMARK : we're at DAG-construct time here
+            #          (before any execution has even been requested)
+            ## retrieve taskgroup name from stacktrace =>
+            tb = sys.exc_info()[2]
+            while tb.tb_next:
+                tb = tb.tb_next
+            taskgroup_name = tb.tb_frame.f_code.co_name
+            raise TaskGroupException(
+                    f"taskgroup `{taskgroup_name}` failed to construct"
+                ) from ex
 
         if isinstance(tasks, (list, tuple)):
-            tg = TaskGroup(func.__name__, *tasks, merge_func=merge_func)
+            tg = TaskGroup(f.__name__, *tasks)
         else:
-            tg = TaskGroup(func.__name__, tasks, merge_func=merge_func)
+            tg = TaskGroup(f.__name__, tasks)
 
         return tg
 
