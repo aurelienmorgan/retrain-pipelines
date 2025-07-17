@@ -66,6 +66,8 @@ dependencies = [
     "rich>=14.0.0",
     "alembic>=1.16.2"
 ]
+dynamic = ["version"]
+
 [project.optional-dependencies]
 local = [
     "uvicorn>=0.34.0",
@@ -76,7 +78,6 @@ local = [
 dev = [
     "sqlite-web"
 ]
-dynamic = ["version"]
 
 [tool.setuptools_scm]
 root = ".."

@@ -231,9 +231,9 @@ For instance&nbsp;:
 # build from source
     python -m build --verbose pkg_src
 # install from source (dev mode)
-    pip install -e pkg_src
+    pip install -e pkg_src[dev,local]
 # install from remote source
-    pip install git+https://github.com/aurelienmorgan/retrain-pipelines.git@master#subdirectory=pkg_src
+    pip install "retrain-pipelines[dev,local] @ git+https://github.com/aurelienmorgan/retrain-pipelines.git@master#subdirectory=pkg_src"
 
 # PyPi
 find us @ https://pypi.org/project/retrain-pipelines/
