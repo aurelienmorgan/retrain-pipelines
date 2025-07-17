@@ -41,7 +41,7 @@ def register(app, rt, prefix=""):
 
     @rt(f"{prefix}/load_executions", methods=["POST"])
     async def get_execution_entries(request):
-        # Retrieve "count" from form data (POST)
+        # Retrieves params from form data (POST)
         form = await request.form()
         print(form)
         before_datetime = \

@@ -1,15 +1,14 @@
+
 import os
 import logging
-import textwrap
-import functools
 import concurrent.futures
 
 from collections import defaultdict, deque
-from typing import Callable, List, Optional, Union, \
-    Dict, Any
+from typing import List, Optional, Union, \
+    Any
 
-from .db.dao import DAO
-from .core import Task, TaskGroup, TaskPayload
+from .core import Task, TaskGroup, TaskPayload, \
+    TaskFuncException
 
 
 def find_root_tasks(task: Task) -> list[Task]:
@@ -320,7 +319,6 @@ def execute(
 
     results = TaskPayload({})
     i = 0
-
     while i < len(order):
         elmt = order[i]
 

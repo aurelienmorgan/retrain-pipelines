@@ -109,7 +109,6 @@ def join_snake_heads(
 def matrix_sum_cols(matrix: List[List[Union[int, float]]]):
     """Computes the sum of each column in a 2D matrix
     returning a 1D list of numerics."""
-    print(f"matrix_sum_cols - {matrix}")
     return [sum(col) for col in zip(*matrix)]
 
 @task(merge_func=matrix_sum_cols)

@@ -1,9 +1,13 @@
+
 import os
 import uuid
+import getpass
 import logging
 import textwrap
 import functools
 import concurrent.futures
+
+from datetime import datetime
 
 from typing import Callable, List, Optional, Union, \
     Dict, Any
@@ -15,6 +19,17 @@ from ..utils.rich_logging import framed_rich_log_str
 
 
 # ---- Core Task and Execution Infrastructure ----
+
+
+class TaskFuncException(Exception):
+    """Exception raised when a task function fails."""
+    def __init__(self, message):
+        super().__init__(message)
+
+class TaskMergeFuncException(Exception):
+    """Exception raised when a task merge-function fails."""
+    def __init__(self, message):
+        super().__init__(message)
 
 
 class Task(BaseModel):
@@ -58,6 +73,8 @@ class Task(BaseModel):
             f"{f' ([#6f00d6 on white]parallel[/])' if self.is_parallel else f' ([#2d97ba on white]merge[/])' if self.merge_func else ''}" +
             "[/]")
         self.func = self._wrap_func(self.func)
+        if self.merge_func is not None:
+            self.merge_func = self._wrap_merge_func(self.merge_func)
 
 
     @property
@@ -86,20 +103,77 @@ class Task(BaseModel):
         return self._task_group
 
 
+    def _wrap_merge_func(self, merge_func):
+        """Wrap the function
+
+        with logging and Exception handling."""
+
+        @functools.wraps(merge_func)
+        def wrapper(*args, **kwargs):
+            dao = DAO(os.environ["RP_METADATASTORE_URL"])
+            self.task_id = dao.add_task(
+                exec_id=self.exec_id,
+                start_timestamp=datetime.now()
+            )
+
+            self.log.info(
+                framed_rich_log_str(
+                    f"\N{wrench} Executing Merge "
+                    f"[#D2691E]`{self.merge_func.__name__}`[/] of task "
+                    f"[#D2691E]`{self.func.__name__}[{self.task_id}]`[/]:\n"
+                    f"Inputs :\n"
+                    f"  \N{BULLET} Positional: {args}\n"
+                    f"  \N{BULLET} Keyword   : {kwargs}",
+                    border_color="#FFFFE0"
+                )
+            )
+
+            try:
+                result = merge_func(*args, **kwargs)
+            except Exception as ex:
+                end_timestamp = datetime.now()
+                dao.update_task(
+                    id=self.task_id,
+                    end_timestamp=end_timestamp,
+                    failed=True
+                )
+                dao.update_execution(
+                    id=self.exec_id,
+                    end_timestamp=end_timestamp
+                )
+                raise TaskMergeFuncException(
+                        f"merge `{merge_func.__name__}` " +
+                        f"of task `{self.name}` failed"
+                    ) from ex
+
+            return result
+
+        return wrapper
+
+
     def _wrap_func(self, func):
-        """Wrap the function with logging."""
+        """Wrap the function
+
+        with logging and Exception handling."""
 
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
             rank = kwargs.pop("rank", None)
             dao = DAO(os.environ["RP_METADATASTORE_URL"])
-            self.task_id = dao.add_task(self.exec_id)
+
+            if self.merge_func is None :
+                self.task_id = dao.add_task(
+                    exec_id=self.exec_id,
+                    start_timestamp=datetime.now()
+                )
 
             docstring = '\n'.join(
                 f'[bold green]{line}[/]'
                 for line in filter(None, [
                     func.__doc__.splitlines()[0],
-                    *textwrap.dedent('\n'.join(func.__doc__.splitlines()[1:])).splitlines()
+                    *textwrap.dedent(
+                            '\n'.join(func.__doc__.splitlines()[1:])
+                        ).splitlines()
                 ])) \
                 if func.__doc__ else None
 
@@ -116,13 +190,30 @@ class Task(BaseModel):
                 )
             )
 
-            result = func(*args, **kwargs)
-
-            self.log.info(
-                f"\n\N{WHITE HEAVY CHECK MARK} Completed Task [#D2691E]`{self.name}[{self.task_id}]{f'[{rank}]' if rank is not None else ''}`[/]:\n"
-                f"Results :\n" +
-                f"  \N{BULLET} {result} {f'({type(result).__name__})' if result is not None else ''}\n"
-            )
+            task_failed = False
+            try:
+                result = func(*args, **kwargs)
+                self.log.info(
+                    f"\n\N{WHITE HEAVY CHECK MARK} Completed Task [#D2691E]`{self.name}[{self.task_id}]{f'[{rank}]' if rank is not None else ''}`[/]:\n"
+                    f"Results :\n" +
+                    f"  \N{BULLET} {result} {f'({type(result).__name__})' if result is not None else ''}\n"
+                )
+            except Exception as ex:
+                task_failed = True
+                raise TaskFuncException(
+                    f"task `{self.name}` failed") from ex
+            finally:
+                end_timestamp = datetime.now()
+                dao.update_task(
+                    id=self.task_id,
+                    end_timestamp=end_timestamp,
+                    failed=task_failed
+                )
+                if task_failed or (len(self.children) == 0):
+                    dao.update_execution(
+                        id=self.exec_id,
+                        end_timestamp=end_timestamp
+                    )
 
             return result
 
@@ -137,7 +228,18 @@ class Task(BaseModel):
         dao = DAO(os.environ["RP_METADATASTORE_URL"])
 
         if self.exec_id is None:
-            self.exec_id = dao.add_execution()
+            import inspect
+            # Get the calling frame (1 level up)
+            frame = inspect.currentframe()
+            caller_frame = frame.f_back
+            coller_module_name = os.path.basename(
+                    caller_frame.f_code.co_filename
+                ).split(".")[-2]
+            self.exec_id = dao.add_execution(
+                name=coller_module_name,
+                username=getpass.getuser(),
+                start_timestamp=datetime.now()
+            )
             self.log.info(f"[bold red]{self.name} has no exec_id[/]")
             for child in self.children:
                 self._cascade_exec_id(self.exec_id, child)

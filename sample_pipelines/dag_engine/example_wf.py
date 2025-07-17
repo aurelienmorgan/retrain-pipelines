@@ -9,6 +9,7 @@ from retrain_pipelines.dag_engine.runtime import \
 from retrain_pipelines.dag_engine.renderer import \
     render_svg, render_networkx, render_plotly
 
+
 # ---- Example: Parallelism and Merging ----
 
 
@@ -42,7 +43,7 @@ def parallel(payload: TaskPayload):
 def matrix_sum_cols(matrix: List[List[Union[int, float]]]):
     """Computes the sum of each column in a 2D matrix
     returning a 1D list of numerics."""
-    print(f"matrix_sum_cols - {matrix}")
+
     return [sum(col) for col in zip(*matrix)]
 
 @task(merge_func=matrix_sum_cols)
@@ -64,6 +65,7 @@ def end(payload: TaskPayload):
     assert payload["merge"] == payload.get("merge") == payload
 
     assert payload == [200, 208]
+
     return None
 
 

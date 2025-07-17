@@ -32,5 +32,6 @@ if not os.getenv("retrain_pipeline_type", None):
 
 
 logging.getLogger().debug(f"cache root directory : {os.environ['RP_ASSETS_CACHE']}")
-run_alembic_upgrade_once()
+if not bool(os.getenv("ALEMBIC_REV_AUTOGEN", False)):
+    run_alembic_upgrade_once()
 

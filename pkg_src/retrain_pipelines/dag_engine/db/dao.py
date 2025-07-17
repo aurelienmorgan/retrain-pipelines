@@ -31,6 +31,7 @@ class DAOBase:
     def _get_session(self):
         return self.session_factory() if self.is_async else self.Session()
 
+
     def _add_entity(self, entity_class, **kwargs):
         if self.is_async:
             return self._async_add_entity(entity_class, **kwargs)
@@ -56,6 +57,43 @@ class DAOBase:
             await session.commit()
             return entity_id
 
+
+    def _update_entity(self, entity_class, entity_id, **kwargs):
+        if self.is_async:
+            return self._async_update_entity(
+                    entity_class, entity_id, **kwargs
+                )
+        else:
+            return self._sync_update_entity(
+                    entity_class, entity_id, **kwargs
+                )
+
+    def _sync_update_entity(self, entity_class, entity_id, **kwargs):
+        session = self._get_session()
+        entity = session.query(entity_class).get(entity_id)
+        if not entity:
+            session.close()
+            return None
+        for key, value in kwargs.items():
+            setattr(entity, key, value)
+        session.commit()
+        session.close()
+        return entity
+
+    async def _async_update_entity(self, entity_class, entity_id, **kwargs):
+        async with self._get_session() as session:
+            result = await session.execute(
+                select(entity_class).filter_by(id=entity_id)
+            )
+            entity = result.scalar_one_or_none()
+            if not entity:
+                return None
+            for key, value in kwargs.items():
+                setattr(entity, key, value)
+            await session.commit()
+            return entity
+
+
     def _get_entity(self, entity_class, **filters):
         if self.is_async:
             return self._async_get_entity(entity_class, **filters)
@@ -70,8 +108,11 @@ class DAOBase:
 
     async def _async_get_entity(self, entity_class, **filters):
         async with self._get_session() as session:
-            result = await session.execute(select(entity_class).filter_by(**filters))
+            result = await session.execute(
+                select(entity_class).filter_by(**filters)
+            )
             return result.scalar_one_or_none()
+
 
     def _get_entities(self, entity_class, **filters):
         if self.is_async:
@@ -87,7 +128,9 @@ class DAOBase:
 
     async def _async_get_entities(self, entity_class, **filters):
         async with self._get_session() as session:
-            result = await session.execute(select(entity_class).filter_by(**filters))
+            result = await session.execute(
+                select(entity_class).filter_by(**filters)
+            )
             return result.scalars().all()
 
 
@@ -95,17 +138,25 @@ class DAO(DAOBase):
     def __init__(self, db_url):
         super().__init__(db_url, is_async=False)
 
-    def add_execution(self) -> int:
-        return self._add_entity(Execution)
+    def add_execution(self, **kwargs) -> int:
+        return self._add_entity(Execution, **kwargs)
 
-    def add_task(self, exec_id) -> int:
-        return self._add_entity(Task, exec_id=exec_id)
+    def add_task(self, **kwargs) -> int:
+        return self._add_entity(Task, **kwargs)
 
-    def get_execution(self, execution_id):
-        return self._get_entity(Execution, id=execution_id)
+    def update_execution(self, id, **kwargs):
+        """Update execution row’s fields by its id."""
+        return self._update_entity(Execution, entity_id=id, **kwargs)
 
-    def get_task(self, task_id):
-        return self._get_entity(Task, id=task_id)
+    def update_task(self, id, **kwargs):
+        """Update task row’s fields by its id."""
+        return self._update_entity(Task, entity_id=id, **kwargs)
+
+    def get_execution(self, id):
+        return self._get_entity(Execution, id=id)
+
+    def get_task(self, id):
+        return self._get_entity(Task, id=id)
 
     def get_tasks_by_execution(self, exec_id):
         return self._get_entities(Task, exec_id=exec_id)
@@ -121,8 +172,8 @@ class AsyncDAO(DAOBase):
     async def add_task(self, exec_id: int) -> int:
         return await self._add_entity(Task, exec_id=exec_id)
 
-    async def get_execution(self, execution_id: int):
-        return await self._get_entity(Execution, id=execution_id)
+    async def get_execution(self, id: int):
+        return await self._get_entity(Execution, id=id)
 
     async def get_executions_before(
         self,
@@ -138,13 +189,13 @@ class AsyncDAO(DAOBase):
                 number of Executions to retrieve
 
         Results:
-            List[Executuion]
+            List[Execution]
         """
         ## TODO ## implement datetime in object model + LIMIT filtering
         return await self._get_entities(Execution)
 
-    async def get_task(self, task_id: int):
-        return await self._get_entity(Task, id=task_id)
+    async def get_task(self, id: int):
+        return await self._get_entity(Task, id=id)
 
     async def get_tasks_by_execution(self, exec_id: int):
         return await self._get_entities(Task, exec_id=exec_id)
