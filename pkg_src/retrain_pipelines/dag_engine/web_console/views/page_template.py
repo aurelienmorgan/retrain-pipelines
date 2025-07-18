@@ -340,6 +340,79 @@ input.gcheckbox:checked::before {
   opacity: 0.3;
 }
 
+.combo-root {
+    position: relative;
+    display: flex;
+    align-items: baseline;
+    min-width: 140px;
+    margin-right: 8px;
+}
+.combo-input {
+    flex: 1 1 60px;
+    font-size: 14px;
+    color: #4d0066;
+    padding: 2.5px 10px 2.5px 7px;
+    border: 1px solid rgba(180,200,230,0.5);
+    border-radius: 6px;
+    background: linear-gradient(135deg, rgba(255,255,255,0.82) 0%,
+                                rgba(230,240,255,0.65) 100%);
+    box-shadow: 0 1.5px 7px rgba(60, 30, 102, 0.08),
+                0 0.5px 0px 0 rgba(255,255,255,0.7) inset;
+    backdrop-filter: blur(1.7px);
+    outline: none;
+    transition: box-shadow 0.15s, border-color 0.15s;
+    height: 24px;
+    line-height: 18px;
+}
+.combo-input:focus {
+    border: 1.5px solid #4d0066;
+    box-shadow: 0 2.5px 10px rgba(80, 0, 140, 0.10);
+}
+.combo-input-unselected {
+    font-style: italic;
+    color: #222 !important;
+}
+.combo-input-selected-red {
+    font-style: italic; color: red !important;
+}
+.combo-dropdown {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 102%;
+    z-index: 40;
+    background: linear-gradient(135deg, rgba(255,255,255,0.95) 40%,
+                                rgba(230,240,255,0.67) 100%);
+    border-radius: 0 0 11px 11px;
+    border: 1px solid rgba(180,200,230,0.45);
+    box-shadow: 0 2px 14px rgba(60,30,102,0.12);
+    padding: 4px 0;
+    backdrop-filter: blur(2.1px);
+    max-height: 180px;
+    overflow-y: auto;
+    display: none;
+}
+.combo-dropdown.open {
+    display: block;
+}
+.combo-option {
+    font-size: 14px;
+    color: #4d0066;
+    padding: 6px 14px 6px 14px;
+    cursor: pointer;
+    background: transparent;
+    transition: background 0.14s, color 0.14s;
+    line-height: 19px;
+    display: flex;
+    align-items: baseline;
+}
+.combo-option.selected,
+.combo-option.keyboard-active {
+    background: linear-gradient(90deg, rgba(200,220,255,0.43) 0,
+                                rgba(150,170,230,0.14) 100%);
+    color: #330046;
+}
+
 .shiny-silver-text {
     font-weight: bold;
     font-size: 14px;
