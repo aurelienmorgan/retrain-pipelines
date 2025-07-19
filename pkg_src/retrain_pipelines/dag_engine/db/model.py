@@ -1,7 +1,7 @@
 
 from sqlalchemy import ForeignKey, Column, \
     Integer, String, DateTime, Boolean, \
-    CheckConstraint
+    JSON, CheckConstraint
 
 from sqlalchemy.orm import relationship
 from sqlalchemy.ext.declarative import declarative_base
@@ -38,6 +38,8 @@ class Task(Base):
         "Execution",
         back_populates="tasks"
     )
+    name = Column(String, nullable=False)
+    rank = Column(JSON, nullable=True) # ARRAY(Integer)
 
     start_timestamp = Column(
         DateTime(timezone=False),

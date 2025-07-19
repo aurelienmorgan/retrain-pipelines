@@ -43,6 +43,7 @@ def AutoCompleteSelect(
     input_id = f"{id}_input"
     dropdown_id = f"{id}_dropdown"
     just_sel_flag = f"_justSelected_{id}"
+
     return Div(
         Div(
             Input(

@@ -120,6 +120,8 @@ class Task(BaseModel):
             dao = DAO(os.environ["RP_METADATASTORE_URL"])
             self.task_id = dao.add_task(
                 exec_id=self.exec_id,
+                name=self.name,
+                rank=self.rank,
                 start_timestamp=datetime.now()
             )
 
@@ -127,7 +129,8 @@ class Task(BaseModel):
                 framed_rich_log_str(
                     f"\N{wrench} Executing Merge "
                     f"[#D2691E]`{self.merge_func.__name__}`[/] of task "
-                    f"[#D2691E]`{self.func.__name__}[{self.task_id}]`[/]:\n"
+                    f"[#D2691E]`{self.name}[{self.task_id}]"
+                    f"{f'[{self.rank}]' if self.rank is not None else ''}`[/]:\n"
                     f"Inputs :\n"
                     f"  \N{BULLET} Positional: {args}\n"
                     f"  \N{BULLET} Keyword   : {kwargs}",
@@ -171,6 +174,8 @@ class Task(BaseModel):
             if self.merge_func is None :
                 self.task_id = dao.add_task(
                     exec_id=self.exec_id,
+                    name=self.name,
+                    rank=self.rank,
                     start_timestamp=datetime.now()
                 )
 

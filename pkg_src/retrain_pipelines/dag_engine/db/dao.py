@@ -1,4 +1,5 @@
 
+import logging
 import asyncio
 
 from typing import List
@@ -29,14 +30,30 @@ class DAOBase:
         self.is_async = is_async
 
     def _get_session(self):
-        return self.session_factory() if self.is_async else self.Session()
+        return self.session_factory() \
+               if self.is_async else self.Session()
 
 
     def _add_entity(self, entity_class, **kwargs):
         if self.is_async:
             return self._async_add_entity(entity_class, **kwargs)
         else:
-            return self._sync_add_entity(entity_class, **kwargs)
+            for attempt in range(3):
+                try:
+                    return self._sync_add_entity(
+                        entity_class, **kwargs
+                    )
+                except Exception as e:
+                    # database lock
+                    if attempt < 2:
+                        logging.getLogger().debug(
+                            f"_sync_add_entity - retry {attempt+1})"
+                        )
+                        continue
+                    else:
+                        # Re-raise the exception
+                        # on the last attempt
+                        raise
 
     def _sync_add_entity(self, entity_class, **kwargs):
         session = self._get_session()
@@ -64,11 +81,26 @@ class DAOBase:
                     entity_class, entity_id, **kwargs
                 )
         else:
-            return self._sync_update_entity(
-                    entity_class, entity_id, **kwargs
-                )
+            for attempt in range(3):
+                try:
+                    return self._sync_update_entity(
+                        entity_class, entity_id, **kwargs
+                    )
+                except Exception as e:
+                    # database lock
+                    if attempt < 2:
+                        logging.getLogger().debug(
+                            f"_sync_update_entity - retry {attempt+1})"
+                        )
+                        continue
+                    else:
+                        # Re-raise the exception
+                        # on the last attempt
+                        raise
 
-    def _sync_update_entity(self, entity_class, entity_id, **kwargs):
+    def _sync_update_entity(
+        self, entity_class, entity_id, **kwargs
+    ):
         session = self._get_session()
         entity = session.query(entity_class).get(entity_id)
         if not entity:
@@ -80,7 +112,9 @@ class DAOBase:
         session.close()
         return entity
 
-    async def _async_update_entity(self, entity_class, entity_id, **kwargs):
+    async def _async_update_entity(
+        self, entity_class, entity_id, **kwargs
+    ):
         async with self._get_session() as session:
             result = await session.execute(
                 select(entity_class).filter_by(id=entity_id)
@@ -102,7 +136,8 @@ class DAOBase:
 
     def _sync_get_entity(self, entity_class, **filters):
         session = self._get_session()
-        result = session.query(entity_class).filter_by(**filters).first()
+        result = session.query(entity_class) \
+                    .filter_by(**filters).first()
         session.close()
         return result
 
@@ -169,11 +204,22 @@ class AsyncDAO(DAOBase):
     async def add_execution(self) -> int:
         return await self._add_entity(Execution)
 
-    async def add_task(self, exec_id: int) -> int:
-        return await self._add_entity(Task, exec_id=exec_id)
-
     async def get_execution(self, id: int):
         return await self._get_entity(Execution, id=id)
+
+    async def get_distinct_execution_names(self):
+        async with self._get_session() as session:
+            result = await session.execute(
+                select(Execution.name).distinct()
+            )
+            return [row[0] for row in result.all()]
+
+    async def get_distinct_execution_usernames(self):
+        async with self._get_session() as session:
+            result = await session.execute(
+                select(Execution.username).distinct()
+            )
+            return [row[0] for row in result.all()]
 
     async def get_executions_before(
         self,
@@ -199,4 +245,8 @@ class AsyncDAO(DAOBase):
 
     async def get_tasks_by_execution(self, exec_id: int):
         return await self._get_entities(Task, exec_id=exec_id)
+
+
+    async def add_task(self, exec_id: int) -> int:
+        return await self._add_entity(Task, exec_id=exec_id)
 

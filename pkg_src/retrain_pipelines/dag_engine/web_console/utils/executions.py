@@ -11,13 +11,17 @@ from ...db.model import Execution
 
 
 async def get_users() -> List[str]:
-    # TODO
-    return ["titi", "toto", "tata"]
+    dao = AsyncDAO(
+        db_url=os.environ["RP_METADATASTORE_ASYNC_URL"]
+    )
+    return await dao.get_distinct_execution_usernames()
 
 
 async def get_pipeline_names() -> List[str]:
-    # TODO
-    return ["titi", "toto", "tata", "tete", "tutu"]
+    dao = AsyncDAO(
+        db_url=os.environ["RP_METADATASTORE_ASYNC_URL"]
+    )
+    return await dao.get_distinct_execution_names()
 
 
 async def get_executions_before(
