@@ -348,21 +348,24 @@ input.gcheckbox:checked::before {
     margin-right: 8px;
 }
 .combo-input {
-    flex: 1 1 60px;
-    font-size: 14px;
-    color: #4d0066;
-    padding: 2.5px 10px 2.5px 7px;
-    border: 1px solid rgba(180,200,230,0.5);
+    // flex: 1 1 60px;
+    height: 18px;
+    transition: width 0.4s ease, padding 0.4s ease,
+       opacity 0.4s ease;
+    transform-origin: right;
+    box-sizing: border-box;
+    margin-left: 5px; margin-right: 8px;
+    padding: 0 6px; border: 1px solid rgba(180,200,230,0.5);
     border-radius: 6px;
-    background: linear-gradient(135deg, rgba(255,255,255,0.82) 0%,
-                                rgba(230,240,255,0.65) 100%);
-    box-shadow: 0 1.5px 7px rgba(60, 30, 102, 0.08),
-                0 0.5px 0px 0 rgba(255,255,255,0.7) inset;
-    backdrop-filter: blur(1.7px);
+    font-size: 13px; color: #4d0066;
+    background: linear-gradient(135deg,
+        rgba(230,240,255,0.7) 0%,
+        rgba(200,220,255,0.6) 100%);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06),
+        inset 0 1px 0 rgba(255,255,255,0.7);
+    backdrop-filter: blur(1.5px);
     outline: none;
-    transition: box-shadow 0.15s, border-color 0.15s;
-    height: 24px;
-    line-height: 18px;
+    width: inherit;
 }
 .combo-input:focus {
     border: 1.5px solid #4d0066;

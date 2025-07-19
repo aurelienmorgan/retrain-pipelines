@@ -263,6 +263,8 @@ def AutoCompleteSelect(
                     updateInputClass();
                     var opts = window["_options_{id}"] || [];
                     renderOptions(opts, term);
+
+                    input.title = input.value;
                 }});
 
                 input.addEventListener('keydown', function(e) {{
@@ -289,6 +291,7 @@ def AutoCompleteSelect(
                                 input.value = decodeURIComponent(val||"");
                             }}
                         }}
+                        input.title = input.value;
                         // cascade to dropdown behavior
                         window["_options_{id}"] = list;
                         renderOptions(list, input.value);
@@ -378,7 +381,6 @@ def register(app, rt, prefix=""):
                     Div(
                         Div(
                             H3(
-                                # "\N{CLIPBOARD} " + \
                                 "Latest pipeline executions",
                                 style=(
                                     "color: white; margin: 0; white-space: nowrap; "
@@ -395,11 +397,11 @@ def register(app, rt, prefix=""):
                                     "font-size: 14px; align-self: baseline;"
                                 )
                             ),
-                            AutoCompleteSelect(
+                            AutoCompleteSelect(# pipeline-name filter
                                 options_url=f"{prefix}/distinct_pipeline_names",
                                 id="pipeline_name_autocomplete",
                                 placeholder="select or type...",
-                                style="margin-right:8px;"
+                                style="margin-right: 4px;"
                             ),
                             Span(
                                 "user",
@@ -408,11 +410,36 @@ def register(app, rt, prefix=""):
                                     "font-size: 14px; align-self: baseline;"
                                 )
                             ),
-                            AutoCompleteSelect(
+                            AutoCompleteSelect(# username filter
                                 options_url=f"{prefix}/distinct_users",
                                 id="pipeline_user_autocomplete",
                                 placeholder="select or type...",
-                                style="margin-right:8px;"
+                                style="margin-right: 4px;"
+                            ),
+                            Style("""
+                                #pipeline_name_autocomplete_input.combo-input {
+                                    min-width: 130px; width: 130px;
+                                }
+                                #pipeline_user_autocomplete_input.combo-input {
+                                    min-width: 100px; width: 100px;
+                                }
+                            """),
+                            Span(
+                                "before",
+                                style=(
+                                    "margin-right: 5px; white-space: nowrap; "
+                                    "font-size: 14px; align-self: baseline;"
+                                )
+                            ),
+                            Div(# datetime filter
+                                id="pipeline-datetime-container"
+                            ),
+                            Script(
+                                """
+                                  import { attachDateTimePicker } from './datetime-picker.js';
+                                  attachDateTimePicker('pipeline-datetime-container');
+                                """,
+                                type="module"
                             ),
                             id="params_panel",
                             style=(
