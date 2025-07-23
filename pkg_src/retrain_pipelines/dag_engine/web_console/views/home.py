@@ -1,7 +1,7 @@
 
 import os
 
-from typing import Optional
+from typing import Optional, Union
 
 from datetime import datetime, timezone
 from email.utils import formatdate, \
@@ -307,6 +307,39 @@ def AutoCompleteSelect(
         style=style
     )
 
+def FilterElement(
+    label: str,
+    *elements: Union[Div, Script, Style],
+    label_shadow_color: Optional[str] = None
+) -> Div:
+    """Element with overlaying label on top left corner."""
+    return Div(
+            Span(
+                label,
+                style=("""
+                  position: absolute;
+                  top: -1em;
+                  left: -0.2em;
+                  pointer-events: none;
+                  color: white;
+                  text-shadow:
+                    -1px -1px 0 var(--label-shadow-color),
+                     1px -1px 0 var(--label-shadow-color),
+                    -1px  1px 0 var(--label-shadow-color),
+                     1px  1px 0 var(--label-shadow-color),
+                     0   -1px 0 var(--label-shadow-color),
+                    -1px  0   0 var(--label-shadow-color),
+                     1px  0   0 var(--label-shadow-color),
+                     0    1px 0 var(--label-shadow-color);
+                    z-index: 999; 
+                """)
+            ),
+            elements,
+            style=(
+                "position: relative; "
+                f"--label-shadow-color: {label_shadow_color};"
+            )
+        ),
 
 def register(app, rt, prefix=""):
     @rt("/favicon.ico")
@@ -390,31 +423,25 @@ def register(app, rt, prefix=""):
                             style="display: flex; align-items: baseline;"
                         ),
                         Div(
-                            Span(
+                            FilterElement(# pipeline-name filter
                                 "pipeline",
-                                style=(
-                                    "margin-right: 5px; white-space: nowrap; "
-                                    "font-size: 14px; align-self: baseline;"
-                                )
+                                AutoCompleteSelect(
+                                    options_url=f"{prefix}/distinct_pipeline_names",
+                                    id="pipeline_name_autocomplete",
+                                    placeholder="select or type...",
+                                    style="margin-right: 4px;"
+                                ),
+                                label_shadow_color="rgba(77, 0, 102, .7)"
                             ),
-                            AutoCompleteSelect(# pipeline-name filter
-                                options_url=f"{prefix}/distinct_pipeline_names",
-                                id="pipeline_name_autocomplete",
-                                placeholder="select or type...",
-                                style="margin-right: 4px;"
-                            ),
-                            Span(
+                            FilterElement(# username filter
                                 "user",
-                                style=(
-                                    "margin-right: 5px; white-space: nowrap; "
-                                    "font-size: 14px; align-self: baseline;"
-                                )
-                            ),
-                            AutoCompleteSelect(# username filter
-                                options_url=f"{prefix}/distinct_users",
-                                id="pipeline_user_autocomplete",
-                                placeholder="select or type...",
-                                style="margin-right: 4px;"
+                                AutoCompleteSelect(
+                                    options_url=f"{prefix}/distinct_users",
+                                    id="pipeline_user_autocomplete",
+                                    placeholder="select or type...",
+                                    style="margin-right: 4px;"
+                                ),
+                                label_shadow_color="rgba(77, 0, 102, .7)"
                             ),
                             Style("""
                                 #pipeline_name_autocomplete_input.combo-input {
@@ -424,29 +451,27 @@ def register(app, rt, prefix=""):
                                     min-width: 100px; width: 100px;
                                 }
                             """),
-                            Span(
+                            FilterElement(# datetime filter
                                 "before",
-                                style=(
-                                    "margin-right: 5px; white-space: nowrap; "
-                                    "font-size: 14px; align-self: baseline;"
-                                )
-                            ),
-                            Div(# datetime filter
-                                id="pipeline-datetime-container"
-                            ),
-                            Script(
-                                """
-                                  import { attachDateTimePicker } from './datetime-picker.js';
-                                  attachDateTimePicker('pipeline-datetime-container');
-                                """,
-                                type="module"
+                                Div(
+                                    id="pipeline-datetime-container",
+                                    style="--shadow-color: rgba(77, 0, 102, .3);"
+                                ),
+                                Script(
+                                    """
+                                      import { attachDateTimePicker } from './datetime-picker.js';
+                                      attachDateTimePicker('pipeline-datetime-container');
+                                    """,
+                                    type="module"
+                                ),
+                                label_shadow_color="rgba(77, 0, 102, .7)"
                             ),
                             id="params_panel",
                             style=(
                                 "position: relative;"
                                 "display: flex; "
                                 "align-items: baseline; "
-                                "padding: 12px 16px; "
+                                "padding: 12px 12px 12px 16px; "
                                 "background: linear-gradient(135deg, "
                                     "rgba(255,255,255,0.1) 0%, "
                                     "rgba(248,249,250,0.1) 100%); "

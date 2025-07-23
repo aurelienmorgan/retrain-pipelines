@@ -344,7 +344,6 @@ input.gcheckbox:checked::before {
     position: relative;
     display: flex;
     align-items: baseline;
-    min-width: 140px;
     margin-right: 8px;
 }
 .combo-input {
@@ -365,7 +364,6 @@ input.gcheckbox:checked::before {
         inset 0 1px 0 rgba(255,255,255,0.7);
     backdrop-filter: blur(1.5px);
     outline: none;
-    width: inherit;
 }
 .combo-input:focus {
     border: 1.5px solid #4d0066;

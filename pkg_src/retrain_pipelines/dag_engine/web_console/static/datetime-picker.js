@@ -27,7 +27,8 @@ export function attachDateTimePicker(divId) {
         style.textContent = `
             .datetime-picker {
                 position: relative;
-                display: inline-block;
+                display: flex;
+                align-items: baseline;
             }
             .datetime-input {
                 height: 18px; text-align: center;
@@ -42,19 +43,17 @@ export function attachDateTimePicker(divId) {
                 background: linear-gradient(135deg,
                     rgba(230,240,255,0.7) 0%,
                     rgba(200,220,255,0.6) 100%);
-                box-shadow: 0 1px 3px rgba(0,0,0,0.06),
+                box-shadow:
+                    0 0 12px 3px var(--shadow-color),
+                    0 1px 3px rgba(0,0,0,0.06),
                     inset 0 1px 0 rgba(255,255,255,0.7);
                 backdrop-filter: blur(1.5px); outline: none;
             }
             .datetime-popup {
-                position: absolute;
-                top: 100%;
-                left: 0;
                 background: white;
                 border: 1px solid #ddd;
                 border-radius: 4px;
                 box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-                z-index: 1000;
                 padding: 15px;
                 min-width: 280px;
             }
@@ -246,7 +245,7 @@ export function attachDateTimePicker(divId) {
     container.innerHTML = `
         <div class="datetime-picker">
             <input type="text" class="datetime-input" placeholder="Select date and time" autocomplete="off">
-            <div class="datetime-popup" style="display: none;">
+            <dialog class="datetime-popup">
                 <div class="calendar-header">
                     <button class="prev-month">&lt;</button>
                     <span class="month-year">${months[currentMonth]} ${currentYear}</span>
@@ -273,7 +272,7 @@ export function attachDateTimePicker(divId) {
                     <button class="confirm-btn">OK</button>
                     <button class="cancel-btn">Cancel</button>
                 </div>
-            </div>
+            </dialog>
         </div>
     `;
 
@@ -520,8 +519,33 @@ export function attachDateTimePicker(divId) {
         }
     }
 
+    function getCachedDialogLeftTop(popup) {
+        // Function to get cached dialog rect left/top as numbers
+        // (works out-of-the-box only once out of 2, so we cache it)
+        let left = popup.getAttribute('data-initial-left');
+        let top = popup.getAttribute('data-initial-top');
+
+        if (left !== null && top !== null) {
+          return { left: parseFloat(left), top: parseFloat(top) };
+        }
+        return null;
+    }
+
     input.addEventListener('click', () => {
-        popup.style.display = 'block';
+        popup.showModal();
+
+        // positioning the popup dialog
+        if (!getCachedDialogLeftTop(popup)) {
+            const dialogRect = popup.getBoundingClientRect();
+            popup.setAttribute('data-initial-left', dialogRect.left);
+            popup.setAttribute('data-initial-top', dialogRect.top);
+        }
+        const popupRect = getCachedDialogLeftTop(popup);
+        const inputRect = input.getBoundingClientRect();
+        const offsetX = inputRect.left - popupRect.left;
+        const offsetY = inputRect.bottom - popupRect.top;
+        popup.style.transform = `translate(${offsetX}px, ${offsetY}px)`;
+
         isOpen = true;
     });
 
@@ -666,38 +690,84 @@ export function attachDateTimePicker(divId) {
             input.value = `${dateStr} ${selectedTime}`;
 
             saveState();
-            popup.style.display = 'none';
+            popup.close();
             isOpen = false;
+            input.blur();
+            input.focus();
+            input.setSelectionRange(input.selectionStart, input.selectionEnd);
         }
     });
 
     container.querySelector('.cancel-btn').addEventListener('click', (e) => {
         e.stopPropagation();
-        popup.style.display = 'none';
+        popup.close();
         isOpen = false;
+        input.blur();
+        input.focus();
+        input.setSelectionRange(input.selectionStart, input.selectionEnd);
     });
 
     popup.addEventListener('click', (e) => {
         e.stopPropagation();
+        const popupRect = popup.getBoundingClientRect();
+        const isClickInside = (
+            e.clientX >= popupRect.left &&
+            e.clientX <= popupRect.right &&
+            e.clientY >= popupRect.top &&
+            e.clientY <= popupRect.bottom
+        );
+
+        if (!isClickInside) {
+            // click on the dialog backdrop
+            e.preventDefault();
+            e.stopPropagation();
+            popup.close();
+            isOpen = false;
+            input.blur();
+            input.focus();
+            input.setSelectionRange(input.selectionStart, input.selectionEnd);
+        }
+    });
+
+    popup.addEventListener('cancel', (e) => {
+        event.preventDefault();
+        if (isOpen) {
+            popup.close();
+            isOpen = false;
+            input.blur();
+            input.focus();
+            input.setSelectionRange(input.selectionStart, input.selectionEnd);
+        }
     });
 
     document.addEventListener('mousedown', (e) => {
         if (!container.contains(e.target)) {
-            popup.style.display = 'none';
+            popup.close();
             isOpen = false;
+            input.blur();
+            input.focus();
+            input.setSelectionRange(input.selectionStart, input.selectionEnd);
         }
     });
 
     input.addEventListener('keydown', (e) => {
         if ((e.key === 'ArrowDown' || e.key === 'Down') && !isOpen) {
-            popup.style.display = 'block';
+            popup.showModal();
+
+            // positioning the popup dialog
+            if (!getCachedDialogLeftTop(popup)) {
+                const dialogRect = popup.getBoundingClientRect();
+                popup.setAttribute('data-initial-left', dialogRect.left);
+                popup.setAttribute('data-initial-top', dialogRect.top);
+            }
+            const popupRect = getCachedDialogLeftTop(popup);
+            const inputRect = input.getBoundingClientRect();
+            const offsetX = inputRect.left - popupRect.left;
+            const offsetY = inputRect.bottom - popupRect.top;
+            popup.style.transform = `translate(${offsetX}px, ${offsetY}px)`;
+
             isOpen = true;
             e.preventDefault();
-        }
-        if (isOpen && e.key === 'Escape') {
-            popup.style.display = 'none';
-            isOpen = false;
-            input.blur();
         }
     });
 
