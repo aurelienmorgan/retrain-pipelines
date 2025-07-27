@@ -621,7 +621,8 @@ def register(app, rt, prefix=""):
                 Div(# Actual list
                     id="log-container",
                     style=(
-                        "max-height: 600px; overflow-y: auto; padding: 8px 16px 4px 16px; "
+                        "height: calc(100vh - 200px); " # window height minus header & footer
+                        "overflow-y: auto; padding: 8px 16px 4px 16px; "
                         "background: linear-gradient(135deg, "
                             "rgba(255,255,255,0.05) 0%, "
                             "rgba(248,249,250,0.05) 100%); "
@@ -865,6 +866,7 @@ def register(app, rt, prefix=""):
 
                     async function connectWebSocket() {
                         let ws;
+
                         const ws_url = `ws://${location.host}/{prefix}web_server/stream_logs`;
                         // start and allow for restart on connection lost
                         while (true) {
@@ -874,6 +876,7 @@ def register(app, rt, prefix=""):
                                 await new Promise((resolve, reject) => {
                                     ws.onopen = () => {
                                         console.log("WebSocket connected.");
+                                        loadLogs();
                                         resolve();
                                     };
                                     ws.onerror = (err) => {
@@ -989,12 +992,10 @@ def register(app, rt, prefix=""):
                         });
                     }
 
-                    // Assign to DOMContentLoaded event
-                    window.addEventListener('DOMContentLoaded', function() {
-                        // leave time for WebSocket to connect
-                        // so loadLogs event is streamed
-                        setTimeout(loadLogs, 500);
-                    });
+                    // Note that 'loadLogs' is first triggered
+                    // not straight at page load
+                    // but once the log-streaming websocket get connected
+                    // so the so loadLogs event is streamed
 
                     // Assign to selection list change event
                     document.addEventListener('DOMContentLoaded', function() {
