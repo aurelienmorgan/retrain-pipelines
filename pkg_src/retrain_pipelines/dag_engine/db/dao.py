@@ -207,18 +207,27 @@ class AsyncDAO(DAOBase):
     async def get_execution(self, id: int):
         return await self._get_entity(Execution, id=id)
 
-    async def get_distinct_execution_names(self):
+    async def get_distinct_execution_names(
+        self, sorted=False
+    ):
+        statement = select(Execution.name).distinct()
+        if sorted:
+            statement = statement.order_by(Execution.name)
+
         async with self._get_session() as session:
-            result = await session.execute(
-                select(Execution.name).distinct()
-            )
+            result = await session.execute(statement)
             return [row[0] for row in result.all()]
 
-    async def get_distinct_execution_usernames(self):
+    async def get_distinct_execution_usernames(
+        self, sorted=False
+    ):
+        statement = select(Execution.username).distinct()
+        if sorted:
+            statement = statement.order_by(
+                Execution.username)
+
         async with self._get_session() as session:
-            result = await session.execute(
-                select(Execution.username).distinct()
-            )
+            result = await session.execute(statement)
             return [row[0] for row in result.all()]
 
     async def get_executions_before(

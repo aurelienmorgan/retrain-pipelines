@@ -14,14 +14,16 @@ async def get_users() -> List[str]:
     dao = AsyncDAO(
         db_url=os.environ["RP_METADATASTORE_ASYNC_URL"]
     )
-    return await dao.get_distinct_execution_usernames()
+    return await dao.get_distinct_execution_usernames(
+        sorted=True)
 
 
 async def get_pipeline_names() -> List[str]:
     dao = AsyncDAO(
         db_url=os.environ["RP_METADATASTORE_ASYNC_URL"]
     )
-    return await dao.get_distinct_execution_names()
+    return await dao.get_distinct_execution_names(
+        sorted=True)
 
 
 async def get_executions_before(
