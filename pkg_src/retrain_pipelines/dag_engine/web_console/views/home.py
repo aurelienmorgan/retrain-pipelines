@@ -40,8 +40,10 @@ def AutoCompleteSelect(
     Results:
         - (Div)
     """
-    input_id = f"{id}_input"
-    dropdown_id = f"{id}_dropdown"
+    input_id = f"{id}-input"
+    dropdown_id = f"{id}-dropdown"
+
+    id = id.replace("-", "_")
     just_sel_flag = f"_justSelected_{id}"
 
     return Div(
@@ -52,6 +54,7 @@ def AutoCompleteSelect(
                 placeholder=placeholder,
                 value="",
                 autocomplete="off",
+                spellcheck="false",
                 cls="combo-input",
                 _onfocus=f"window.g_onFocus_{id}()",
                 _oninput=f"window.g_filterDropdown_{id}(this.value)",
@@ -60,6 +63,7 @@ def AutoCompleteSelect(
             ),
             Div(# container of .combo-option items
                 id=dropdown_id,
+                tabindex="-1", # so it doesn't get focusable when with scrollbars
                 cls="combo-dropdown"
             ),
             cls="combo-root"
@@ -87,11 +91,14 @@ def AutoCompleteSelect(
                 window.g_delayedHideDropdown_{id} = function() {{
                     state.blurTimer = setTimeout(function() {{
                         var dd = document.getElementById('{dropdown_id}');
-                        if(dd) dd.classList.remove('open');
-                        state.active = -1;
-                        if(dd) {{
-                            for(let c of dd.children) {{
-                                c.classList.remove('keyboard-active');
+                        // prevent blur on dropdown scrollbar drag
+                        if (!dd.contains(document.activeElement)) {{
+                            if(dd) dd.classList.remove('open');
+                            state.active = -1;
+                            if(dd) {{
+                                for(let c of dd.children) {{
+                                    c.classList.remove('keyboard-active');
+                                }}
                             }}
                         }}
                     }}, 110);
@@ -150,6 +157,7 @@ def AutoCompleteSelect(
                                     c.classList.remove('keyboard-active');
                                 }}
                                 visible[0].classList.add('keyboard-active');
+                                visible[0].scrollIntoView({{behavior: 'smooth', block: 'center'}});
                                 state.active = 0;
                             }}
                             ev.preventDefault();
@@ -191,9 +199,8 @@ def AutoCompleteSelect(
                             visible[active].classList.add('keyboard-active');
                         state.active = active;
                         let el = visible[active];
-                        if(el && typeof el.scrollIntoView === "function") {{
-                            el.scrollIntoView({{block: "nearest"}});
-                        }}
+                        if(el && typeof el.scrollIntoView === "function")
+                            el.scrollIntoView({{behavior: 'smooth', block: 'center'}});
                     }}
                 }};
                 window.g_hoverDropdownOption_{id} = function(idx) {{
@@ -201,7 +208,9 @@ def AutoCompleteSelect(
                     if(!dd) return;
                     for(let c of dd.children) c.classList.remove('keyboard-active');
                     var el = document.getElementById('{dropdown_id}_opt_' + idx);
-                    if(el) el.classList.add('keyboard-active');
+                    if(el) {{
+                        el.classList.add('keyboard-active');
+                    }}
                     state.active = -1;
                 }};
                 window.g_unhoverDropdownOption_{id} = function(idx) {{
@@ -233,6 +242,16 @@ def AutoCompleteSelect(
                     }}
                 }}
 
+                const resizeObserver = new ResizeObserver((entries) => {{
+                    entries.forEach(entry => {{
+                        option = entry.target;
+                        // if entry label is too long to fit, ellipsis is applied
+                        // we add the whole value in contextual popup
+                        if (option.scrollWidth > option.clientWidth)
+                            option.title = option.textContent.trim();
+                    }});
+                }});
+
                 function renderOptions(list, term) {{
                     dd.innerHTML = "";
                     list.forEach(function(opt, i) {{
@@ -252,6 +271,7 @@ def AutoCompleteSelect(
                             item.onmouseout = function() {{
                                 window.g_unhoverDropdownOption_{id}(i);
                             }};
+                            resizeObserver.observe(item);
                             dd.appendChild(item);
                         }}
                     }});
@@ -274,6 +294,12 @@ def AutoCompleteSelect(
                     }}
                 }});
 
+                dd.addEventListener('mouseup', function(e) {{
+                    // to prevent focus going to dropdown
+                    // on user scrollbar mouse drag
+                    input.focus();
+                }});
+
                 document.addEventListener("DOMContentLoaded", function() {{
                     fetch("{options_url}", {{
                         method: 'GET',
@@ -282,7 +308,7 @@ def AutoCompleteSelect(
                     .then(function(resp) {{ return resp.json(); }})
                     .then(function(list) {{
                         // intiale value from cookie
-                        const cookieKey = COOKIE_PREFIX + '{id}';
+                        const cookieKey = COOKIE_PREFIX + '{id.replace("_", "-")}';
                         const cookies = document.cookie.split("; ");
                         input.value = "";
                         for (const cookie of cookies) {{
@@ -303,7 +329,7 @@ def AutoCompleteSelect(
 
             }})();
         """),
-        id=id,
+        id=id.replace("_", "-"),
         style=style
     )
 
@@ -339,7 +365,7 @@ def FilterElement(
                 "position: relative; "
                 f"--label-shadow-color: {label_shadow_color};"
             )
-        ),
+        )
 
 def register(app, rt, prefix=""):
     @rt("/favicon.ico")
@@ -355,6 +381,13 @@ def register(app, rt, prefix=""):
         file_fullname = os.path.join(APP_STATIC_DIR, f"{fname}.{ext}")
         stat = os.stat(file_fullname)
         last_modified = formatdate(stat.st_mtime, usegmt=True)
+        headers = {
+            "Last-Modified": last_modified,
+            "Cache-Control": "public" # "no-cache" to force
+                                      # browser revalidation
+                                      # on each request
+        }
+
         # Check If-Modified-Since header
         if_modified_since = request.headers.get("if-modified-since")
         if if_modified_since:
@@ -363,8 +396,8 @@ def register(app, rt, prefix=""):
                         .replace(tzinfo=timezone.utc) \
                         .replace(microsecond=0)
             if file_dt <= since_dt:
-                return Response(status_code=304)
-        headers = {"Last-Modified": last_modified}
+                return Response(status_code=304, headers=headers)
+
         return FileResponse(file_fullname, headers=headers)
 
 
@@ -425,42 +458,62 @@ def register(app, rt, prefix=""):
                         Div(
                             FilterElement(# pipeline-name filter
                                 "pipeline",
-                                AutoCompleteSelect(
-                                    options_url=f"{prefix}/distinct_pipeline_names",
-                                    id="pipeline_name_autocomplete",
-                                    placeholder="select or type...",
-                                    style="margin-right: 4px;"
+                                Div(
+                                    AutoCompleteSelect(
+                                        options_url=f"{prefix}/distinct_pipeline_names",
+                                        id="pipeline-name-autocomplete",
+                                        placeholder="select or type...",
+                                        style=(
+                                            "margin-right: 4px; "
+                                            "scrollbar-width: thin; "
+                                            "scrollbar-color: #4d0066 #FFFFCC20;"
+                                        )
+                                    ),
+                                    style="min-width: 50px; min-height: 18px;"
                                 ),
                                 label_shadow_color="rgba(77, 0, 102, .7)"
                             ),
                             FilterElement(# username filter
                                 "user",
-                                AutoCompleteSelect(
-                                    options_url=f"{prefix}/distinct_users",
-                                    id="pipeline_user_autocomplete",
-                                    placeholder="select or type...",
-                                    style="margin-right: 4px;"
+                                Div(
+                                    AutoCompleteSelect(
+                                        options_url=f"{prefix}/distinct_users",
+                                        id="pipeline-user-autocomplete",
+                                        placeholder="select or type...",
+                                        style=(
+                                            "margin-right: 4px; "
+                                            "scrollbar-width: thin; "
+                                            "scrollbar-color: #4d0066 #FFFFCC20;"
+                                        )
+                                    ),
+                                    style="min-width: 50px; min-height: 18px;"
                                 ),
                                 label_shadow_color="rgba(77, 0, 102, .7)"
                             ),
                             Style("""
-                                #pipeline_name_autocomplete_input.combo-input {
+                                #pipeline-name-autocomplete-input.combo-input {
                                     min-width: 130px; width: 130px;
                                 }
-                                #pipeline_user_autocomplete_input.combo-input {
+                                #pipeline-user-autocomplete-input.combo-input {
                                     min-width: 100px; width: 100px;
                                 }
                             """),
                             FilterElement(# datetime filter
                                 "before",
                                 Div(
-                                    id="pipeline-datetime-container",
-                                    style="--shadow-color: rgba(77, 0, 102, .3);"
+                                    id="pipeline-before-datetime", # picker container
+                                    style=(
+                                        "min-width: 60px; min-height: 18px; "
+                                        "--shadow-color: rgba(77, 0, 102, .3);"
+                                    )
                                 ),
                                 Script(
                                     """
-                                      import { attachDateTimePicker } from './datetime-picker.js';
-                                      attachDateTimePicker('pipeline-datetime-container');
+                                        import { attachDateTimePicker } from './datetime-picker.js';
+                                        attachDateTimePicker(
+                                            'pipeline-before-datetime',
+                                            {COOKIE_PREFIX: 'executions_dashboard:'}
+                                        );
                                     """,
                                     type="module"
                                 ),
@@ -496,8 +549,8 @@ def register(app, rt, prefix=""):
                             * For autocomplete inputs *
                             ************************ */
                             function memorizeAutoCombo(combo_id) {
-                                const input = document.getElementById(combo_id+'_input');
-                                const dropdown = document.getElementById(combo_id + "_dropdown");
+                                const input = document.getElementById(combo_id+'-input');
+                                const dropdown = document.getElementById(combo_id + "-dropdown");
                                 const cookieKey = COOKIE_PREFIX + combo_id;
 
                                 if (!input) return;
@@ -517,8 +570,8 @@ def register(app, rt, prefix=""):
                                 }
                             }
 
-                            memorizeAutoCombo("pipeline_name_autocomplete");
-                            memorizeAutoCombo("pipeline_user_autocomplete");
+                            memorizeAutoCombo("pipeline-name-autocomplete");
+                            memorizeAutoCombo("pipeline-user-autocomplete");
                         """),
                         style=(
                             "display: flex; align-items: baseline; margin-bottom: 8px;"
@@ -528,7 +581,8 @@ def register(app, rt, prefix=""):
                 Div(# Actual list
                     id="executions-container",
                     style=(
-                        "max-height: 600px; overflow-y: auto; padding: 8px 16px 4px 16px; "
+                        "height: calc(100vh - 200px); " # window height minus header & footer
+                        "overflow-y: auto; padding: 8px 16px 4px 16px; "
                         "background: linear-gradient(135deg, "
                             "rgba(255,255,255,0.05) 0%, "
                             "rgba(248,249,250,0.05) 100%); "
