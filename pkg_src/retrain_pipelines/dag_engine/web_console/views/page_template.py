@@ -253,8 +253,36 @@ def footer():
             A(
                 "page top\u00A0↑\u00A0\u00A0\u00A0",
                 href="#pageTop",
-                style="color: #6082B6; text-decoration: none;"
+                id="pageTopLink",
+                style=(
+                    "color: #6082B6; text-decoration: none; "
+                    "display: none;"
+                )
             ),
+            Script("""// Show/Hide to-window-top hyperlink
+                function togglePageTopLink() {
+                    const link = document.getElementById("pageTopLink");
+                    if (!link) return;
+                    if (document.documentElement.scrollHeight > window.innerHeight) {
+                        link.style.display = "inline";
+                    } else {
+                        link.style.display = "none";
+                    }
+                }
+
+                // Initial checks for scrollability
+                window.addEventListener('resize', togglePageTopLink);
+                window.addEventListener('DOMContentLoaded', togglePageTopLink);
+                window.addEventListener('load', togglePageTopLink);
+
+                // Watch for DOM/content changes
+                const linkToggleObserver = new MutationObserver(togglePageTopLink);
+                linkToggleObserver.observe(document.body, {
+                    childList: true,
+                    subtree: true,
+                    characterData: true
+                });
+            """),
             style=(
                 "margin-top: 8px; margin-bottom: 8px; "
                 "display: flex; justify-content: space-between; "
@@ -266,80 +294,54 @@ def footer():
 
 
 page_template_css = Style("""
-html {
-    scroll-behavior: smooth;
-}
-
-body {
-    background-color: #4d0066;
-    font-family: 'Roboto', sans-serif;
-    font-size: 0.95rem;
-}
-
-/* Webkit browsers (Chrome, Safari, Edge) */
-::-webkit-scrollbar {
-    height: 12px;
-    width: 12px;
-}
-::-webkit-scrollbar-track {
-    background: #f1f1f1;
-    border: 2px solid #FFFFCC;
-}
-::-webkit-scrollbar-thumb {
-    background-color: #4d0066;
-    border: 2px solid #FFFFCC80;
-}
-/* Firefox */
-html {
-    scrollbar-width: thin;
-    scrollbar-color: #4d0066 #FFFFCC80;
-}
-
+/* checkboxes */
 input.gcheckbox {
-  appearance: none;
-  -webkit-appearance: none;
-  -moz-appearance: none;
-  width: 18px;
-  height: 18px;
-  border-radius: 6px;
-  background: linear-gradient(135deg, rgba(255,255,255,0.8), rgba(230,240,255,0.6));
-  border: 1px solid rgba(180,200,230,0.5);
-  box-shadow: 0 1px 3px rgba(0,0,0,0.1), inset 0 1px 0 rgba(255,255,255,0.7);
-  backdrop-filter: blur(1.5px);
-  cursor: pointer;
-  display: inline-block;
-  position: relative;
-  margin: 0 2px 0 2px; align-self: center;
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    width: 18px;
+    height: 18px;
+    border-radius: 6px;
+    background: linear-gradient(135deg, rgba(255,255,255,0.8), rgba(230,240,255,0.6));
+    border: 1px solid rgba(180,200,230,0.5);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1), inset 0 1px 0 rgba(255,255,255,0.7);
+    backdrop-filter: blur(1.5px);
+    cursor: pointer;
+    display: inline-block;
+    position: relative;
+    margin: 0 2px 0 2px; align-self: center;
 }
 input.gcheckbox::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  text-align: center;
-  font-size: 14px;
-  font-weight: bold;
-  color: #4d0066;
-  pointer-events: none;
-  line-height: 18px;
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    text-align: center;
+    font-size: 14px;
+    font-weight: bold;
+    color: #4d0066;
+    pointer-events: none;
+    line-height: 18px;
 }
 input.gcheckbox:checked::before {
   content: "✓";
 }
 
+/* table headers */
 .glass-engraved {
-  font-size: 1.1em;
-  color: rgba(154,102,179,0.3);
-  letter-spacing: 0.1em;
-  text-shadow:
-    0.05em 0.05em 0.1em rgba(0,0,0,0.6),
-   -0.05em -0.05em 0.05em rgba(255,255,255,0.8),
-    0 0.1em 0.3em rgba(0,0,0,0.3);
-  opacity: 0.3;
+    font-size: 1.1em;
+    color: rgba(154,102,179,0.3);
+    letter-spacing: 0.1em;
+    text-shadow:
+        0.05em 0.05em 0.1em rgba(0,0,0,0.6),
+        -0.05em -0.05em 0.05em rgba(255,255,255,0.8),
+        0 0.1em 0.3em rgba(0,0,0,0.3);
+    opacity: 0.3;
 }
 
+/* comboboxes */
 .combo-root {
     position: relative;
     display: flex;
@@ -370,49 +372,102 @@ input.gcheckbox:checked::before {
     box-shadow: 0 2.5px 10px rgba(80, 0, 140, 0.10);
 }
 .combo-input-unselected {
-    font-style: italic;
-    color: #222 !important;
+    font-style: italic; color: #222 !important;
 }
 .combo-input-selected-red {
     font-style: italic; color: red !important;
 }
 .combo-dropdown {
     position: absolute;
-    left: 0;
-    right: 0;
-    top: 102%;
+    left: 6px;
+    right: 9px;
+    top: 100%;
     z-index: 40;
-    background: linear-gradient(135deg, rgba(255,255,255,0.95) 40%,
-                                rgba(230,240,255,0.67) 100%);
-    border-radius: 0 0 11px 11px;
+    background: linear-gradient(135deg,
+        rgba(230,240,255,0.7) 40%,
+        rgba(200,220,255,0.6) 100%);
     border: 1px solid rgba(180,200,230,0.45);
+    border-radius: 4px;
     box-shadow: 0 2px 14px rgba(60,30,102,0.12);
-    padding: 4px 0;
-    backdrop-filter: blur(2.1px);
+    padding: 2px 0;
+    backdrop-filter: blur(2px);
     max-height: 180px;
     overflow-y: auto;
     display: none;
+    font-family: 'Roboto', sans-serif;
+    font-size: 13px;
+    color: #4d0066;
 }
 .combo-dropdown.open {
     display: block;
 }
 .combo-option {
-    font-size: 14px;
+    font-size: 13px;
     color: #4d0066;
-    padding: 6px 14px 6px 14px;
+    padding: 4px 8px;
     cursor: pointer;
     background: transparent;
-    transition: background 0.14s, color 0.14s;
-    line-height: 19px;
-    display: flex;
-    align-items: baseline;
+    border: none;
+    transition: background 0.1s ease;
+    line-height: 16px;
+    display: block;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    direction: rtl;
+    text-align: left;
+    margin: 1px 0;
+}
+.combo-option * {
+    direction: ltr;
+}
+.combo-option:nth-child(odd) {
+    background: linear-gradient(135deg,
+        rgba(180,140,220,0.4),
+        rgba(200,160,230,0.3));
+    border: 1px solid rgba(112, 51, 152, 0.2);
+    box-shadow: 0 1px 2px rgba(0,0,0,0.05),
+        inset 0 1px 0 rgba(255,255,255,0.7);
+}
+.combo-option:nth-child(even) {
+    background: linear-gradient(135deg,
+        rgba(160,100,200,0.5),
+        rgba(190,140,220,0.4));
+    border: 1px solid rgba(112, 51, 152, 0.3);
+    box-shadow: 0 1px 2px rgba(0,0,0,0.05),
+        inset 0 1px 0 rgba(255,255,255,0.6);
 }
 .combo-option.selected,
 .combo-option.keyboard-active {
-    background: linear-gradient(90deg, rgba(200,220,255,0.43) 0,
-                                rgba(150,170,230,0.14) 100%);
-    color: #330046;
+    background: linear-gradient(135deg,
+        rgba(120,60,160,0.8),
+        rgba(150,90,190,0.7)) !important;
+    border: 1px solid rgba(77, 0, 102, 0.7);
+    box-shadow: 0 3px 12px rgba(77,0,102,0.3),
+        inset 0 1px 0 rgba(255,255,255,0.8);
+    color: white;
 }
+/* A less-glassy alternative
+.combo-option:nth-child(odd) {
+    background: linear-gradient(135deg,
+        rgba(255,255,255,0.4),
+        rgba(245,240,255,0.3));
+}
+.combo-option:nth-child(even) {
+    background: linear-gradient(135deg,
+        rgba(220,200,255,0.5),
+        rgba(200,180,240,0.4));
+}
+.combo-option.selected,
+.combo-option.keyboard-active {
+    background: linear-gradient(135deg,
+        rgba(163,101,203,0.75),
+        rgba(196,168,213,0.65)) !important;
+    border: 1px solid rgba(112, 51, 152, 0.7);
+    box-shadow: 0 2px 8px rgba(77,0,102,0.3),
+        inset 0 1px 0 rgba(255,255,255,0.8);
+}
+*/
 
 .shiny-silver-text {
     font-weight: bold;
@@ -478,6 +533,10 @@ def page_layout(title, content, current_page="/"):
                 rel="stylesheet",
                 href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap"
             ),
+            Link(
+                rel="stylesheet",
+                href="/html_body.css"
+            ),
             Script(src="https://cdn.tailwindcss.com"),
             Script(src="https://unpkg.com/htmx.org@1.9.2"),
             page_template_css
@@ -495,6 +554,7 @@ def page_layout(title, content, current_page="/"):
                 cls="min-h-screen"
             ),
             footer()
-        )
+        ),
+        id="pageTop"
     )
 
