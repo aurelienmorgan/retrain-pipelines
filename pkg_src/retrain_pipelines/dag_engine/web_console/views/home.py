@@ -226,21 +226,12 @@ def AutoCompleteSelect(
                 var dd = document.getElementById('{dropdown_id}');
                 var selected = false;
 
-                function updateInputClass() {{
-                    if (!selected) {{
-                        input.classList.remove('combo-input-selected-red');
-                        input.classList.add('combo-input-unselected');
-                    }} else {{
-                        input.classList.remove('combo-input-unselected');
-                        var val = input.value;
-                        var opts = window["_options_{id}"] || [];
-                        if (opts.indexOf(val) === -1) {{
-                            input.classList.add('combo-input-selected-red');
-                        }} else {{
-                            input.classList.remove('combo-input-selected-red');
-                        }}
-                    }}
+                // Helper function to set a cookie
+                function setCookie(name, value) {{
+                    const expires = new Date(Date.now() + 50*365*24*60*60*1000).toUTCString();
+                        document.cookie = `${{name}}=${{value}}; expires=${{expires}}; path=/`;
                 }}
+                const COOKIE_PREFIX = "executions_dashboard:";
 
                 const resizeObserver = new ResizeObserver((entries) => {{
                     entries.forEach(entry => {{
@@ -263,7 +254,10 @@ def AutoCompleteSelect(
                             item.onmousedown = function() {{
                                 window.g_onMouseSelect_{id}(opt);
                                 selected = true;
-                                updateInputClass();
+                                input.classList.remove('combo-input-unselected');
+                                input.classList.remove('combo-input-selected-red');
+                                const cookieKey = COOKIE_PREFIX + '{id.replace("_", "-")}';
+                                setCookie(cookieKey, input.value);
                             }};
                             item.onmouseover = function() {{
                                 window.g_hoverDropdownOption_{id}(i);
@@ -278,9 +272,10 @@ def AutoCompleteSelect(
                 }}
 
                 input.addEventListener('input', function() {{
+                    input.classList.remove('combo-input-selected-red');
+                    input.classList.add('combo-input-unselected');
                     var term = input.value;
                     selected = false;
-                    updateInputClass();
                     var opts = window["_options_{id}"] || [];
                     renderOptions(opts, term);
 
@@ -290,7 +285,17 @@ def AutoCompleteSelect(
                 input.addEventListener('keydown', function(e) {{
                     if (e.key === 'Enter') {{
                         selected = true;
-                        updateInputClass();
+
+                        input.classList.remove('combo-input-unselected');
+                        var val = input.value.trim();
+                        var opts = window["_options_{id}"] || [];
+                        if (val > "" && opts.indexOf(val) === -1) {{
+                            input.classList.add('combo-input-selected-red');
+                        }} else {{
+                            input.classList.remove('combo-input-selected-red');
+                            const cookieKey = COOKIE_PREFIX + '{id.replace("_", "-")}';
+                            setCookie(cookieKey, val);
+                        }}
                     }}
                 }});
 
@@ -321,9 +326,8 @@ def AutoCompleteSelect(
                         // cascade to dropdown behavior
                         window["_options_{id}"] = list;
                         renderOptions(list, input.value);
-                        // apply 3-states format
+
                         selected = true;
-                        updateInputClass();
                     }});
                 }});
 
@@ -536,43 +540,6 @@ def register(app, rt, prefix=""):
                                 "margin-left: auto;"
                             )
                         ),
-                        Script("""// Memorize the user-selected params as cookies
-                            // Helper function to set a cookie
-                            function setCookie(name, value, days = 365) {
-                                // 50 years in the future
-                                const expires = new Date(Date.now() + 50*365*24*60*60*1000).toUTCString();
-                                    document.cookie = `${name}=${value}; expires=${expires}; path=/`;
-                            }
-                            const COOKIE_PREFIX = "executions_dashboard:";
-
-                            /* ************************
-                            * For autocomplete inputs *
-                            ************************ */
-                            function memorizeAutoCombo(combo_id) {
-                                const input = document.getElementById(combo_id+'-input');
-                                const dropdown = document.getElementById(combo_id + "-dropdown");
-                                const cookieKey = COOKIE_PREFIX + combo_id;
-
-                                if (!input) return;
-                                // Store on Enter press
-                                input.addEventListener("keydown", e => {
-                                    if (e.key === "Enter") {
-                                        setCookie(cookieKey, input.value);
-                                    }
-                                });
-                                // Store on dropdown select (delegated)
-                                if (dropdown) {
-                                    dropdown.addEventListener("mousedown", function(e) {
-                                        if (e.target && e.target.classList.contains("combo-option")) {
-                                            setCookie(cookieKey, input.value);
-                                        }
-                                    });
-                                }
-                            }
-
-                            memorizeAutoCombo("pipeline-name-autocomplete");
-                            memorizeAutoCombo("pipeline-user-autocomplete");
-                        """),
                         style=(
                             "display: flex; align-items: baseline; margin-bottom: 8px;"
                         )
@@ -600,9 +567,41 @@ def register(app, rt, prefix=""):
                         const execContainer = document.getElementById("executions-container");
                         execContainer.innerHTML = '';
 
+                        // retrieve last validated comboboxes value from cookie
+                        const cookies = document.cookie.split("; ");
+                        const COOKIE_PREFIX = "executions_dashboard:";
+
+                        pipeline_name = "";
+                        const pipeline_name_cookieKey = COOKIE_PREFIX + 'pipeline-name-autocomplete';
+                        for (const cookie of cookies) {{
+                            const [key, val] = cookie.split("=");
+                            if (key === pipeline_name_cookieKey) {{
+                                pipeline_name = decodeURIComponent(val||"");
+                            }}
+                        }}
+
+                        username = "";
+                        const username_cookieKey = COOKIE_PREFIX + 'pipeline-user-autocomplete';
+                        for (const cookie of cookies) {{
+                            const [key, val] = cookie.split("=");
+                            if (key === username_cookieKey) {{
+                                username = decodeURIComponent(val||"");
+                            }}
+                        }}
+
+                        // retireve last validated datetime value from hidden input
+                        before_datetime_str = document.getElementById(
+                            "pipeline-before-datetime-selected").value;
+
                         // form data for the html POST
                         const formData = new FormData();
-                        formData.append('before_datetime', new Date());
+                        if (pipeline_name != "")
+                            formData.append('pipeline_name', pipeline_name);
+                        if (username != "")
+                            formData.append('username', username);
+                        if (before_datetime_str != "")
+                            formData.append('before_datetime',
+                                            new Date(before_datetime_str));
 
                         fetch('/{prefix}load_executions', {
                             method: 'POST',
