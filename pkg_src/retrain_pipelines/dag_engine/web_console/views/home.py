@@ -2,7 +2,6 @@
 import os
 
 from typing import Optional, Union
-
 from datetime import datetime, timezone
 from email.utils import formatdate, \
     parsedate_to_datetime
@@ -12,7 +11,7 @@ from fasthtml.common import Div, H1, H3, P, \
 
 from .. import APP_STATIC_DIR
 from ..utils.executions import get_users, \
-    get_pipeline_names, get_executions_before
+    get_pipeline_names, get_executions
 from .page_template import page_layout
 
 
@@ -20,6 +19,7 @@ def AutoCompleteSelect(
     options_url: str,
     id: str,
     placeholder: Optional[str] = "",
+    js_callback: Optional[str] = "",
     style: Optional[str] = ""
 ) -> Div:
     """A DOM element of type auto-complete combobox
@@ -35,6 +35,8 @@ def AutoCompleteSelect(
             the id of the DOM element
         - placeholder (optional, str):
             the placeholder of the textfield
+        - js_callback (optional, str):
+            the callback event listener js code
         - style (optional, str):
             custom css
     Results:
@@ -59,6 +61,7 @@ def AutoCompleteSelect(
                 _onfocus=f"window.g_onFocus_{id}()",
                 _oninput=f"window.g_filterDropdown_{id}(this.value)",
                 _onkeydown=f"window.g_dropdownKey_{id}(event)",
+                _onkeyup=f"if(event.key === 'Enter'){{ {js_callback} }}",
                 _onblur=f"window.g_delayedHideDropdown_{id}()",
             ),
             Div(# container of .combo-option items
@@ -134,6 +137,14 @@ def AutoCompleteSelect(
                                 input.focus();
                                 var len = input.value.length;
                                 input.setSelectionRange(len, len);
+                                // fire 'onkeyup' event (trigger 'js_callback')
+                                input.dispatchEvent(
+                                    new KeyboardEvent("keyup", {{
+                                      key: "Enter", code: "Enter",
+                                      keyCode: 13, which: 13,
+                                      bubbles: true, cancelable: true
+                                    }})
+                                );
                             }}, 0);
                         }}
                     }}
@@ -424,14 +435,33 @@ def register(app, rt, prefix=""):
         # Retrieves params from form data (POST)
         form = await request.form()
         print(form)
-        before_datetime = \
-            datetime.strptime(
-                form.get("before_datetime")[:33],
-                "%a %b %d %Y %H:%M:%S GMT%z"
-            )
-        print(request)
-        execution_entries = await get_executions_before(
-            before_datetime=before_datetime, n=50
+
+        before_datetime_str = form.get("before_datetime")
+        if before_datetime_str:
+            try:
+                before_datetime = datetime.strptime(
+                    before_datetime_str[:33],
+                    "%a %b %d %Y %H:%M:%S GMT%z"
+                )
+                # Convert to UTC (timezone used by the DAG engine)
+                before_datetime = \
+                    before_datetime.astimezone(timezone.utc)
+            except Exception as e:
+                print(e)
+                before_datetime = None
+        else:
+            before_datetime = None
+
+        pipeline_name = form.get("pipeline_name") or None
+        username = form.get("username") or None
+        n = form.get("n") or None
+
+        execution_entries = await get_executions(
+            pipeline_name=pipeline_name,
+            username=username,
+            before_datetime=before_datetime,
+            n=n,
+            descending=True
         )
 
         return execution_entries
@@ -467,6 +497,7 @@ def register(app, rt, prefix=""):
                                         options_url=f"{prefix}/distinct_pipeline_names",
                                         id="pipeline-name-autocomplete",
                                         placeholder="select or type...",
+                                        js_callback="loadExecs();",
                                         style=(
                                             "margin-right: 4px; "
                                             "scrollbar-width: thin; "
@@ -484,6 +515,7 @@ def register(app, rt, prefix=""):
                                         options_url=f"{prefix}/distinct_users",
                                         id="pipeline-user-autocomplete",
                                         placeholder="select or type...",
+                                        js_callback="loadExecs();",
                                         style=(
                                             "margin-right: 4px; "
                                             "scrollbar-width: thin; "
@@ -506,6 +538,7 @@ def register(app, rt, prefix=""):
                                 "before",
                                 Div(
                                     id="pipeline-before-datetime", # picker container
+                                    callback="loadExecs();",
                                     style=(
                                         "min-width: 60px; min-height: 18px; "
                                         "--shadow-color: rgba(77, 0, 102, .3);"
@@ -602,6 +635,8 @@ def register(app, rt, prefix=""):
                         if (before_datetime_str != "")
                             formData.append('before_datetime',
                                             new Date(before_datetime_str));
+                        const batch_executions_count = 75;
+                        formData.append('n', batch_executions_count);
 
                         fetch('/{prefix}load_executions', {
                             method: 'POST',

@@ -9,7 +9,7 @@ import textwrap
 import functools
 import concurrent.futures
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from typing import Callable, List, Optional, Union, \
     Dict, Any
@@ -122,7 +122,7 @@ class Task(BaseModel):
                 exec_id=self.exec_id,
                 name=self.name,
                 rank=self.rank,
-                start_timestamp=datetime.now()
+                start_timestamp=datetime.now(timezone.utc)
             )
 
             self.log.info(
@@ -141,7 +141,7 @@ class Task(BaseModel):
             try:
                 result = merge_func(*args, **kwargs)
             except Exception as ex:
-                end_timestamp = datetime.now()
+                end_timestamp = datetime.now(timezone.utc)
                 dao.update_task(
                     id=self.task_id,
                     end_timestamp=end_timestamp,
@@ -176,7 +176,7 @@ class Task(BaseModel):
                     exec_id=self.exec_id,
                     name=self.name,
                     rank=self.rank,
-                    start_timestamp=datetime.now()
+                    start_timestamp=datetime.now(timezone.utc)
                 )
 
             docstring = '\n'.join(
@@ -215,7 +215,7 @@ class Task(BaseModel):
                 raise TaskFuncException(
                     f"task `{self.name}` failed") from ex
             finally:
-                end_timestamp = datetime.now()
+                end_timestamp = datetime.now(timezone.utc)
                 dao.update_task(
                     id=self.task_id,
                     end_timestamp=end_timestamp,
@@ -243,13 +243,13 @@ class Task(BaseModel):
             # Get the calling frame (1 level up)
             frame = inspect.currentframe()
             caller_frame = frame.f_back
-            coller_module_name = os.path.basename(
+            caller_module_name = os.path.basename(
                     caller_frame.f_code.co_filename
                 ).split(".")[-2]
             self.exec_id = dao.add_execution(
-                name=coller_module_name,
+                name=caller_module_name,
                 username=getpass.getuser(),
-                start_timestamp=datetime.now()
+                start_timestamp=datetime.now(timezone.utc)
             )
             self.log.info(f"[bold red]{self.name} has no exec_id[/]")
             for child in self.children:

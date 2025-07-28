@@ -491,6 +491,7 @@ export function attachDateTimePicker(divId, {COOKIE_PREFIX = ''} = {}) {
     `;
 
     const input = container.querySelector('.datetime-input');
+    const callback = container.getAttribute('callback');
     const hiddenInput = document.getElementById(`${divId}-selected`);
     const popup = container.querySelector('.datetime-popup');
     const prevMonth = container.querySelector('.prev-month');
@@ -751,7 +752,7 @@ export function attachDateTimePicker(divId, {COOKIE_PREFIX = ''} = {}) {
                     const d = selectedDate.getDate().toString().padStart(2, '0');
                     dateStr = `${y}-${m}-${d}`;
                 }
-                let selectedTime = '';
+                selectedTime = '';
                 if (state.time) {
                     selectedTime = state.time;
                     const match = state.time.match(/^(\d{1,2}):(\d{2}) ?(AM|PM)?$/i);
@@ -906,6 +907,7 @@ export function attachDateTimePicker(divId, {COOKIE_PREFIX = ''} = {}) {
                 currentMonth = today.getMonth();
                 focusedDay = today.getDate();
                 renderCalendar();
+                eval(callback);
                 return;
             }
 
@@ -956,6 +958,7 @@ export function attachDateTimePicker(divId, {COOKIE_PREFIX = ''} = {}) {
                 hiddenInput.value = input.value; // for external access to selected datetime
                 saveState();
                 renderCalendar();
+                eval(callback);
             }
         }
     });
@@ -1036,10 +1039,6 @@ export function attachDateTimePicker(divId, {COOKIE_PREFIX = ''} = {}) {
             }
         });
 
-//        input.addEventListener('focus', () => {
-//            input.select();
-//            input.setSelectionRange(input.selectionStart, input.selectionEnd);
-//        });
         input.addEventListener('mousedown', e => {
             e.preventDefault();
             e.stopPropagation()
@@ -1117,6 +1116,7 @@ export function attachDateTimePicker(divId, {COOKIE_PREFIX = ''} = {}) {
     function confirmAction(e) {
         e.stopPropagation();
         if (selectedDate) {
+console.log("confirmAction");
             // in case user clicked to change current calendar month
             // AFTER he/she selected the day, we re-render the calendar grid
             currentYear = selectedDate.getFullYear();
@@ -1125,24 +1125,30 @@ export function attachDateTimePicker(divId, {COOKIE_PREFIX = ''} = {}) {
             renderCalendar();
 
             // handle the time
-            const hours = hourInput.value || '12';
-            const minutes = minuteInput.value || '00';
+            selectedTime = '';
+            const hours = hourInput.value;
+            const minutes = minuteInput.value;
             const ampm = ampmSelect.value;
-
-            selectedTime = `${hours.padStart(2, '0')}:${minutes.padStart(2, '0')} ${ampm}`;
-
+            if (hours && minutes) {
+                selectedTime = `${hours.padStart(2, '0')}:${minutes.padStart(2, '0')} ${ampm}`;
+            }
             const y = selectedDate.getFullYear();
             const m = (selectedDate.getMonth() + 1).toString().padStart(2, '0');
             const d = selectedDate.getDate().toString().padStart(2, '0');
             const dateStr = `${y}-${m}-${d}`;
 
             // save & close popup dialog
-            input.value = `${dateStr} ${selectedTime}`;
+            input.classList.remove('datetime-input-unselected');
+            input.classList.remove('datetime-input-selected-red');
+            input.value = `${dateStr} ${selectedTime}`.trim();
+            savedSelection = {start: 0, end: input.value.length};
+            hiddenInput.value = input.value; // for external access to selected datetime
 
             saveState();
             popup.close();
             isOpen = false;
             input.focus();
+            eval(callback);
         }
     }
     function cancelAction(e) {

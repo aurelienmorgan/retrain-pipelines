@@ -2,10 +2,11 @@
 import logging
 import asyncio
 
-from typing import List
 from datetime import datetime
+from typing import List, Optional
 
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, select, \
+    and_, desc
 from sqlalchemy.orm import scoped_session, sessionmaker
 from sqlalchemy.ext.asyncio import create_async_engine, \
     AsyncSession
@@ -179,21 +180,21 @@ class DAO(DAOBase):
     def add_task(self, **kwargs) -> int:
         return self._add_entity(Task, **kwargs)
 
-    def update_execution(self, id, **kwargs):
+    def update_execution(self, id, **kwargs) -> Execution:
         """Update execution row’s fields by its id."""
         return self._update_entity(Execution, entity_id=id, **kwargs)
 
-    def update_task(self, id, **kwargs):
+    def update_task(self, id, **kwargs) -> Task:
         """Update task row’s fields by its id."""
         return self._update_entity(Task, entity_id=id, **kwargs)
 
-    def get_execution(self, id):
+    def get_execution(self, id) -> Execution:
         return self._get_entity(Execution, id=id)
 
-    def get_task(self, id):
+    def get_task(self, id) -> Task:
         return self._get_entity(Task, id=id)
 
-    def get_tasks_by_execution(self, exec_id):
+    def get_tasks_by_execution(self, exec_id) -> List[Task]:
         return self._get_entities(Task, exec_id=exec_id)
 
 
@@ -204,12 +205,12 @@ class AsyncDAO(DAOBase):
     async def add_execution(self) -> int:
         return await self._add_entity(Execution)
 
-    async def get_execution(self, id: int):
+    async def get_execution(self, id: int) -> Execution:
         return await self._get_entity(Execution, id=id)
 
     async def get_distinct_execution_names(
         self, sorted=False
-    ):
+    ) -> List[str]:
         statement = select(Execution.name).distinct()
         if sorted:
             statement = statement.order_by(Execution.name)
@@ -220,7 +221,7 @@ class AsyncDAO(DAOBase):
 
     async def get_distinct_execution_usernames(
         self, sorted=False
-    ):
+    ) -> List[str]:
         statement = select(Execution.username).distinct()
         if sorted:
             statement = statement.order_by(
@@ -230,29 +231,64 @@ class AsyncDAO(DAOBase):
             result = await session.execute(statement)
             return [row[0] for row in result.all()]
 
-    async def get_executions_before(
+    async def get_executions(
         self,
-        before_datetime: datetime,
-        n: int
+        pipeline_name: Optional[str] = None,
+        username: Optional[str] = None,
+        before_datetime: Optional[datetime] = None,
+        n: Optional[int] = None,
+        descending: Optional[bool] = False
     ) -> List[Execution]:
         """Lists Execution records from a given start time.
 
         Params:
+            - pipeline_name (str):
+                the only retraining pipeline to consider
+                (if mentioned)
+            - username (str):
+                the user having lunched the executions
+                to consider (if mentioned)
             - before_datetime (datetime):
-                time from which to start listing
+                UTC time from which to start listing
             - n (int):
                 number of Executions to retrieve
+            - descending (bool):
+                sorting order, wheter latest comes first
+                or last
 
         Results:
             List[Execution]
         """
-        ## TODO ## implement datetime in object model + LIMIT filtering
-        return await self._get_entities(Execution)
+        statement = select(Execution)
 
-    async def get_task(self, id: int):
+        filters = []
+        if pipeline_name is not None:
+            filters.append(Execution.name == pipeline_name)
+        if username is not None:
+            filters.append(Execution.username == username)
+        if before_datetime is not None:
+            filters.append(Execution._start_timestamp <= before_datetime)
+        print(f"before_datetime : {before_datetime}")
+
+        if filters:
+            statement = statement.where(and_(*filters))
+
+        if n is not None:
+            statement = statement.limit(n)
+
+        if descending:
+            statement = statement.order_by(desc(Execution._start_timestamp))
+        else:
+            statement = statement.order_by(Execution._start_timestamp)
+
+        async with self._get_session() as session:
+            result = await session.execute(statement)
+            return result.scalars().all()
+
+    async def get_task(self, id: int) -> Task:
         return await self._get_entity(Task, id=id)
 
-    async def get_tasks_by_execution(self, exec_id: int):
+    async def get_tasks_by_execution(self, exec_id: int) -> List[Task]:
         return await self._get_entities(Task, exec_id=exec_id)
 
 
