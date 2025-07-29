@@ -61,6 +61,14 @@ except Exception as e:
     print(f"Error creating cache directory: {e}")
 
 
+# RP_WEB_SERVER_URL
+os.environ["RP_WEB_SERVER_URL"] = (
+    os.environ.get(
+        "RP_WEB_SERVER_URL", "http://localhost:5001/"
+    ).rstrip("/")
+)
+
+
 # RP_WEB_SERVER_LOGS
 # for 'local' installs with web UI
 os.environ["RP_WEB_SERVER_LOGS"] = (

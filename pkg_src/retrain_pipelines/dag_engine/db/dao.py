@@ -295,3 +295,93 @@ class AsyncDAO(DAOBase):
     async def add_task(self, exec_id: int) -> int:
         return await self._add_entity(Task, exec_id=exec_id)
 
+
+#////////////////////////////////////////////////////////////////////////////
+
+
+from sqlalchemy import event
+import requests
+import os
+
+new_connection_api_endpoint = \
+    f"{os.environ['RP_WEB_SERVER_URL']}/api/v1/new_execution_event"
+
+@event.listens_for(Execution, "after_insert")
+def after_insert_listener(mapper, connection, target):
+    """DAG-engine notifies WebConsole server."""
+    data_snapshot = {col.name: str(getattr(target, col.name))
+                     for col in target.__table__.columns}
+    print(data_snapshot)
+    requests.post(new_connection_api_endpoint, json=data_snapshot)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

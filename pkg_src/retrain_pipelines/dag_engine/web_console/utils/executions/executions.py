@@ -1,14 +1,15 @@
 
 import os
 import tzlocal
+import asyncio
 
-from typing import List
 from datetime import datetime
+from typing import List, Optional
 
-from fasthtml.common import *
+from fasthtml.common import Div, A, Span
 
-from ...db.dao import AsyncDAO
-from ...db.model import Execution
+from ....db.dao import AsyncDAO
+from ....db.model import Execution
 
 
 server_tz = tzlocal.get_localzone()
@@ -71,7 +72,21 @@ async def get_executions(
     for execution in executions:
         dom_executions.append(
             Div(
-                f"{execution.name} [{execution.id}] - {execution.start_timestamp.astimezone(server_tz).strftime('%Y-%m-%d %H:%M:%S')}"
+                Div(
+                    Span(f"{execution.name} "),
+                    A(
+                        f"[{execution.id}]",
+                        href=f"/execution?id={execution.id}",
+                        target="_self"
+                    ),
+                    Span(f" - {execution.start_timestamp.astimezone(server_tz).strftime('%Y-%m-%d %H:%M:%S')}")
+                ),
+                Div(
+                    "here goes end_timestamp",
+                    cls="end_timestamp"
+                ),
+                cls="execution",
+                id=execution.id
             )
         )
 

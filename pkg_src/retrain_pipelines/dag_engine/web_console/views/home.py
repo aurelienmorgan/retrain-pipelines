@@ -7,13 +7,16 @@ from email.utils import formatdate, \
     parsedate_to_datetime
 from fasthtml.common import Div, H1, H3, P, \
     Span, Code, Input, Script, Style, \
-    Request, Response, FileResponse, JSONResponse
+    Request, Response, FileResponse, JSONResponse, \
+    StreamingResponse
 
 from .. import APP_STATIC_DIR
-from ..utils.executions import get_users, \
-    get_pipeline_names, get_executions
 from .page_template import page_layout
 
+from ..utils.executions import get_users, \
+    get_pipeline_names, get_executions
+from ..utils.executions.events import \
+    new_exec_subscribers, new_exec_event_generator
 
 def AutoCompleteSelect(
     options_url: str,
@@ -336,6 +339,7 @@ def AutoCompleteSelect(
                         input.title = input.value;
                         // cascade to dropdown behavior
                         window["_options_{id}"] = list;
+console.log("_options_{id}", window["_options_{id}"]);
                         renderOptions(list, input.value);
 
                         selected = true;
@@ -426,6 +430,31 @@ def register(app, rt, prefix=""):
     async def get_distinct_users():
         users = await get_users()
         return JSONResponse(users)
+
+
+    @rt(f"{prefix}/api/v1/new_execution_event", methods=["POST"])
+    async def post_new_execution_event(
+        request: Request
+    ):
+        # DAG-engine notifies of a new pipeline execution
+        data = await request.json()
+
+        for q, _ in new_exec_subscribers:
+            await q.put(data)
+
+        return Response(status_code=200)
+
+
+    @rt(f"{prefix}/new_pipeline_exec_event", methods=["GET"])
+    async def get_new_pipeline_exec_event(request: Request):
+        client_info = {
+            "ip": request.client.host,
+            "port": request.client.port,
+            "url": request.url.path
+        }
+        return StreamingResponse(
+            new_exec_event_generator(client_info=client_info),
+            media_type="text/event-stream")
 
 
     @rt(f"{prefix}/load_executions", methods=["POST"])
@@ -534,6 +563,25 @@ def register(app, rt, prefix=""):
                                     min-width: 100px; width: 100px;
                                 }
                             """),
+                            Script(f"""// SSE events, new execution
+const eventSource = new EventSource(`{prefix}/new_pipeline_exec_event`);
+
+// Listen for incoming messages from the server
+eventSource.onmessage = (event) => {{
+  try {{
+        // Parse the server data, assuming it's JSON
+        const payload = JSON.parse(event.data);
+        console.log(payload);
+  }} catch (e) {{
+        console.error('Error parsing SSE message data:', e);
+  }}
+}};
+
+// Optional: handle SSE connection errors
+eventSource.onerror = (err) => {{
+    console.error('SSE error:', err);
+}};
+                            """),
                             FilterElement(# datetime filter
                                 "before",
                                 Div(
@@ -592,6 +640,14 @@ def register(app, rt, prefix=""):
                             "0 1px 3px rgba(0,0,0,0.1); "
                     )
                 ),
+                Style("""
+                    .execution {
+                      display: flex;
+                      justify-content: space-between;
+                      align-items: center;
+                      width: 100%;
+                    }
+                """),
                 Script("""// Cold start of executions list at page load time
                     function loadExecs() {
                         const server_status_circle = document.getElementById('status-circle');
