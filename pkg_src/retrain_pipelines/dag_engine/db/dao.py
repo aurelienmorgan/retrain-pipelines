@@ -1,12 +1,14 @@
 
+import os
 import logging
 import asyncio
+import requests
 
 from datetime import datetime
 from typing import List, Optional
 
 from sqlalchemy import create_engine, select, \
-    and_, desc
+    and_, desc, event
 from sqlalchemy.orm import scoped_session, sessionmaker
 from sqlalchemy.ext.asyncio import create_async_engine, \
     AsyncSession
@@ -298,10 +300,6 @@ class AsyncDAO(DAOBase):
 
 #////////////////////////////////////////////////////////////////////////////
 
-
-from sqlalchemy import event
-import requests
-import os
 
 new_connection_api_endpoint = \
     f"{os.environ['RP_WEB_SERVER_URL']}/api/v1/new_execution_event"

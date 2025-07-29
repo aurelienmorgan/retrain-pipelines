@@ -11,7 +11,8 @@ def header(current_page="/"):
         ("Home", "/"),
         ("Not-Found", "/not-exists"),
         ("Error", "/a_page_in_error"),
-        ("Logs", "/web_server")
+        ("Logs", "/web_server"),
+        ("SSE API", "/api/docs")
     ]
     nav_links = []
     for title, path in nav_items:
@@ -31,7 +32,12 @@ def header(current_page="/"):
         A(
             Img(
                 src="pkg_logo_small.png", alt="retrain-pipelines",
-                style="height:40px; vertical-align: middle;"
+                style=(
+                    "height:40px; vertical-align: middle; "
+                    "border: 2px solid black; "
+                    "box-shadow: 0 0 0 1px #FFD700; "
+                    "border-radius: 3px;"
+                )
             ),
             href="/",
             style="display: inline-block; vertical-align: middle;"

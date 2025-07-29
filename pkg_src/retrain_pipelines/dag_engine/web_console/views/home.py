@@ -1,7 +1,9 @@
 
 import os
+import logging
 
 from typing import Optional, Union
+from dateutil.parser import isoparse
 from datetime import datetime, timezone
 from email.utils import formatdate, \
     parsedate_to_datetime
@@ -17,6 +19,8 @@ from ..utils.executions import get_users, \
     get_pipeline_names, get_executions
 from ..utils.executions.events import \
     new_exec_subscribers, new_exec_event_generator
+from ...db.model import Execution
+from ..views.api import rt_api
 
 def AutoCompleteSelect(
     options_url: str,
@@ -432,13 +436,58 @@ def register(app, rt, prefix=""):
         return JSONResponse(users)
 
 
-    @rt(f"{prefix}/api/v1/new_execution_event", methods=["POST"])
+    @rt_api(
+        rt, url= f"{prefix}/api/v1/new_execution_event", methods=["POST"],
+        schema={
+            "requestBody": {
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "id": {"type": "integer"},
+                                "name": {"type": "string"},
+                                "username": {"type": "string"},
+                                "start_timestamp": {"type": "string",
+                                                    "format": "date-time"},
+                            },
+                            "required": ["id", "name", "username",
+                                         "start_timestamp"]
+                        }
+                    }
+                }
+            },
+            "responses": {
+                "200": {"description": "OK"},
+                "422": {"description": "Invalid input"}
+            }
+        })
     async def post_new_execution_event(
         request: Request
     ):
-        # DAG-engine notifies of a new pipeline execution
+        """DAG-engine notifies of a new pipeline execution."""
         data = await request.json()
 
+        # validate posted data
+        def _parse_datetime(value: str) -> datetime:
+            dt = isoparse(value)
+            if dt.tzinfo is None:
+                return dt.replace(tzinfo=timezone.utc)
+            return dt.astimezone(timezone.utc)
+        try:
+            execution = Execution(
+                id=int(data['id']),
+                name=str(data['name']),
+                username=str(data['username']),
+                _start_timestamp=_parse_datetime(data['start_timestamp']),
+                _end_timestamp=None
+            )
+        except (KeyError, ValueError, TypeError) as e:
+            logging.getLogger().info(e)
+            return Response(status_code=422,
+                            content=f"Invalid input: {str(e)}")
+
+        # dispatch 'new Execution' event
         for q, _ in new_exec_subscribers:
             await q.put(data)
 
