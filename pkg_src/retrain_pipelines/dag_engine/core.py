@@ -175,7 +175,7 @@ class Task(BaseModel):
                 self.task_id = dao.add_task(
                     exec_id=self.exec_id,
                     name=self.name,
-                    rank=self.rank,
+                    rank=rank,
                     start_timestamp=datetime.now(timezone.utc)
                 )
 

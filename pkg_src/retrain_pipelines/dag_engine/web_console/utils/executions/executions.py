@@ -8,7 +8,7 @@ from typing import List, Optional
 from fasthtml.common import Div, A, Span
 
 from ....db.dao import AsyncDAO
-from ....db.model import Execution
+from ....db.model import Execution, ExecutionExt
 
 
 server_tz = tzlocal.get_localzone()
@@ -30,38 +30,44 @@ async def get_pipeline_names() -> List[str]:
         sorted=True)
 
 
-def execution_to_html(execution: Execution) -> Div:
+def execution_to_html(execution_ext: ExecutionExt) -> Div:
+    localized_start_timestamp = \
+        execution_ext.start_timestamp.astimezone(server_tz)
     localized_start_timestamp_str = \
-        execution.start_timestamp.astimezone(server_tz) \
-            .strftime('%Y-%m-%d %H:%M:%S')
+        localized_start_timestamp.strftime('%Y-%m-%d %H:%M:%S')
     return Div(
         Div(
-            Span(f"{execution.name} "),
+            Span(f"{execution_ext.name} "),
             A(
-                f"[{execution.id}]",
-                href=f"/execution?id={execution.id}",
+                f"[{execution_ext.id}]",
+                href=f"/execution?id={execution_ext.id}",
                 target="_self"
             ),
             Span(f" - {localized_start_timestamp_str}")
         ),
         Div(
-            "here goes end_timestamp",
-            cls="end_timestamp"
+            (execution_ext.end_timestamp - execution_ext.start_timestamp) \
+                if execution_ext.end_timestamp else "",
+            cls="end_timestamp" + ((
+                    ", failure" if execution_ext.failed else ", success"
+                ) if execution_ext.end_timestamp else "")
         ),
-        **{'data-start-timestamp': localized_start_timestamp_str},
+        **{'data-start-timestamp': execution_ext.start_timestamp},
         cls="execution",
-        id=str(execution.id)
+        id=str(execution_ext.id)
     ).__html__()
 
 
-async def get_executions(
+async def get_executions_ext(
     pipeline_name: Optional[str] = None,
     username: Optional[str] = None,
     before_datetime: Optional[datetime] = None,
     n: Optional[int] = None,
     descending: Optional[bool] = False
-):
+) -> List[str]:
     """Lists Execution records from a given start time.
+
+    Returns a styled DOM element's html.
 
     Params:
         - pipeline_name (str):
@@ -79,21 +85,21 @@ async def get_executions(
             or last
 
     Results:
-        List[Execution]
+        List[str]
     """
     dao = AsyncDAO(
         db_url=os.environ["RP_METADATASTORE_ASYNC_URL"]
     )
-    executions = await dao.get_executions(
+    executions_ext = await dao.get_executions_ext(
         pipeline_name=pipeline_name, username=username,
         before_datetime=before_datetime, n=n,
         descending=descending
     )
-    print("executions.get_executions ", n, len(executions))
+    print("executions.get_executions_ext ", n, len(executions_ext))
 
     dom_executions = []
-    for execution in executions:
-        dom_executions.append(execution_to_html(execution))
+    for execution_ext in executions_ext:
+        dom_executions.append(execution_to_html(execution_ext))
 
     return dom_executions
 

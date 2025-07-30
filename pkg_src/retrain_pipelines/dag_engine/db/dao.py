@@ -8,13 +8,13 @@ from typing import List, Optional
 from datetime import datetime, date
 
 from sqlalchemy import create_engine, select, \
-    and_, desc, event
+    and_, desc, case, func, event
 from sqlalchemy.orm import scoped_session, sessionmaker
 from sqlalchemy.ext.asyncio import create_async_engine, \
     AsyncSession
 
-from .model import Base, Execution, Task
-
+from .model import Base, Execution, ExecutionExt, \
+    Task
 
 logger = logging.getLogger()
 
@@ -236,15 +236,17 @@ class AsyncDAO(DAOBase):
             result = await session.execute(statement)
             return [row[0] for row in result.all()]
 
-    async def get_executions(
+    async def get_executions_ext(
         self,
         pipeline_name: Optional[str] = None,
         username: Optional[str] = None,
         before_datetime: Optional[datetime] = None,
         n: Optional[int] = None,
         descending: Optional[bool] = False
-    ) -> List[Execution]:
+    ) -> List[ExecutionExt]:
         """Lists Execution records from a given start time.
+
+        extended to include 'failed y/n' status.
 
         Params:
             - pipeline_name (str):
@@ -262,9 +264,18 @@ class AsyncDAO(DAOBase):
                 or last
 
         Results:
-            List[Execution]
+            List[ExecutionExt]
         """
-        statement = select(Execution)
+        # Subquery to check if execution has any failed tasks
+        failed_subquery = (
+            select(func.max(case((Task.failed == True, 1), else_=0)))
+            .where(Task.exec_id == Execution.id)
+            .scalar_subquery()
+        )
+        statement = select(
+            Execution,
+            failed_subquery.label('has_failed_task')
+        )
 
         filters = []
         if pipeline_name is not None:
@@ -273,7 +284,6 @@ class AsyncDAO(DAOBase):
             filters.append(Execution.username == username)
         if before_datetime is not None:
             filters.append(Execution._start_timestamp <= before_datetime)
-        print(f"before_datetime : {before_datetime}")
 
         if filters:
             statement = statement.where(and_(*filters))
@@ -288,17 +298,14 @@ class AsyncDAO(DAOBase):
 
         async with self._get_session() as session:
             result = await session.execute(statement)
-            return result.scalars().all()
+            executions_ext = []
 
-    async def get_task(self, id: int) -> Task:
-        return await self._get_entity(Task, id=id)
+            for execution, has_failed in result.all():
+                execution_ext = ExecutionExt(**execution.__dict__)
+                execution_ext.failed = bool(has_failed)
+                executions_ext.append(execution_ext)
 
-    async def get_tasks_by_execution(self, exec_id: int) -> List[Task]:
-        return await self._get_entities(Task, exec_id=exec_id)
-
-
-    async def add_task(self, exec_id: int) -> int:
-        return await self._add_entity(Task, exec_id=exec_id)
+            return executions_ext
 
 
 #////////////////////////////////////////////////////////////////////////////
@@ -309,7 +316,11 @@ new_connection_api_endpoint = \
 
 @event.listens_for(Execution, "after_insert")
 def after_insert_listener(mapper, connection, target):
-    """DAG-engine notifies WebConsole server."""
+    """DAG-engine notifies WebConsole server.
+
+    This fires when Execution is created.
+    Emits an Execution dict.
+    """
     data_snapshot = {}
     for col in target.__table__.columns:
         value = getattr(target, col.name)
@@ -329,4 +340,39 @@ def after_insert_listener(mapper, connection, target):
         )
     except Exception as ex:
         logger.warn(ex)
+
+
+connection_ended_api_endpoint = \
+    f"{os.environ['RP_WEB_SERVER_URL']}/api/v1/execution_end_event"
+
+
+@event.listens_for(Execution._end_timestamp, "set", retval=False)
+def after_end_timestamp_change(target, value, oldvalue, initiator):
+    """DAG-engine notifies WebConsole server.
+
+    This fires when Execution's _end_timestamp changes.
+    Emits an ExecutionEnd dict.
+    """
+    if value != oldvalue and value is not None:
+        print(f"[Listener] _end_timestamp set: old={oldvalue}, new={value}")
+        # Check if any Tasks have failed=True
+        failure_exists = any(task.failed for task in target.tasks)
+
+        # Construct the ExecutionEnd object
+        execution_end = {
+            "id": target.id,
+            "end_timestamp": value.isoformat(),
+            "success": not failure_exists
+        }
+        print(f"execution_end: {execution_end}")
+
+        try:
+            requests.post(connection_ended_api_endpoint, json=execution_end)
+        except requests.exceptions.ConnectionError as ce:
+            logger.info(
+                "WebConsole apparently not running " +
+                f"({os.environ['RP_WEB_SERVER_URL']})"
+            )
+        except Exception as ex:
+            logger.warn(ex)
 

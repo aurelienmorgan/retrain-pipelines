@@ -82,6 +82,21 @@ class Execution(Base):
         self._end_timestamp = value
 
 
+class ExecutionExt(Execution):
+    """Execution class plus failure (computed) attribute."""
+    """ NOT AN SQLALCHEMY CLASS """
+    __mapper_args__ = {
+        'polymorphic_identity': 'execution_ext'
+    }
+
+    def __init__(self, **kwargs):
+        failed = kwargs.pop('failed', False)
+        # Remove SQLAlchemy internal attributes
+        kwargs.pop('_sa_instance_state', None)
+        super().__init__(**kwargs)
+        self.failed = failed
+
+
 class Task(Base):
     __tablename__ = 'tasks'
 

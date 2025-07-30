@@ -15,9 +15,11 @@ from .. import APP_STATIC_DIR
 from .page_template import page_layout
 
 from ..utils.executions import get_users, \
-    get_pipeline_names, get_executions
+    get_pipeline_names, get_executions_ext
 from ..utils.executions.events import \
-    new_exec_subscribers, new_exec_event_generator
+    ClientInfo, ExecutionEnd, \
+    new_exec_subscribers, new_exec_event_generator, \
+    exec_end_subscribers, exec_end_event_generator
 from ...db.model import Execution
 from ..views.api import rt_api
 
@@ -484,7 +486,8 @@ def register(app, rt, prefix=""):
                 "200": {"description": "OK"},
                 "422": {"description": "Invalid input"}
             }
-        })
+        },
+        category="Executions")
     async def post_new_execution_event(
         request: Request
     ):
@@ -508,13 +511,77 @@ def register(app, rt, prefix=""):
 
     @rt(f"{prefix}/new_pipeline_exec_event", methods=["GET"])
     async def get_new_pipeline_exec_event(request: Request):
-        client_info = {
-            "ip": request.client.host,
-            "port": request.client.port,
-            "url": request.url.path
-        }
+        client_info = ClientInfo(
+            ip=request.client.host,
+            port=request.client.port,
+            url=request.url.path
+        )
         return StreamingResponse(
             new_exec_event_generator(client_info=client_info),
+            media_type="text/event-stream")
+        users = await get_users()
+        return JSONResponse(users)
+
+
+    @rt_api(
+        rt, url= f"{prefix}/api/v1/execution_end_event",
+        methods=["POST"],
+        schema={
+            "requestBody": {
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "id": {"type": "integer"},
+                                "end_timestamp": {
+                                    "type": "string",
+                                    "format": "date-time"
+                                },
+                                "success": {"type": "boolean"},
+                            },
+                            "required": ["id", "end_timestamp",
+                                         "success"]
+                        }
+                    }
+                }
+            },
+            "responses": {
+                "200": {"description": "OK"},
+                "422": {"description": "Invalid input"}
+            }
+        },
+        category="Executions")
+    async def post_execution_ended_event(
+        request: Request
+    ):
+        """DAG-engine notifies of a pipeline execution end."""
+        data = await request.json()
+
+        # validate posted data
+        try:
+            execution_end = ExecutionEnd(data)
+        except (KeyError, ValueError, TypeError) as e:
+            logging.getLogger().warn(e)
+            return Response(status_code=422,
+                            content=f"Invalid input: {str(e)}")
+
+        # dispatch 'new Execution' event
+        for q, _ in exec_end_subscribers:
+            await q.put(data)
+
+        return Response(status_code=200)
+
+
+    @rt(f"{prefix}/pipeline_exec_end_event", methods=["GET"])
+    async def get_pipeline_exec_end_event(request: Request):
+        client_info = ClientInfo(
+            ip=request.client.host,
+            port=request.client.port,
+            url=request.url.path
+        )
+        return StreamingResponse(
+            exec_end_event_generator(client_info=client_info),
             media_type="text/event-stream")
 
 
@@ -546,7 +613,7 @@ def register(app, rt, prefix=""):
         username = form.get("username") or None
         n = form.get("n") or None
 
-        execution_entries = await get_executions(
+        execution_entries = await get_executions_ext(
             pipeline_name=pipeline_name,
             username=username,
             before_datetime=before_datetime,
@@ -651,10 +718,9 @@ def register(app, rt, prefix=""):
                                     /* ****************************************************
                                     * Add "newExecutionElement" to "executions-container" *
                                     **************************************************** */
-                                    const execContainer = document.getElementById("executions-container");
-                                    const newExecutionStart = new Date(payload['start_timestamp']);
+                                    const newExecutionStart = new Date(payload.start_timestamp);
                                     const template = document.createElement('template');
-                                    template.innerHTML = payload['html'].trim();
+                                    template.innerHTML = payload.html.trim();
                                     const newExecutionElement = template.content.firstElementChild;
 
                                     // Find where to insert the newExecutionElement
@@ -721,6 +787,24 @@ def register(app, rt, prefix=""):
                                     execEndEventSource.close();
                                 }});
 
+function formatTimeDelta(start, end) {{
+    const startDate = new Date(start);
+    const endDate = new Date(end);
+
+    const diffMs = endDate - startDate;
+    if (isNaN(diffMs)) {{
+        throw new Error("Invalid date(s) provided");
+    }}
+
+    const totalSeconds = Math.floor(diffMs / 1000);
+    const milliseconds = diffMs % 1000;
+    const seconds = totalSeconds % 60;
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const hours = Math.floor(totalSeconds / 3600);
+
+    return `${{hours}}:${{String(minutes).padStart(2, '0')}}:${{String(seconds).padStart(2, '0')}}.${{String(milliseconds).padStart(6, '0')}}`;
+}}
+
                                 // Listen for incoming messages from the server
                                 execEndEventSource.onmessage = (event) => {{
                                     let payload;
@@ -732,6 +816,18 @@ def register(app, rt, prefix=""):
                                         return;
                                     }}
 console.log(payload);
+const executionElement = document.getElementById(payload.id);
+if (executionElement) {{
+    //console.log(executionElement);
+    const endTimestampElement = executionElement.querySelector('.end_timestamp');
+    console.log(endTimestampElement);
+    console.log(executionElement.dataset.startTimestamp);
+    console.log(payload.end_timestamp);
+    endTimestampElement.innerText = formatTimeDelta(
+        executionElement.dataset.startTimestamp, payload.end_timestamp
+    );
+    endTimestampElement.classList.add(payload.success ? 'success' : 'failure');
+}}
                                 }}
                             """),
                             FilterElement(# datetime filter
@@ -801,11 +897,11 @@ console.log(payload);
                     }
                 """),
                 Script("""// Cold start of executions list at page load time
+                    const execContainer = document.getElementById("executions-container");
                     function loadExecs() {
                         const server_status_circle = document.getElementById('status-circle');
                         server_status_circle.classList.add('spinning');
 
-                        const execContainer = document.getElementById("executions-container");
                         execContainer.innerHTML = '';
 
                         // retrieve last validated comboboxes value from cookie
