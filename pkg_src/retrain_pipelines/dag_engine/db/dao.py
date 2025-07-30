@@ -4,8 +4,8 @@ import logging
 import asyncio
 import requests
 
-from datetime import datetime
 from typing import List, Optional
+from datetime import datetime, date
 
 from sqlalchemy import create_engine, select, \
     and_, desc, event
@@ -14,6 +14,9 @@ from sqlalchemy.ext.asyncio import create_async_engine, \
     AsyncSession
 
 from .model import Base, Execution, Task
+
+
+logger = logging.getLogger()
 
 
 class DAOBase:
@@ -49,7 +52,7 @@ class DAOBase:
                 except Exception as e:
                     # database lock
                     if attempt < 2:
-                        logging.getLogger().debug(
+                        logger.debug(
                             f"_sync_add_entity - retry {attempt+1})"
                         )
                         continue
@@ -307,79 +310,23 @@ new_connection_api_endpoint = \
 @event.listens_for(Execution, "after_insert")
 def after_insert_listener(mapper, connection, target):
     """DAG-engine notifies WebConsole server."""
-    data_snapshot = {col.name: str(getattr(target, col.name))
-                     for col in target.__table__.columns}
-    print(data_snapshot)
-    requests.post(new_connection_api_endpoint, json=data_snapshot)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    data_snapshot = {}
+    for col in target.__table__.columns:
+        value = getattr(target, col.name)
+        if value is None:
+            data_snapshot[col.name] = None
+        elif isinstance(value, (datetime, date)):
+            data_snapshot[col.name] = value.isoformat()
+        else:
+            data_snapshot[col.name] = value
+
+    try:
+        requests.post(new_connection_api_endpoint, json=data_snapshot)
+    except requests.exceptions.ConnectionError as ce:
+        logger.info(
+            "WebConsole apparently not running " +
+            f"({os.environ['RP_WEB_SERVER_URL']})"
+        )
+    except Exception as ex:
+        logger.warn(ex)
 

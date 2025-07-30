@@ -2,8 +2,11 @@
 from fasthtml.common import Html, Head, Title, \
     Link, Body, Div, Script
 
+from retrain_pipelines import __version__
+
 
 _route_schemas = {}
+
 
 def rt_api(rt, url, methods=None, schema=None):
    def decorator(func):
@@ -11,6 +14,7 @@ def rt_api(rt, url, methods=None, schema=None):
            _route_schemas[url] = schema
        return rt(url, methods=methods)(func)
    return decorator
+
 
 def register(app, rt, prefix=""):
     @rt(f"{prefix}/api/openapi.json")
@@ -53,15 +57,12 @@ def register(app, rt, prefix=""):
         spec = {
             "openapi": "3.0.0",
             "info": {
-                "title": "Auto-generated API",
-                "version": "1.0.0"
+                "title": "retrain-pipelines - WebConsole API",
+                "version": __version__
             },
             "paths": paths
         }
         return spec
-
-
-
 
 
     @rt(f"{prefix}/api/docs")

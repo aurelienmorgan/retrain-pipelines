@@ -1,7 +1,6 @@
 
 import os
 import tzlocal
-import asyncio
 
 from datetime import datetime
 from typing import List, Optional
@@ -29,6 +28,30 @@ async def get_pipeline_names() -> List[str]:
     )
     return await dao.get_distinct_execution_names(
         sorted=True)
+
+
+def execution_to_html(execution: Execution) -> Div:
+    localized_start_timestamp_str = \
+        execution.start_timestamp.astimezone(server_tz) \
+            .strftime('%Y-%m-%d %H:%M:%S')
+    return Div(
+        Div(
+            Span(f"{execution.name} "),
+            A(
+                f"[{execution.id}]",
+                href=f"/execution?id={execution.id}",
+                target="_self"
+            ),
+            Span(f" - {localized_start_timestamp_str}")
+        ),
+        Div(
+            "here goes end_timestamp",
+            cls="end_timestamp"
+        ),
+        **{'data-start-timestamp': localized_start_timestamp_str},
+        cls="execution",
+        id=str(execution.id)
+    ).__html__()
 
 
 async def get_executions(
@@ -70,25 +93,7 @@ async def get_executions(
 
     dom_executions = []
     for execution in executions:
-        dom_executions.append(
-            Div(
-                Div(
-                    Span(f"{execution.name} "),
-                    A(
-                        f"[{execution.id}]",
-                        href=f"/execution?id={execution.id}",
-                        target="_self"
-                    ),
-                    Span(f" - {execution.start_timestamp.astimezone(server_tz).strftime('%Y-%m-%d %H:%M:%S')}")
-                ),
-                Div(
-                    "here goes end_timestamp",
-                    cls="end_timestamp"
-                ),
-                cls="execution",
-                id=execution.id
-            )
-        )
+        dom_executions.append(execution_to_html(execution))
 
     return dom_executions
 

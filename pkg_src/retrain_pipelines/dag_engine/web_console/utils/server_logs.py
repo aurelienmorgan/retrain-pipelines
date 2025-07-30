@@ -260,7 +260,7 @@ class AccessLogEntry(BaseModel):
             raw_str=self.raw_str,
             cls="log-entry",
             title="WebSocket" if self.method == "ws" else \
-                  "Server-Side Envent" if self.method == "sse" else \
+                  "Server-Side Event" if self.method == "sse" else \
                   f"{self.status_code} - {HTTPStatus(self.status_code).phrase}"
         )
 

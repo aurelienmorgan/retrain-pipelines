@@ -117,6 +117,7 @@ logging.getLogger("python_multipart").setLevel(logging.ERROR)
 logging.getLogger("asyncio").setLevel(logging.WARNING)
 logging.getLogger("tzlocal").setLevel(logging.ERROR)
 logging.getLogger("aiosqlite").setLevel(logging.ERROR)
+logging.getLogger("urllib3").setLevel(logging.INFO)
 
 ################################################################
 

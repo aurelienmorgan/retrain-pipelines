@@ -2,6 +2,7 @@
 from .rich_wave import animate_wave
 
 from .utils import strip_ansi_escape_codes, \
+                   parse_datetime, \
                    dict_dict_list_get_all_combinations, \
                    flatten_dict, \
                    get_preprocess_data_fct, \

@@ -14,6 +14,8 @@ import importlib.util
 from typing import Any
 from os import _Environ
 from textwrap import dedent
+from dateutil.parser import isoparse
+from datetime import datetime, timezone
 
 # conditional import of the "torch" package
 # required for some callables in hp_dict
@@ -33,6 +35,13 @@ def strip_ansi_escape_codes(text):
     # Remove ANSI escape codes from text
     ansi_escape = regex.compile(r'\x1b\[[0-9;]*m')
     return ansi_escape.sub('', text)
+
+
+def parse_datetime(value: str) -> datetime:
+    dt = isoparse(value)
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
 
 
 def _load_and_get_function(

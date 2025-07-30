@@ -13,6 +13,8 @@ from sqlalchemy import ForeignKey, Column, \
 from sqlalchemy.orm import relationship
 from sqlalchemy.ext.declarative import declarative_base
 
+from retrain_pipelines.utils import parse_datetime
+
 
 Base = declarative_base()
 
@@ -30,6 +32,30 @@ class Execution(Base):
         "Task",
         back_populates="execution"
     )
+
+    def __init__(self, *args, **kwargs):
+        # Support dict as the ONLY positional argument
+        data = None
+        if len(args) == 1 and isinstance(args[0], dict):
+            data = args[0]
+        elif len(args) > 0:
+            raise TypeError("Execution accepts a dict or keyword arguments")
+
+        if data:
+            kwargs = {**data, **kwargs}
+            kwargs["id"] = int(kwargs["id"])
+            kwargs["name"] = str(kwargs["name"])
+            kwargs["username"] = str(kwargs["username"])
+            kwargs["_start_timestamp"] = parse_datetime(kwargs["start_timestamp"])
+            kwargs["_end_timestamp"] = (
+                parse_datetime(kwargs.get("end_timestamp"))
+                if (
+                    "end_timestamp" in kwargs and
+                    kwargs.get("end_timestamp") is not None
+                ) else None
+            )
+
+        super().__init__(**kwargs)
 
     @property
     def start_timestamp(self) -> datetime:

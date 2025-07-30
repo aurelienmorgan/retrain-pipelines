@@ -3,7 +3,6 @@ import os
 import logging
 
 from typing import Optional, Union
-from dateutil.parser import isoparse
 from datetime import datetime, timezone
 from email.utils import formatdate, \
     parsedate_to_datetime
@@ -323,6 +322,24 @@ def AutoCompleteSelect(
                     input.focus();
                 }});
 
+                // arrays with content-change listener
+                function createObservableArray(arr, onChange) {{
+                    return new Proxy(arr, {{
+                        set(target, property, value) {{
+                            // Ignore length property changes to avoid too noisy logs
+                            const res = Reflect.set(target, property, value);
+                            if (property !== 'length') {{
+                                onChange();
+                            }}
+                            return res;
+                        }},
+                        deleteProperty(target, property) {{
+                            const res = Reflect.deleteProperty(target, property);
+                            onChange();
+                            return res;
+                        }}
+                    }});
+                }}
                 document.addEventListener("DOMContentLoaded", function() {{
                     fetch("{options_url}", {{
                         method: 'GET',
@@ -342,8 +359,11 @@ def AutoCompleteSelect(
                         }}
                         input.title = input.value;
                         // cascade to dropdown behavior
-                        window["_options_{id}"] = list;
-console.log("_options_{id}", window["_options_{id}"]);
+                        window["_options_{id}"] = createObservableArray(
+                            list,
+                            // re-render on options-list change
+                            () => renderOptions(window["_options_{id}"], input.value)
+                        );
                         renderOptions(list, input.value);
 
                         selected = true;
@@ -437,7 +457,8 @@ def register(app, rt, prefix=""):
 
 
     @rt_api(
-        rt, url= f"{prefix}/api/v1/new_execution_event", methods=["POST"],
+        rt, url= f"{prefix}/api/v1/new_execution_event",
+        methods=["POST"],
         schema={
             "requestBody": {
                 "content": {
@@ -448,8 +469,10 @@ def register(app, rt, prefix=""):
                                 "id": {"type": "integer"},
                                 "name": {"type": "string"},
                                 "username": {"type": "string"},
-                                "start_timestamp": {"type": "string",
-                                                    "format": "date-time"},
+                                "start_timestamp": {
+                                    "type": "string",
+                                    "format": "date-time"
+                                }
                             },
                             "required": ["id", "name", "username",
                                          "start_timestamp"]
@@ -469,21 +492,10 @@ def register(app, rt, prefix=""):
         data = await request.json()
 
         # validate posted data
-        def _parse_datetime(value: str) -> datetime:
-            dt = isoparse(value)
-            if dt.tzinfo is None:
-                return dt.replace(tzinfo=timezone.utc)
-            return dt.astimezone(timezone.utc)
         try:
-            execution = Execution(
-                id=int(data['id']),
-                name=str(data['name']),
-                username=str(data['username']),
-                _start_timestamp=_parse_datetime(data['start_timestamp']),
-                _end_timestamp=None
-            )
+            execution = Execution(data)
         except (KeyError, ValueError, TypeError) as e:
-            logging.getLogger().info(e)
+            logging.getLogger().warn(e)
             return Response(status_code=422,
                             content=f"Invalid input: {str(e)}")
 
@@ -553,8 +565,8 @@ def register(app, rt, prefix=""):
               style="color: white;")
         )
 
-        return page_layout(current_page="/", title="retrain-pipelines", content=\
-            Div(# page content
+        return page_layout(current_page="/", title="retrain-pipelines", \
+            content=Div(# page content
                 Div(# params panel
                     Div(
                         Div(
@@ -612,24 +624,115 @@ def register(app, rt, prefix=""):
                                     min-width: 100px; width: 100px;
                                 }
                             """),
-                            Script(f"""// SSE events, new execution
-const eventSource = new EventSource(`{prefix}/new_pipeline_exec_event`);
+                            Script(f"""// SSE events : new retraining-pipeline execution
+                                const newExecEventSource = new EventSource(
+                                    `{prefix}/new_pipeline_exec_event`
+                                );
 
-// Listen for incoming messages from the server
-eventSource.onmessage = (event) => {{
-  try {{
-        // Parse the server data, assuming it's JSON
-        const payload = JSON.parse(event.data);
-        console.log(payload);
-  }} catch (e) {{
-        console.error('Error parsing SSE message data:', e);
-  }}
-}};
+                                newExecEventSource.onerror = (err) => {{
+                                    console.error('SSE error:', err);
+                                }};
+                                // Force close EventSource when leaving the page
+                                window.addEventListener('pagehide', () => {{
+                                    newExecEventSource.close();
+                                }});
 
-// Optional: handle SSE connection errors
-eventSource.onerror = (err) => {{
-    console.error('SSE error:', err);
-}};
+                                // Listen for incoming messages from the server
+                                newExecEventSource.onmessage = (event) => {{
+                                    let payload;
+                                    try {{
+                                        // Parse the server data, assuming it's JSON
+                                        payload = JSON.parse(event.data);
+                                    }} catch (e) {{
+                                        console.error('Error parsing SSE message data:', e);
+                                        return;
+                                    }}
+
+                                    /* ****************************************************
+                                    * Add "newExecutionElement" to "executions-container" *
+                                    **************************************************** */
+                                    const execContainer = document.getElementById("executions-container");
+                                    const newExecutionStart = new Date(payload['start_timestamp']);
+                                    const template = document.createElement('template');
+                                    template.innerHTML = payload['html'].trim();
+                                    const newExecutionElement = template.content.firstElementChild;
+
+                                    // Find where to insert the newExecutionElement
+                                    // assuming async from different seeders may occur
+                                    let inserted = false;
+                                    const children = execContainer.getElementsByClassName('execution');
+                                    for (let i = 0; i < children.length; ++i) {{
+                                        const existingDiv = children[i];
+                                        const existingStartTS = existingDiv.dataset.startTimestamp;
+                                        if (!existingStartTS) continue;
+                                        const existingStart = new Date(existingStartTS);
+
+                                        // Descending: insert before the first older item
+                                        if (newExecutionStart > existingStart) {{
+                                            execContainer.insertBefore(newExecutionElement, existingDiv);
+                                            inserted = true;
+                                            break;
+                                        }}
+                                    }}
+                                    // If not inserted anywhere
+                                    // (all items are newer or container is empty),
+                                    // append at the end
+                                    if (!inserted) {{
+                                        execContainer.appendChild(newExecutionElement);
+                                    }}
+                                    /* ************************************************* */
+
+                                    /* ***********************************************
+                                    * Keep autocomplete comboboxes dropdowns in sync *
+                                    *********************************************** */
+                                    // Helper to add and keep list sorted without duplicates
+                                    function addAndSortUnique(arr, newItem) {{
+                                        if (!newItem) return arr;
+                                        // Only add if not present
+                                        if (!arr.includes(newItem)) {{
+                                            arr.push(newItem);
+                                            arr.sort((a, b) => a.localeCompare(b));
+                                        }}
+                                        return arr;
+                                    }}
+                                    window["_options_pipeline_name_autocomplete"] = 
+                                        addAndSortUnique(
+                                            window["_options_pipeline_name_autocomplete"] || [],
+                                            payload.name
+                                        );
+                                    window["_options_pipeline_user_autocomplete"] = 
+                                        addAndSortUnique(
+                                            window["_options_pipeline_user_autocomplete"] || [],
+                                            payload.username
+                                        );
+                                    /* ************************************************* */
+                                }};
+                            """),
+                            Script(f"""// SSE events : retraining-pipeline execution ended
+                                const execEndEventSource = new EventSource(
+                                    `{prefix}/pipeline_exec_end_event`
+                                );
+
+                                execEndEventSource.onerror = (err) => {{
+                                    console.error('SSE error:', err);
+                                }};
+                                // Force close EventSource when leaving the page
+                                window.addEventListener('pagehide', () => {{
+                                    execEndEventSource.close();
+                                }});
+
+                                // Listen for incoming messages from the server
+                                execEndEventSource.onmessage = (event) => {{
+                                    let payload;
+                                    try {{
+                                        // Parse the server data, assuming it's JSON
+                                        payload = JSON.parse(event.data);
+                                    }} catch (e) {{
+                                        console.error('Error parsing SSE message data:', e);
+                                        return;
+                                    }}
+console.log(payload);
+                                }}
                             """),
                             FilterElement(# datetime filter
                                 "before",
