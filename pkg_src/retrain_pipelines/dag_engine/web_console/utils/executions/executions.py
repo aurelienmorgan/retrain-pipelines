@@ -3,7 +3,7 @@ import os
 import tzlocal
 
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Union
 
 from fasthtml.common import Div, A, Span
 
@@ -30,7 +30,7 @@ async def get_pipeline_names() -> List[str]:
         sorted=True)
 
 
-def execution_to_html(execution_ext: ExecutionExt) -> Div:
+def execution_to_html(execution_ext: Union[Execution, ExecutionExt]) -> Div:
     localized_start_timestamp = \
         execution_ext.start_timestamp.astimezone(server_tz)
     localized_start_timestamp_str = \
@@ -49,10 +49,18 @@ def execution_to_html(execution_ext: ExecutionExt) -> Div:
             (execution_ext.end_timestamp - execution_ext.start_timestamp) \
                 if execution_ext.end_timestamp else "",
             cls="end_timestamp" + ((
-                    ", failure" if execution_ext.failed else ", success"
+                    ", success" if execution_ext.success else ", failure"
                 ) if execution_ext.end_timestamp else "")
         ),
-        **{'data-start-timestamp': execution_ext.start_timestamp},
+        **{
+            'data-pipeline-name': execution_ext.name,
+            'data-username': execution_ext.username,
+            'data-start-timestamp': execution_ext.start_timestamp,
+            'data-failed': (
+                str(execution_ext.failed)
+                if hasattr(execution_ext, "failed") else ""
+            )
+        },
         cls="execution",
         id=str(execution_ext.id)
     ).__html__()
@@ -62,6 +70,7 @@ async def get_executions_ext(
     pipeline_name: Optional[str] = None,
     username: Optional[str] = None,
     before_datetime: Optional[datetime] = None,
+    execs_status: Optional[datetime] = None,
     n: Optional[int] = None,
     descending: Optional[bool] = False
 ) -> List[str]:
@@ -78,6 +87,8 @@ async def get_executions_ext(
             to consider (if mentioned)
         - before_datetime (datetime):
             UTC time from which to start listing
+        - execs_status str):
+            any (None)/success/failure
         - n (int):
             number of Executions to retrieve
         - descending (bool):
@@ -92,7 +103,8 @@ async def get_executions_ext(
     )
     executions_ext = await dao.get_executions_ext(
         pipeline_name=pipeline_name, username=username,
-        before_datetime=before_datetime, n=n,
+        before_datetime=before_datetime,
+        execs_status=execs_status, n=n,
         descending=descending
     )
     print("executions.get_executions_ext ", n, len(executions_ext))

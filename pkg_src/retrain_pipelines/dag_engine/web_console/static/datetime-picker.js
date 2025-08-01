@@ -1116,7 +1116,6 @@ export function attachDateTimePicker(divId, {COOKIE_PREFIX = ''} = {}) {
     function confirmAction(e) {
         e.stopPropagation();
         if (selectedDate) {
-console.log("confirmAction");
             // in case user clicked to change current calendar month
             // AFTER he/she selected the day, we re-render the calendar grid
             currentYear = selectedDate.getFullYear();

@@ -241,6 +241,7 @@ class AsyncDAO(DAOBase):
         pipeline_name: Optional[str] = None,
         username: Optional[str] = None,
         before_datetime: Optional[datetime] = None,
+        execs_status: Optional[str] = None,
         n: Optional[int] = None,
         descending: Optional[bool] = False
     ) -> List[ExecutionExt]:
@@ -257,6 +258,8 @@ class AsyncDAO(DAOBase):
                 to consider (if mentioned)
             - before_datetime (datetime):
                 UTC time from which to start listing
+            - execs_status str):
+                any (None)/success/failure
             - n (int):
                 number of Executions to retrieve
             - descending (bool):
@@ -284,6 +287,11 @@ class AsyncDAO(DAOBase):
             filters.append(Execution.username == username)
         if before_datetime is not None:
             filters.append(Execution._start_timestamp <= before_datetime)
+        if execs_status is not None:
+            if execs_status == "success":
+                filters.append(failed_subquery == 0)
+            elif execs_status == "failure":
+                filters.append(failed_subquery == 1)
 
         if filters:
             statement = statement.where(and_(*filters))
@@ -347,27 +355,33 @@ connection_ended_api_endpoint = \
 
 
 @event.listens_for(Execution._end_timestamp, "set", retval=False)
-def after_end_timestamp_change(target, value, oldvalue, initiator):
+def after_end_timestamp_change(target, newValue, oldvalue, initiator):
     """DAG-engine notifies WebConsole server.
 
     This fires when Execution's _end_timestamp changes.
     Emits an ExecutionEnd dict.
     """
-    if value != oldvalue and value is not None:
-        print(f"[Listener] _end_timestamp set: old={oldvalue}, new={value}")
+    if newValue != oldvalue and newValue is not None:
+        print(f"[Listener] _end_timestamp set: old={oldvalue}, new={newValue}")
         # Check if any Tasks have failed=True
         failure_exists = any(task.failed for task in target.tasks)
 
-        # Construct the ExecutionEnd object
-        execution_end = {
-            "id": target.id,
-            "end_timestamp": value.isoformat(),
-            "success": not failure_exists
-        }
-        print(f"execution_end: {execution_end}")
+        # Construct the ExecutionExt object
+        data_snapshot = {}
+        for col in target.__table__.columns:
+            value = getattr(target, col.name)
+            if value is None:
+                data_snapshot[col.name] = None
+            elif isinstance(value, (datetime, date)):
+                data_snapshot[col.name] = value.isoformat()
+            else:
+                data_snapshot[col.name] = value
+        data_snapshot["end_timestamp"] = newValue.isoformat()
+        data_snapshot["success"] = not failure_exists
+        print(f"ExecutionExt - data_snapshot: {data_snapshot}")
 
         try:
-            requests.post(connection_ended_api_endpoint, json=execution_end)
+            requests.post(connection_ended_api_endpoint, json=data_snapshot)
         except requests.exceptions.ConnectionError as ce:
             logger.info(
                 "WebConsole apparently not running " +

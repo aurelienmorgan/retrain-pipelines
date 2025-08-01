@@ -4,7 +4,8 @@ right but without the tzinfo param value
 so, python considers they're local time,
 unless we set the tzinfo timezone info ourselves."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, \
+    date
 
 from sqlalchemy import ForeignKey, Column, \
     Integer, String, DateTime, Boolean, \
@@ -25,8 +26,10 @@ class Execution(Base):
     id = Column(Integer, primary_key=True)
     name = Column(String, nullable=False)
     username = Column(String, nullable=False)
-    _start_timestamp = Column('start_timestamp', DateTime(timezone=True), nullable=False)
-    _end_timestamp = Column('end_timestamp', DateTime(timezone=True), nullable=True)
+    _start_timestamp = Column('start_timestamp',
+        DateTime(timezone=True), nullable=False)
+    _end_timestamp = Column('end_timestamp',
+        DateTime(timezone=True), nullable=True)
 
     tasks = relationship(
         "Task",
@@ -39,14 +42,16 @@ class Execution(Base):
         if len(args) == 1 and isinstance(args[0], dict):
             data = args[0]
         elif len(args) > 0:
-            raise TypeError("Execution accepts a dict or keyword arguments")
+            raise TypeError(
+                "Execution accepts a dict or keyword arguments")
 
         if data:
             kwargs = {**data, **kwargs}
             kwargs["id"] = int(kwargs["id"])
             kwargs["name"] = str(kwargs["name"])
             kwargs["username"] = str(kwargs["username"])
-            kwargs["_start_timestamp"] = parse_datetime(kwargs["start_timestamp"])
+            kwargs["_start_timestamp"] = \
+                parse_datetime(kwargs["start_timestamp"])
             kwargs["_end_timestamp"] = (
                 parse_datetime(kwargs.get("end_timestamp"))
                 if (
@@ -90,11 +95,75 @@ class ExecutionExt(Execution):
     }
 
     def __init__(self, **kwargs):
-        failed = kwargs.pop('failed', False)
+        success = kwargs.pop('success', True)
         # Remove SQLAlchemy internal attributes
         kwargs.pop('_sa_instance_state', None)
+
+        # Add underscore prefix for attributes with names
+        # that are properties (getters) in parent class
+        parent_class = type(self).__bases__[0]
+        for attr_name in list(kwargs.keys()):
+            if isinstance(getattr(parent_class, attr_name, None), property):
+                value = kwargs.pop(attr_name)
+                # Check if corresponding SQLAlchemy column is DateTime
+                if hasattr(parent_class, '__table__'):
+                    column = parent_class.__table__.columns.get(attr_name)
+                    if (
+                        column is not None and
+                        hasattr(column.type, 'python_type')
+                    ):
+                        if (
+                            column.type.python_type in [datetime, date]
+                            and isinstance(value, str)
+                        ):
+                            value = parse_datetime(value)
+                kwargs[f'_{attr_name}'] = value
+
         super().__init__(**kwargs)
-        self.failed = failed
+        self.success = success
+
+    def to_dict(self):
+        result = {}
+        for attr_name in vars(self):
+            if not attr_name.startswith('_'):
+                attr_value = getattr(self, attr_name)
+                if isinstance(attr_value, (datetime, date)):
+                    result[attr_name] = attr_value.isoformat()
+                else:
+                    result[attr_name] = attr_value
+
+        parent_class = type(self).__bases__[0]
+        # Use parent_class table info
+        if hasattr(parent_class, '__table__'):
+            table = parent_class.__table__
+            for attr_name in dir(parent_class):
+                if isinstance(getattr(parent_class, attr_name, None), property):
+                    private_attr = f'_{attr_name}'
+                    if hasattr(self, private_attr):
+                        attr_value = getattr(self, private_attr)
+                        # Check if this property corresponds to a column in the table
+                        column = table.columns.get(attr_name)
+                        if column is not None and hasattr(column.type, 'python_type'):
+                            python_type = column.type.python_type
+                            if (
+                                python_type in [datetime, date] and
+                                isinstance(attr_value, str)
+                            ):
+                                attr_value = parse_datetime(attr_value)
+                            if isinstance(attr_value, (datetime, date)):
+                                result[attr_name] = attr_value.isoformat()
+                            elif attr_value is not None:
+                                result[attr_name] = attr_value
+                            else:
+                                result[attr_name] = None
+                        else:
+                            # If no column info, just assign if not None
+                            if attr_value is not None:
+                                result[attr_name] = attr_value
+                            else:
+                                result[attr_name] = None
+
+        return result
 
 
 class Task(Base):

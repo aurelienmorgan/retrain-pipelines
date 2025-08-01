@@ -17,10 +17,10 @@ from .page_template import page_layout
 from ..utils.executions import get_users, \
     get_pipeline_names, get_executions_ext
 from ..utils.executions.events import \
-    ClientInfo, ExecutionEnd, \
+    ClientInfo, \
     new_exec_subscribers, new_exec_event_generator, \
     exec_end_subscribers, exec_end_event_generator
-from ...db.model import Execution
+from ...db.model import Execution, ExecutionExt
 from ..views.api import rt_api
 
 def AutoCompleteSelect(
@@ -315,6 +315,7 @@ def AutoCompleteSelect(
                             const cookieKey = COOKIE_PREFIX + '{id.replace("_", "-")}';
                             setCookie(cookieKey, val);
                         }}
+                        dd.classList.remove('open');
                     }}
                 }});
 
@@ -415,12 +416,12 @@ def FilterElement(
 def MultiStatesToggler(
     options: List[Div],
     id: str,
-    style: Optional[str]
+    js_callback: Optional[str] = "",
+    style: Optional[str] = ""
 ) -> Div:
     # Add "bandit-toggle-label" to each option's class attribute
     options_with_cls = []
     for opt in options:
-        print(opt.attrs)
         classes = (opt.attrs.get("class", "")
                    if hasattr(opt, "attrs") else opt.cls or "")
         class_list = set(classes.split()) if classes else set()
@@ -561,6 +562,7 @@ def MultiStatesToggler(
                         currentIndex = (currentIndex + 1) % window["_states_{id}"].length;
                         isAnimating = false;
                     }}, 600);
+                    {js_callback}
                 }}
 
                 container.addEventListener('click', (event) => {{
@@ -689,8 +691,6 @@ def register(app, rt, prefix=""):
         return StreamingResponse(
             new_exec_event_generator(client_info=client_info),
             media_type="text/event-stream")
-        users = await get_users()
-        return JSONResponse(users)
 
 
     @rt_api(
@@ -704,14 +704,21 @@ def register(app, rt, prefix=""):
                             "type": "object",
                             "properties": {
                                 "id": {"type": "integer"},
+                                "name": {"type": "string"},
+                                "username": {"type": "string"},
+                                "start_timestamp": {
+                                    "type": "string",
+                                    "format": "date-time"
+                                },
                                 "end_timestamp": {
                                     "type": "string",
                                     "format": "date-time"
                                 },
-                                "success": {"type": "boolean"},
+                                "success": {"type": "boolean"}
                             },
-                            "required": ["id", "end_timestamp",
-                                         "success"]
+                            "required": ["id", "name", "username",
+                                         "start_timestamp",
+                                         "end_timestamp", "success"]
                         }
                     }
                 }
@@ -729,8 +736,9 @@ def register(app, rt, prefix=""):
         data = await request.json()
 
         # validate posted data
+        print("post_execution_ended_event - ", data)
         try:
-            execution_end = ExecutionEnd(data)
+            execution_ext = ExecutionExt(**data)
         except (KeyError, ValueError, TypeError) as e:
             logging.getLogger().warn(e)
             return Response(status_code=422,
@@ -781,12 +789,14 @@ def register(app, rt, prefix=""):
 
         pipeline_name = form.get("pipeline_name") or None
         username = form.get("username") or None
+        execs_status = form.get("execs_status") or None
         n = form.get("n") or None
 
         execution_entries = await get_executions_ext(
             pipeline_name=pipeline_name,
             username=username,
             before_datetime=before_datetime,
+            execs_status=execs_status,
             n=n,
             descending=True
         )
@@ -890,6 +900,7 @@ def register(app, rt, prefix=""):
                                     Div("Failures", **{"data-execs-status": "failure"}, cls="failure")
                                 ],
                                 id="status-bandit-toggle",
+                                js_callback="setCookie(cookieKey, labels.children[1]); loadExecs();",
                                 style="""
                                     #status-bandit-toggle {
                                         position: absolute;
@@ -919,15 +930,15 @@ def register(app, rt, prefix=""):
                                 const COOKIE_PREFIX = "executions_dashboard:";
                                 const cookieKey = COOKIE_PREFIX + 'status-bandit-toggle';
 
-                                container.addEventListener('click', (event) => {
-                                    setCookie(cookieKey, labels.children[1]);
-                                });
+                                // container.addEventListener('click', (event) => {
+                                //     setCookie(cookieKey, labels.children[1]);
+                                // });
 
-                                container.addEventListener('keydown', (event) => {
-                                    if (event.code === 'Space' || event.key === ' ') {
-                                        setCookie(cookieKey, labels.children[1]);
-                                    }
-                                });
+                                // container.addEventListener('keydown', (event) => {
+                                //     if (event.code === 'Space' || event.key === ' ') {
+                                //         setCookie(cookieKey, labels.children[1]);
+                                //     }
+                                // });
 
                                 document.addEventListener("DOMContentLoaded", function() {
                                     // intiale value from cookie
@@ -1015,39 +1026,7 @@ def register(app, rt, prefix=""):
                                         console.error('Error parsing SSE message data:', e);
                                         return;
                                     }}
-
-                                    /* ****************************************************
-                                    * Add "newExecutionElement" to "executions-container" *
-                                    **************************************************** */
-                                    const newExecutionStart = new Date(payload.start_timestamp);
-                                    const template = document.createElement('template');
-                                    template.innerHTML = payload.html.trim();
-                                    const newExecutionElement = template.content.firstElementChild;
-
-                                    // Find where to insert the newExecutionElement
-                                    // assuming async from different seeders may occur
-                                    let inserted = false;
-                                    const children = execContainer.getElementsByClassName('execution');
-                                    for (let i = 0; i < children.length; ++i) {{
-                                        const existingDiv = children[i];
-                                        const existingStartTS = existingDiv.dataset.startTimestamp;
-                                        if (!existingStartTS) continue;
-                                        const existingStart = new Date(existingStartTS);
-
-                                        // Descending: insert before the first older item
-                                        if (newExecutionStart > existingStart) {{
-                                            execContainer.insertBefore(newExecutionElement, existingDiv);
-                                            inserted = true;
-                                            break;
-                                        }}
-                                    }}
-                                    // If not inserted anywhere
-                                    // (all items are newer or container is empty),
-                                    // append at the end
-                                    if (!inserted) {{
-                                        execContainer.appendChild(newExecutionElement);
-                                    }}
-                                    /* ************************************************* */
+console.log("newExecEventSource.onmessage", payload);
 
                                     /* ***********************************************
                                     * Keep autocomplete comboboxes dropdowns in sync *
@@ -1072,6 +1051,78 @@ def register(app, rt, prefix=""):
                                             window["_options_pipeline_user_autocomplete"] || [],
                                             payload.username
                                         );
+                                    /* ************************************************* */
+
+                                    /* ****************************************************
+                                    * Add "newExecutionElement" to "executions-container" *
+                                    **************************************************** */
+                                    const newExecutionStart = new Date(payload.start_timestamp);
+                                    const template = document.createElement('template');
+                                    template.innerHTML = payload.html.trim();
+                                    const newExecutionElement = template.content.firstElementChild;
+
+// apply page filters
+console.log(newExecutionElement);
+const cookies = document.cookie.split("; ");
+for (const cookie of cookies) {{
+    const [key, val] = cookie.split("=");
+    if (key === COOKIE_PREFIX + 'pipeline-name-autocomplete') {{
+        const pipelineNameFilter = decodeURIComponent(val||"");
+        if (
+            pipelineNameFilter > "" &&
+            newExecutionElement.dataset.pipelineName != pipelineNameFilter
+        ) return;
+    }} else if (key === COOKIE_PREFIX + 'pipeline-user-autocomplete') {{
+        const userNameFilter = decodeURIComponent(val||"");
+        if (
+            userNameFilter > "" &&
+            newExecutionElement.dataset.username != userNameFilter
+        ) return;
+    }} else if (key === COOKIE_PREFIX + 'pipeline-before-datetime') {{
+        const pipelineBeforeDatetimeSelected =
+            document.getElementById("pipeline-before-datetime-selected").value;
+        if (pipelineBeforeDatetimeSelected > "") {{
+            pipelineBeforeDatetime = new Date(before_datetime_str);
+            if (
+                new Date(newExecutionElement.dataset.startTimestamp)
+                > pipelineBeforeDatetime
+            ) return;
+        }}
+    }} else if (key === COOKIE_PREFIX + 'status-bandit-toggle') {{
+        // if filtering on status
+        if (('failed' in newExecutionElement.dataset)) {{
+            // if the streamed newExecutionElement has end_timestamp
+            // (which may happen when we programatically fires that event,
+            //  which we do if execution-end event occurs
+            //  while user filters on execution-status)
+        }}
+console.log('status-bandit-toggle', decodeURIComponent(val||""), newExecutionElement.dataset.failed);
+    }}
+}}
+
+                                    // Find where to insert the newExecutionElement
+                                    // assuming async from different seeders may occur
+                                    let inserted = false;
+                                    const children = execContainer.getElementsByClassName('execution');
+                                    for (let i = 0; i < children.length; ++i) {{
+                                        const existingDiv = children[i];
+                                        const existingStartTS = existingDiv.dataset.startTimestamp;
+                                        if (!existingStartTS) continue;
+                                        const existingStart = new Date(existingStartTS);
+
+                                        // Descending: insert before the first older item
+                                        if (newExecutionStart > existingStart) {{
+                                            execContainer.insertBefore(newExecutionElement, existingDiv);
+                                            inserted = true;
+                                            break;
+                                        }}
+                                    }}
+                                    // If not inserted anywhere
+                                    // (all items are newer or container is empty),
+                                    // append at the end
+                                    if (!inserted) {{
+                                        execContainer.appendChild(newExecutionElement);
+                                    }}
                                     /* ************************************************* */
                                 }};
                             """),
@@ -1116,14 +1167,11 @@ function formatTimeDelta(start, end) {{
                                         console.error('Error parsing SSE message data:', e);
                                         return;
                                     }}
-console.log(payload);
+console.log("execEndEventSource - payload:", payload);
 const executionElement = document.getElementById(payload.id);
 if (executionElement) {{
     //console.log(executionElement);
     const endTimestampElement = executionElement.querySelector('.end_timestamp');
-    console.log(endTimestampElement);
-    console.log(executionElement.dataset.startTimestamp);
-    console.log(payload.end_timestamp);
     endTimestampElement.innerText = formatTimeDelta(
         executionElement.dataset.startTimestamp, payload.end_timestamp
     );
@@ -1210,6 +1258,16 @@ if (executionElement) {{
                         before_datetime_str = document.getElementById(
                             "pipeline-before-datetime-selected").value;
 
+                        // retireve executions status filter
+                        execsStatus = "";
+                        const execsStatus_cookieKey = COOKIE_PREFIX + 'status-bandit-toggle';
+                        for (const cookie of cookies) {{
+                            const [key, val] = cookie.split("=");
+                            if (key === execsStatus_cookieKey) {{
+                                execsStatus = decodeURIComponent(val||"");
+                            }}
+                        }}
+
                         // form data for the html POST
                         const formData = new FormData();
                         if (pipeline_name != "")
@@ -1219,6 +1277,8 @@ if (executionElement) {{
                         if (before_datetime_str != "")
                             formData.append('before_datetime',
                                             new Date(before_datetime_str));
+                        if (execsStatus != "")
+                            formData.append('execs_status', execsStatus);
                         const batch_executions_count = 75;
                         formData.append('n', batch_executions_count);
 
