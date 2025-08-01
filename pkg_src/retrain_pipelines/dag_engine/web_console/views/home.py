@@ -2,7 +2,7 @@
 import os
 import logging
 
-from typing import Optional, Union
+from typing import Optional, Union, List
 from datetime import datetime, timezone
 from email.utils import formatdate, \
     parsedate_to_datetime
@@ -412,6 +412,176 @@ def FilterElement(
             )
         )
 
+def MultiStatesToggler(
+    options: List[Div],
+    id: str,
+    style: Optional[str]
+) -> Div:
+    # Add "bandit-toggle-label" to each option's class attribute
+    options_with_cls = []
+    for opt in options:
+        print(opt.attrs)
+        classes = (opt.attrs.get("class", "")
+                   if hasattr(opt, "attrs") else opt.cls or "")
+        class_list = set(classes.split()) if classes else set()
+        class_list.add("bandit-toggle-label")
+        new_opt = Div(
+            *opt.children,
+            cls=" ".join(class_list),
+            **{k: v for k, v in (opt.attrs.items()
+               if hasattr(opt, "attrs") else {}) if k != "class"}
+        )
+        options_with_cls.append(new_opt)
+
+    return Div(
+        Div(
+            *options_with_cls,
+            id="banditLabels",
+            cls="bandit-toggle-labels"
+        ),
+        Style(f"""
+            {style}
+            .bandit-toggle-container {{
+                display: inline-block;
+                position: relative;
+                cursor: pointer;
+                user-select: none;
+                font-family: 'Roboto', sans-serif;
+                font-weight: bold;
+                font-size: 8pt;
+                letter-spacing: 2px;
+                font-style: italic;
+                line-height: 1.2;
+                height: 1.2em;
+                overflow: hidden;
+                padding: 0 10px;
+                background: rgba(255, 255, 255, 0.15);
+                backdrop-filter: blur(8px);
+                -webkit-backdrop-filter: blur(8px);
+                border: 1px solid rgba(255, 255, 255, 0.3);
+                border-radius: 10px;
+                box-shadow: 0 4px 10px rgba(255, 255, 255, 0.2);
+            }}
+            .bandit-toggle-container:focus {{
+                outline: 1px solid #4d0066;
+            }}
+            .bandit-toggle-labels {{
+                position: relative;
+                transition: transform 0.6s
+                  cubic-bezier(0.68, -0.55, 0.265, 1.55);
+            }}
+            .bandit-toggle-label {{
+                height: 1em;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                white-space: nowrap;
+                color: #4d0066;
+
+                text-shadow:
+                    -0.7px 0 0 rgba(255, 255, 255, 0.6),
+                    0.7px 0 0 rgba(255, 255, 255, 0.6),
+                    0 -0.7px 0 rgba(255, 255, 255, 0.6),
+                    0 0.7px 0 rgba(255, 255, 255, 0.6),
+                    -0.7px -0.7px 0 rgba(255, 255, 255, 0.6),
+                    0.7px -0.7px 0 rgba(255, 255, 255, 0.6),
+                    -0.7px 0.7px 0 rgba(255, 255, 255, 0.6),
+                    0.7px 0.7px 0 rgba(255, 255, 255, 0.6),
+                    2px 2px 6px white;
+            }}
+            /*
+             .all {{ color: #1976d2; }}
+             .success {{ color: #30a030; }}
+             .failure {{ color: #c52323; }}
+            */
+        """),
+        Script(f"""// behavior
+            (function(){{
+                const container = document.getElementById('{id}');
+                const labels = container.getElementsByClassName('bandit-toggle-labels')[0];
+
+                const labelDivs = container.getElementsByClassName('bandit-toggle-label');
+                window["_states_{id}"] = Array.from(labelDivs).map(div => {{
+                    // array of dicts of form :
+                    // {{ text: 'the text content',
+                    //    class: 'the secondary class(es)'
+                    //    data-*: 'the dataset entry value'
+                    // }}
+
+                    // Convert dataset DOMStringMap to a plain object
+                    const dataset = {{}};
+                    for (const [key, value] of Object.entries(div.dataset)) {{
+                        dataset[key] = value;
+                    }}
+
+                    return {{
+                        text: div.textContent.trim(),
+                        class: Array.from(div.classList)
+                                .find(c => c !== 'bandit-toggle-label'),
+                        dataset: dataset
+                    }};
+                }});
+
+                 let currentIndex = -1;
+                 let isAnimating = false;
+
+                function addNextLabel() {{
+                    // put last active label back at the bottom of the list
+                    const nextIndex = (currentIndex + 1) % window["_states_{id}"].length;
+                    const nextState = window["_states_{id}"][nextIndex];
+                    const newLabel = document.createElement('div');
+                    newLabel.className = `bandit-toggle-label ${{nextState.class}}`;
+                    newLabel.textContent = nextState.text;
+
+                    // Add all dataset entries as data-* attributes
+                    for (const [key, value] of Object.entries(nextState.dataset || {{}})) {{
+                        // Convert camelCase key to dash-case data attribute name
+                        const dataAttrName = 'data-' + key.replace(/[A-Z]/g, m => '-' + m.toLowerCase());
+                        newLabel.setAttribute(dataAttrName, value);
+                    }}
+
+                    labels.appendChild(newLabel);
+                }}
+
+                function triggerStateChange() {{
+                    if (isAnimating) return;
+                    isAnimating = true;
+
+                    addNextLabel();
+
+                    labels.style.transition =
+                        'transform 0.6s cubic-bezier(0.68, -0.55, 0.265, 1.55)';
+                    const height = container.offsetHeight;
+                    labels.style.transform = `translateY(-${{height}}px)`;
+
+                    setTimeout(() => {{
+                        labels.style.transition = 'none';
+                        labels.removeChild(labels.firstElementChild);
+                        labels.style.transform = 'translateY(0px)';
+                        currentIndex = (currentIndex + 1) % window["_states_{id}"].length;
+                        isAnimating = false;
+                    }}, 600);
+                }}
+
+                container.addEventListener('click', (event) => {{
+                    container.focus();
+                    triggerStateChange();
+                }});
+
+                container.addEventListener('keydown', (event) => {{
+                    if (event.code === 'Space' || event.key === ' ') {{
+                        event.preventDefault();
+                        triggerStateChange();
+                    }}
+                }});
+
+            }})();
+        """),
+        id=id,
+        tabindex="0",
+        cls="bandit-toggle-container"
+    )
+
 def register(app, rt, prefix=""):
     @rt("/favicon.ico")
     def favicon():
@@ -691,6 +861,137 @@ def register(app, rt, prefix=""):
                                     min-width: 100px; width: 100px;
                                 }
                             """),
+                            FilterElement(# datetime filter
+                                "before",
+                                Div(
+                                    id="pipeline-before-datetime", # picker container
+                                    callback="loadExecs();",
+                                    style=(
+                                        "min-width: 60px; min-height: 18px; "
+                                        "--shadow-color: rgba(77, 0, 102, .3);"
+                                    )
+                                ),
+                                Script(
+                                    """
+                                        import { attachDateTimePicker } from './datetime-picker.js';
+                                        attachDateTimePicker(
+                                            'pipeline-before-datetime',
+                                            {COOKIE_PREFIX: 'executions_dashboard:'}
+                                        );
+                                    """,
+                                    type="module"
+                                ),
+                                label_shadow_color="rgba(77, 0, 102, .7)"
+                            ),
+                            MultiStatesToggler(# executions status filter
+                                options=[
+                                    Div("All Statuses", cls="all"),
+                                    Div("Successes", **{"data-execs-status": "success"}, cls="success"),
+                                    Div("Failures", **{"data-execs-status": "failure"}, cls="failure")
+                                ],
+                                id="status-bandit-toggle",
+                                style="""
+                                    #status-bandit-toggle {
+                                        position: absolute;
+                                        bottom: 2px;
+                                        right: 3px;
+                                    }
+                                """
+                            ),
+                            Script("""// MultiStatesToggler cookies
+                                const container = document.getElementById('status-bandit-toggle');
+                                const labels = container.getElementsByClassName('bandit-toggle-labels')[0];
+
+                                // Helper function to set a cookie
+                                function setCookie(name, label) {
+                                    if (!label.dataset ||
+                                        Object.keys(label.dataset).length === 0
+                                    ) {
+                                        // If dataset is empty, remove the cookie
+                                        // by setting its expiry in the past.
+                                        document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;`;
+                                    } else {
+                                        const expires = new Date(Date.now() + 50*365*24*60*60*1000).toUTCString();
+                                        document.cookie = `${name}=${label.dataset.execsStatus}; expires=${expires}; path=/`;
+                                    }
+                                }
+
+                                const COOKIE_PREFIX = "executions_dashboard:";
+                                const cookieKey = COOKIE_PREFIX + 'status-bandit-toggle';
+
+                                container.addEventListener('click', (event) => {
+                                    setCookie(cookieKey, labels.children[1]);
+                                });
+
+                                container.addEventListener('keydown', (event) => {
+                                    if (event.code === 'Space' || event.key === ' ') {
+                                        setCookie(cookieKey, labels.children[1]);
+                                    }
+                                });
+
+                                document.addEventListener("DOMContentLoaded", function() {
+                                    // intiale value from cookie
+                                    const cookies = document.cookie.split("; ");
+                                    for (const cookie of cookies) {
+                                        const [key, val] = cookie.split("=");
+                                        if (key === cookieKey) {
+                                            const execsStatus = decodeURIComponent(val||"");
+
+                                            // removing from top of labels
+                                            for (let i = 0; i < labels.childNodes.length; ) {
+                                                const child = labels.childNodes[i];
+                                                if (child.nodeType !== 3 && (!child.dataset ||
+                                                    Object.keys(child.dataset).length === 0 ||
+                                                    child.dataset.execsStatus != execsStatus)
+                                                ) {
+                                                    labels.removeChild(child);
+                                                    // do not increment i because childNodes collection updates
+                                                } else if (
+                                                    child.dataset &&
+                                                    Object.keys(child.dataset).length > 0 &&
+                                                    child.dataset.execsStatus === execsStatus
+                                                ) {
+                                                    break;
+                                                } else {
+                                                    i++;  // only increment if no removal happened
+                                                }
+                                            }
+
+                                            // appending at bottom of labels
+                                            // and moving states up the states list
+                                            // so currentIndex points to the right entry
+                                            for (let i = 0; i < window["_states_status-bandit-toggle"].length; i++) {
+                                                const state = window["_states_status-bandit-toggle"][i];
+                                                if (
+                                                    Object.keys(state.dataset).length > 0 &&
+                                                    state.dataset.execsStatus === execsStatus
+                                                ) {
+                                                    // Remove all states before the current one (index i)
+                                                    const before = window["_states_status-bandit-toggle"].splice(0, i);
+                                                    // Append those removed states to the end to keep their order
+                                                    window["_states_status-bandit-toggle"].push(...before);
+                                                    break;
+                                                } else {
+                                                    const newLabel = document.createElement('div');
+                                                    newLabel.className = `bandit-toggle-label ${state.class}`;
+                                                    newLabel.textContent = state.text;
+
+                                                    // Add all dataset entries as data-* attributes
+                                                    for (const [key, value] of Object.entries(state.dataset || {})) {
+                                                        // Convert camelCase key to dash-case data attribute name
+                                                        const dataAttrName = 
+                                                            'data-' + key.replace(/[A-Z]/g, m => '-' + m.toLowerCase());
+                                                        newLabel.setAttribute(dataAttrName, value);
+                                                    }
+
+                                                    labels.appendChild(newLabel);
+                                                }
+                                            }
+                                            // console.log("labels", labels);
+                                        }
+                                    }
+                                });
+                            """),
                             Script(f"""// SSE events : new retraining-pipeline execution
                                 const newExecEventSource = new EventSource(
                                     `{prefix}/new_pipeline_exec_event`
@@ -830,28 +1131,6 @@ if (executionElement) {{
 }}
                                 }}
                             """),
-                            FilterElement(# datetime filter
-                                "before",
-                                Div(
-                                    id="pipeline-before-datetime", # picker container
-                                    callback="loadExecs();",
-                                    style=(
-                                        "min-width: 60px; min-height: 18px; "
-                                        "--shadow-color: rgba(77, 0, 102, .3);"
-                                    )
-                                ),
-                                Script(
-                                    """
-                                        import { attachDateTimePicker } from './datetime-picker.js';
-                                        attachDateTimePicker(
-                                            'pipeline-before-datetime',
-                                            {COOKIE_PREFIX: 'executions_dashboard:'}
-                                        );
-                                    """,
-                                    type="module"
-                                ),
-                                label_shadow_color="rgba(77, 0, 102, .7)"
-                            ),
                             id="params_panel",
                             style=(
                                 "position: relative;"
@@ -866,7 +1145,8 @@ if (executionElement) {{
                                 "box-shadow: 0 2px 8px rgba(0,0,0,0.08), "
                                     "inset 0 1px 0 rgba(255,255,255,0.8); "
                                 "color: white; "
-                                "margin-left: auto;"
+                                "margin-left: auto; "
+                                "height: 48px;"
                             )
                         ),
                         style=(
