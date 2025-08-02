@@ -49,7 +49,7 @@ def execution_to_html(execution_ext: Union[Execution, ExecutionExt]) -> Div:
             (execution_ext.end_timestamp - execution_ext.start_timestamp) \
                 if execution_ext.end_timestamp else "",
             cls="end_timestamp" + ((
-                    ", success" if execution_ext.success else ", failure"
+                    " success" if execution_ext.success else " failure"
                 ) if execution_ext.end_timestamp else "")
         ),
         **{
@@ -107,7 +107,6 @@ async def get_executions_ext(
         execs_status=execs_status, n=n,
         descending=descending
     )
-    print("executions.get_executions_ext ", n, len(executions_ext))
 
     dom_executions = []
     for execution_ext in executions_ext:

@@ -450,10 +450,10 @@ def MultiStatesToggler(
                 user-select: none;
                 font-family: 'Roboto', sans-serif;
                 font-weight: bold;
-                font-size: 8pt;
+                font-size: 0.7em;
                 letter-spacing: 2px;
                 font-style: italic;
-                line-height: 1.2;
+                /* line-height: 1.2; */
                 height: 1.2em;
                 overflow: hidden;
                 padding: 0 10px;
@@ -473,7 +473,7 @@ def MultiStatesToggler(
                   cubic-bezier(0.68, -0.55, 0.265, 1.55);
             }}
             .bandit-toggle-label {{
-                height: 1em;
+                height: 1.25em;
                 display: flex;
                 align-items: center;
                 justify-content: center;
@@ -737,7 +737,6 @@ def register(app, rt, prefix=""):
         data = await request.json()
 
         # validate posted data
-        print("post_execution_ended_event - ", data)
         try:
             execution_ext = ExecutionExt(**data)
         except (KeyError, ValueError, TypeError) as e:
@@ -770,7 +769,6 @@ def register(app, rt, prefix=""):
     ):
         # Retrieves params from form data (POST)
         form = await request.form()
-        print(form)
 
         before_datetime_str = form.get("before_datetime")
         if before_datetime_str:
@@ -783,7 +781,7 @@ def register(app, rt, prefix=""):
                 before_datetime = \
                     before_datetime.astimezone(timezone.utc)
             except Exception as e:
-                print(e)
+                logging.getLogger().warn(e)
                 before_datetime = None
         else:
             before_datetime = None
@@ -908,7 +906,11 @@ def register(app, rt, prefix=""):
                                         transition: transform 0.1s ease;
                                     }
                                     #clear-filters:active {
-                                        transform: scale(0.95);
+                                        transition-duration: 0s;
+                                        transform: scale(0.85);
+                                    }
+                                    #clear-filters:not(:active) {
+                                        transition-duration: 0.3s; /* slow scale back up */
                                     }
                                 """),
                                 _onclick="""
@@ -984,6 +986,10 @@ def register(app, rt, prefix=""):
                                 const COOKIE_PREFIX = "executions_dashboard:";
                                 const cookieKey = COOKIE_PREFIX + 'pipeline-status-bandit-toggle';
                                 document.addEventListener("DOMContentLoaded", function() {
+                                    // console.log("DOMContentLoaded ENTER",
+                                    //     "labels", labels.cloneNode(true),
+                                    //     [... window["_states_pipeline-status-bandit-toggle"]]
+                                    // );
                                     /* **************************
                                     * intiale value from cookie *
                                     ************************** */
@@ -1063,7 +1069,10 @@ def register(app, rt, prefix=""):
                                                     labels.appendChild(newLabel);
                                                 }
                                             }
-                                            // console.log("labels", labels);
+                                            // console.log("DOMContentLoaded EXIT",
+                                            //     "labels", labels.cloneNode(true),
+                                            //     [... window["_states_pipeline-status-bandit-toggle"]]
+                                            // );
                                             return;
                                         }
                                     }
@@ -1095,212 +1104,219 @@ def register(app, rt, prefix=""):
                                 });
                             """),
                             Script(f"""// SSE events : new retraining-pipeline execution
-                                const newExecEventSource = new EventSource(
-                                    `{prefix}/new_pipeline_exec_event`
-                                );
+                                let newExecEventSource;
+                                function registerNewExecEvent() {{
+                                    newExecEventSource = new EventSource(
+                                        `{prefix}/new_pipeline_exec_event`
+                                    );
 
-                                newExecEventSource.onerror = (err) => {{
-                                    console.error('SSE error:', err);
-                                }};
-                                // Force close EventSource when leaving the page
-                                window.addEventListener('pagehide', () => {{
-                                    newExecEventSource.close();
-                                }});
+                                    newExecEventSource.onerror = (err) => {{
+                                        console.error('SSE error:', err);
+                                    }};
+                                    // Force close EventSource when leaving the page
+                                    window.addEventListener('pagehide', () => {{
+                                        newExecEventSource.close();
+                                    }});
 
-                                // Listen for incoming messages from the server
-                                newExecEventSource.onmessage = (event) => {{
-                                    let payload;
-                                    try {{
-                                        // Parse the server data, assuming it's JSON
-                                        payload = JSON.parse(event.data);
-                                    }} catch (e) {{
-                                        console.error('Error parsing SSE message data:', e);
-                                        return;
-                                    }}
-                                    //console.log("newExecEventSource.onmessage", payload);
-
-                                    /* ***********************************************
-                                    * Keep autocomplete comboboxes dropdowns in sync *
-                                    *********************************************** */
-                                    // Helper to add and keep list sorted without duplicates
-                                    function addAndSortUnique(arr, newItem) {{
-                                        if (!newItem) return arr;
-                                        // Only add if not present
-                                        if (!arr.includes(newItem)) {{
-                                            arr.push(newItem);
-                                            arr.sort((a, b) => a.localeCompare(b));
+                                    // Listen for incoming messages from the server
+                                    newExecEventSource.onmessage = (event) => {{
+                                        let payload;
+                                        try {{
+                                            // Parse the server data, assuming it's JSON
+                                            payload = JSON.parse(event.data);
+                                        }} catch (e) {{
+                                            console.error('Error parsing SSE message data:', e);
+                                            return;
                                         }}
-                                        return arr;
-                                    }}
-                                    window["_options_pipeline_name_autocomplete"] = 
-                                        addAndSortUnique(
-                                            window["_options_pipeline_name_autocomplete"] || [],
-                                            payload.name
-                                        );
-                                    window["_options_pipeline_user_autocomplete"] = 
-                                        addAndSortUnique(
-                                            window["_options_pipeline_user_autocomplete"] || [],
-                                            payload.username
-                                        );
-                                    /* ************************************************* */
+                                        //console.log("newExecEventSource.onmessage", payload);
 
-                                    /* ****************************************************
-                                    * Add "newExecutionElement" to "executions-container" *
-                                    **************************************************** */
-                                    const newExecutionStart = new Date(payload.start_timestamp);
-                                    const template = document.createElement('template');
-                                    template.innerHTML = payload.html.trim();
-                                    const newExecutionElement = template.content.firstElementChild;
+                                        /* ***********************************************
+                                        * Keep autocomplete comboboxes dropdowns in sync *
+                                        *********************************************** */
+                                        // Helper to add and keep list sorted without duplicates
+                                        function addAndSortUnique(arr, newItem) {{
+                                            if (!newItem) return arr;
+                                            // Only add if not present
+                                            if (!arr.includes(newItem)) {{
+                                                arr.push(newItem);
+                                                arr.sort((a, b) => a.localeCompare(b));
+                                            }}
+                                            return arr;
+                                        }}
+                                        window["_options_pipeline_name_autocomplete"] = 
+                                            addAndSortUnique(
+                                                window["_options_pipeline_name_autocomplete"] || [],
+                                                payload.name
+                                            );
+                                        window["_options_pipeline_user_autocomplete"] = 
+                                            addAndSortUnique(
+                                                window["_options_pipeline_user_autocomplete"] || [],
+                                                payload.username
+                                            );
+                                        /* ************************************************* */
 
-                                    // apply page filters
-                                    const cookies = document.cookie.split("; ");
-                                    for (const cookie of cookies) {{
-                                        const [key, val] = cookie.split("=");
-                                        if (key === COOKIE_PREFIX + 'pipeline-name-autocomplete') {{
-                                            const pipelineNameFilter = decodeURIComponent(val||"");
-                                            if (
-                                                pipelineNameFilter > "" &&
-                                                newExecutionElement.dataset.pipelineName !=
-                                                    pipelineNameFilter
-                                            ) return;
-                                        }} else if (key === COOKIE_PREFIX + 'pipeline-user-autocomplete') {{
-                                            const userNameFilter = decodeURIComponent(val||"");
-                                            if (
-                                                userNameFilter > "" &&
-                                                newExecutionElement.dataset.username != userNameFilter
-                                            ) return;
-                                        }} else if (key === COOKIE_PREFIX + 'pipeline-before-datetime') {{
-                                            const pipelineBeforeDatetimeSelected =
-                                                document.getElementById(
-                                                    "pipeline-before-datetime-selected").value;
-                                            if (pipelineBeforeDatetimeSelected > "") {{
-                                                pipelineBeforeDatetime = new Date(before_datetime_str);
+                                        /* ****************************************************
+                                        * Add "newExecutionElement" to "executions-container" *
+                                        **************************************************** */
+                                        const newExecutionStart = new Date(payload.start_timestamp);
+                                        const template = document.createElement('template');
+                                        template.innerHTML = payload.html.trim();
+                                        const newExecutionElement = template.content.firstElementChild;
+
+                                        // apply page filters
+                                        const cookies = document.cookie.split("; ");
+                                        for (const cookie of cookies) {{
+                                            const [key, val] = cookie.split("=");
+                                            if (key === COOKIE_PREFIX + 'pipeline-name-autocomplete') {{
+                                                const pipelineNameFilter = decodeURIComponent(val||"");
                                                 if (
-                                                    new Date(newExecutionElement.dataset.startTimestamp)
-                                                    > pipelineBeforeDatetime
+                                                    pipelineNameFilter > "" &&
+                                                    newExecutionElement.dataset.pipelineName !=
+                                                        pipelineNameFilter
                                                 ) return;
-                                            }}
-                                        }} else if (
-                                            key === COOKIE_PREFIX + 'pipeline-status-bandit-toggle'
-                                        ) {{
-                                            // if filtering on status
-                                            const statusFilter = decodeURIComponent(val||"");
-                                            if ('success' in newExecutionElement.dataset) {{
-                                                // ('success (y/n)', i.e.
-                                                // if the streamed newExecutionElement
-                                                // has end_timestamp
-                                                // (which may happen when we programatically
-                                                //  fired that event, which we do
-                                                // if execution-end event occurs
-                                                //  while user filters on execution-status)
-                                                const successBool =
-                                                    newExecutionElement.dataset.success.toLowerCase()
-                                                    === "true";
-                                                const isMatch =
-                                                    (statusFilter === "success" && successBool)
-                                                     || (statusFilter === "failure" && !successBool);
-                                                if (!isMatch) return;
-                                            }} else {{
-                                                // filtering on status and
-                                                // execution is not completed yet
-                                                return;
+                                            }} else if (key === COOKIE_PREFIX + 'pipeline-user-autocomplete') {{
+                                                const userNameFilter = decodeURIComponent(val||"");
+                                                if (
+                                                    userNameFilter > "" &&
+                                                    newExecutionElement.dataset.username != userNameFilter
+                                                ) return;
+                                            }} else if (key === COOKIE_PREFIX + 'pipeline-before-datetime') {{
+                                                const pipelineBeforeDatetimeSelected =
+                                                    document.getElementById(
+                                                        "pipeline-before-datetime-selected").value;
+                                                if (pipelineBeforeDatetimeSelected > "") {{
+                                                    pipelineBeforeDatetime = new Date(before_datetime_str);
+                                                    if (
+                                                        new Date(newExecutionElement.dataset.startTimestamp)
+                                                        > pipelineBeforeDatetime
+                                                    ) return;
+                                                }}
+                                            }} else if (
+                                                key === COOKIE_PREFIX + 'pipeline-status-bandit-toggle'
+                                            ) {{
+                                                // if filtering on status
+                                                const statusFilter = decodeURIComponent(val||"");
+                                                if ('success' in newExecutionElement.dataset) {{
+                                                    // ('success (y/n)', i.e.
+                                                    // if the streamed newExecutionElement
+                                                    // has end_timestamp
+                                                    // (which may happen when we programatically
+                                                    //  fired that event, which we do
+                                                    // if execution-end event occurs
+                                                    //  while user filters on execution-status)
+                                                    const successBool =
+                                                        newExecutionElement.dataset.success.toLowerCase()
+                                                        === "true";
+                                                    const isMatch =
+                                                        (statusFilter === "success" && successBool)
+                                                         || (statusFilter === "failure" && !successBool);
+                                                    if (!isMatch) return;
+                                                }} else {{
+                                                    // filtering on status and
+                                                    // execution is not completed yet
+                                                    return;
+                                                }}
                                             }}
                                         }}
-                                    }}
 
-                                    // Find where to insert the newExecutionElement
-                                    // assuming async from different seeders may occur
-                                    let inserted = false;
-                                    const children = 
-                                        execContainer.getElementsByClassName('execution');
-                                    for (let i = 0; i < children.length; ++i) {{
-                                        const existingDiv = children[i];
-                                        const existingStartTS = existingDiv.dataset.startTimestamp;
-                                        if (!existingStartTS) continue;
-                                        const existingStart = new Date(existingStartTS);
+                                        // Find where to insert the newExecutionElement
+                                        // assuming async from different seeders may occur
+                                        let inserted = false;
+                                        const children = 
+                                            execContainer.getElementsByClassName('execution');
+                                        for (let i = 0; i < children.length; ++i) {{
+                                            const existingDiv = children[i];
+                                            const existingStartTS = existingDiv.dataset.startTimestamp;
+                                            if (!existingStartTS) continue;
+                                            const existingStart = new Date(existingStartTS);
 
-                                        // Descending: insert before the first older item
-                                        if (newExecutionStart > existingStart) {{
-                                            execContainer.insertBefore(
-                                                newExecutionElement, existingDiv);
-                                            inserted = true;
-                                            break;
+                                            // Descending: insert before the first older item
+                                            if (newExecutionStart > existingStart) {{
+                                                execContainer.insertBefore(
+                                                    newExecutionElement, existingDiv);
+                                                inserted = true;
+                                                break;
+                                            }}
                                         }}
-                                    }}
-                                    // If not inserted anywhere
-                                    // (all items are newer or container is empty),
-                                    // append at the end
-                                    if (!inserted) {{
-                                        execContainer.appendChild(newExecutionElement);
-                                    }}
-                                    /* ************************************************* */
-                                }};
+                                        // If not inserted anywhere
+                                        // (all items are newer or container is empty),
+                                        // append at the end
+                                        if (!inserted) {{
+                                            execContainer.appendChild(newExecutionElement);
+                                        }}
+                                        /* ************************************************* */
+                                    }};
+                                }}
+                                registerNewExecEvent();
                             """),
                             Script(f"""// SSE events : retraining-pipeline execution ended
-                                const execEndEventSource = new EventSource(
-                                    `{prefix}/pipeline_exec_end_event`
-                                );
+                                function registerEndExecEvent() {{
+                                    const execEndEventSource = new EventSource(
+                                        `{prefix}/pipeline_exec_end_event`
+                                    );
 
-                                execEndEventSource.onerror = (err) => {{
-                                    console.error('SSE error:', err);
-                                }};
-                                // Force close EventSource when leaving the page
-                                window.addEventListener('pagehide', () => {{
-                                    execEndEventSource.close();
-                                }});
+                                    execEndEventSource.onerror = (err) => {{
+                                        console.error('SSE error:', err);
+                                    }};
+                                    // Force close EventSource when leaving the page
+                                    window.addEventListener('pagehide', () => {{
+                                        execEndEventSource.close();
+                                    }});
 
-                                function formatTimeDelta(start, end) {{
-                                    const startDate = new Date(start);
-                                    const endDate = new Date(end);
+                                    function formatTimeDelta(start, end) {{
+                                        const startDate = new Date(start);
+                                        const endDate = new Date(end);
 
-                                    const diffMs = endDate - startDate;
-                                    if (isNaN(diffMs)) {{
-                                        throw new Error("Invalid date(s) provided");
+                                        const diffMs = endDate - startDate;
+                                        if (isNaN(diffMs)) {{
+                                            throw new Error("Invalid date(s) provided");
+                                        }}
+
+                                        const totalSeconds = Math.floor(diffMs / 1000);
+                                        const milliseconds = diffMs % 1000;
+                                        const seconds = totalSeconds % 60;
+                                        const minutes = Math.floor((totalSeconds % 3600) / 60);
+                                        const hours = Math.floor(totalSeconds / 3600);
+
+                                        return `${{hours}}:${{String(minutes).padStart(2, '0')}}:${{String(seconds).padStart(2, '0')}}.${{String(milliseconds).padStart(6, '0')}}`;
                                     }}
 
-                                    const totalSeconds = Math.floor(diffMs / 1000);
-                                    const milliseconds = diffMs % 1000;
-                                    const seconds = totalSeconds % 60;
-                                    const minutes = Math.floor((totalSeconds % 3600) / 60);
-                                    const hours = Math.floor(totalSeconds / 3600);
+                                    // Listen for incoming messages from the server
+                                    execEndEventSource.onmessage = (event) => {{
+                                        let payload;
+                                        try {{
+                                            // Parse the server data, assuming it's JSON
+                                            payload = JSON.parse(event.data);
+                                        }} catch (e) {{
+                                            console.error('Error parsing SSE message data:', e);
+                                            return;
+                                        }}
 
-                                    return `${{hours}}:${{String(minutes).padStart(2, '0')}}:${{String(seconds).padStart(2, '0')}}.${{String(milliseconds).padStart(6, '0')}}`;
+                                        //console.log("execEndEventSource - payload:", payload);
+                                        const executionElement = document.getElementById(payload.id);
+                                        if (executionElement) {{
+                                            const endTimestampElement = executionElement.querySelector('.end_timestamp');
+                                            endTimestampElement.innerText = formatTimeDelta(
+                                                executionElement.dataset.startTimestamp,
+                                                payload.end_timestamp
+                                            );
+                                            endTimestampElement.classList.add(
+                                                payload.success ? 'success' : 'failure');
+                                        }} else {{
+                                            // execution not found in container,
+                                            // dispatching to newExecEventSource
+                                            newExecEventSource.onmessage(event);
+                                        }}
+                                    }}
                                 }}
-
-                                // Listen for incoming messages from the server
-                                execEndEventSource.onmessage = (event) => {{
-                                    let payload;
-                                    try {{
-                                        // Parse the server data, assuming it's JSON
-                                        payload = JSON.parse(event.data);
-                                    }} catch (e) {{
-                                        console.error('Error parsing SSE message data:', e);
-                                        return;
-                                    }}
-
-                                    //console.log("execEndEventSource - payload:", payload);
-                                    const executionElement = document.getElementById(payload.id);
-                                    if (executionElement) {{
-                                        const endTimestampElement = executionElement.querySelector('.end_timestamp');
-                                        endTimestampElement.innerText = formatTimeDelta(
-                                            executionElement.dataset.startTimestamp,
-                                            payload.end_timestamp
-                                        );
-                                        endTimestampElement.classList.add(
-                                            payload.success ? 'success' : 'failure');
-                                    }} else {{
-                                        // execution not found in container,
-                                        // dispatching to newExecEventSource
-                                        newExecEventSource.onmessage(event);
-                                    }}
-                                }}
+                                registerEndExecEvent();
                             """),
                             Script("""// executions list reload on window history.back()
                                 window.addEventListener('pageshow', function(event) {
                                     if (event.persisted) {
-                                        document.dispatchEvent(
-                                            new Event('DOMContentLoaded', { bubbles: true })
-                                        );
+                                        loadExecs();
+                                        registerNewExecEvent();
+                                        registerEndExecEvent();
                                     }
                                 });
                             """),
