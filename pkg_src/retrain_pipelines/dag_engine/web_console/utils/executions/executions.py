@@ -56,9 +56,9 @@ def execution_to_html(execution_ext: Union[Execution, ExecutionExt]) -> Div:
             'data-pipeline-name': execution_ext.name,
             'data-username': execution_ext.username,
             'data-start-timestamp': execution_ext.start_timestamp,
-            'data-failed': (
-                str(execution_ext.failed)
-                if hasattr(execution_ext, "failed") else ""
+            'data-success': (
+                str(execution_ext.success)
+                if hasattr(execution_ext, "success") else ""
             )
         },
         cls="execution",

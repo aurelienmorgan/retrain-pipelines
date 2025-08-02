@@ -306,7 +306,8 @@ def AutoCompleteSelect(
                         selected = true;
 
                         input.classList.remove('combo-input-unselected');
-                        var val = input.value.trim();
+                        input.value = input.value.trim();
+                        var val = input.value;
                         var opts = window["_options_{id}"] || [];
                         if (val > "" && opts.indexOf(val) === -1) {{
                             input.classList.add('combo-input-selected-red');
@@ -893,16 +894,66 @@ def register(app, rt, prefix=""):
                                 ),
                                 label_shadow_color="rgba(77, 0, 102, .7)"
                             ),
+                            Div(# clear filters
+                                "clear filters",
+                                Style("""
+                                    #clear-filters {
+                                        position: absolute;
+                                        bottom: 0px;
+                                        left: 10px;
+                                        line-height: 1em;
+                                        font-size: x-small;
+                                        opacity: 0.6;
+                                        cursor: pointer;
+                                        transition: transform 0.1s ease;
+                                    }
+                                    #clear-filters:active {
+                                        transform: scale(0.95);
+                                    }
+                                """),
+                                _onclick="""
+                                    document.getElementById(
+                                        "pipeline-name-autocomplete-input").value = "";
+                                    document.getElementById(
+                                        "pipeline-user-autocomplete-input").value = "";
+                                    document.getElementById(
+                                        "pipeline-before-datetime").getElementsByClassName(
+                                        "datetime-input")[0].value = "";
+                                    document.getElementById(
+                                        "pipeline-before-datetime-selected").value = "";
+
+                                    // remove the filters cookies by setting their expiry in the past.
+                                    const cookies = document.cookie.split("; ");
+                                    for (const cookie of cookies) {
+                                        const [key, val] = cookie.split("=");
+                                        if (
+                                            key === COOKIE_PREFIX + 'pipeline-name-autocomplete' ||
+                                            key === COOKIE_PREFIX + 'pipeline-user-autocomplete' ||
+                                            key === COOKIE_PREFIX + 'pipeline-before-datetime' ||
+                                            key === COOKIE_PREFIX + 'pipeline-status-bandit-toggle'
+                                        ) {
+                                            document.cookie =
+                                                `${key}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;`;
+                                        }
+                                    }
+
+                                    document.dispatchEvent(
+                                        new Event('DOMContentLoaded', { bubbles: true })
+                                    );
+                                """,
+                                id="clear-filters",
+                                cls="glass-engraved"
+                            ),
                             MultiStatesToggler(# executions status filter
                                 options=[
                                     Div("All Statuses", cls="all"),
                                     Div("Successes", **{"data-execs-status": "success"}, cls="success"),
                                     Div("Failures", **{"data-execs-status": "failure"}, cls="failure")
                                 ],
-                                id="status-bandit-toggle",
+                                id="pipeline-status-bandit-toggle",
                                 js_callback="setCookie(cookieKey, labels.children[1]); loadExecs();",
                                 style="""
-                                    #status-bandit-toggle {
+                                    #pipeline-status-bandit-toggle {
                                         position: absolute;
                                         bottom: 2px;
                                         right: 3px;
@@ -910,7 +961,7 @@ def register(app, rt, prefix=""):
                                 """
                             ),
                             Script("""// MultiStatesToggler cookies
-                                const container = document.getElementById('status-bandit-toggle');
+                                const container = document.getElementById('pipeline-status-bandit-toggle');
                                 const labels = container.getElementsByClassName('bandit-toggle-labels')[0];
 
                                 // Helper function to set a cookie
@@ -920,28 +971,22 @@ def register(app, rt, prefix=""):
                                     ) {
                                         // If dataset is empty, remove the cookie
                                         // by setting its expiry in the past.
-                                        document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;`;
+                                        document.cookie =
+                                            `${name}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;`;
                                     } else {
-                                        const expires = new Date(Date.now() + 50*365*24*60*60*1000).toUTCString();
-                                        document.cookie = `${name}=${label.dataset.execsStatus}; expires=${expires}; path=/`;
+                                        const expires = new Date(Date.now() +
+                                            50*365*24*60*60*1000).toUTCString();
+                                        document.cookie =
+                                            `${name}=${label.dataset.execsStatus}; expires=${expires}; path=/`;
                                     }
                                 }
 
                                 const COOKIE_PREFIX = "executions_dashboard:";
-                                const cookieKey = COOKIE_PREFIX + 'status-bandit-toggle';
-
-                                // container.addEventListener('click', (event) => {
-                                //     setCookie(cookieKey, labels.children[1]);
-                                // });
-
-                                // container.addEventListener('keydown', (event) => {
-                                //     if (event.code === 'Space' || event.key === ' ') {
-                                //         setCookie(cookieKey, labels.children[1]);
-                                //     }
-                                // });
-
+                                const cookieKey = COOKIE_PREFIX + 'pipeline-status-bandit-toggle';
                                 document.addEventListener("DOMContentLoaded", function() {
-                                    // intiale value from cookie
+                                    /* **************************
+                                    * intiale value from cookie *
+                                    ************************** */
                                     const cookies = document.cookie.split("; ");
                                     for (const cookie of cookies) {
                                         const [key, val] = cookie.split("=");
@@ -951,12 +996,17 @@ def register(app, rt, prefix=""):
                                             // removing from top of labels
                                             for (let i = 0; i < labels.childNodes.length; ) {
                                                 const child = labels.childNodes[i];
-                                                if (child.nodeType !== 3 && (!child.dataset ||
-                                                    Object.keys(child.dataset).length === 0 ||
-                                                    child.dataset.execsStatus != execsStatus)
+                                                if (
+                                                    child.nodeType !== 3 &&
+                                                    (
+                                                        !child.dataset ||
+                                                        Object.keys(child.dataset).length === 0 ||
+                                                        child.dataset.execsStatus != execsStatus
+                                                    )
                                                 ) {
                                                     labels.removeChild(child);
-                                                    // do not increment i because childNodes collection updates
+                                                    // do not increment i
+                                                    // because childNodes collection updates
                                                 } else if (
                                                     child.dataset &&
                                                     Object.keys(child.dataset).length > 0 &&
@@ -971,27 +1021,42 @@ def register(app, rt, prefix=""):
                                             // appending at bottom of labels
                                             // and moving states up the states list
                                             // so currentIndex points to the right entry
-                                            for (let i = 0; i < window["_states_status-bandit-toggle"].length; i++) {
-                                                const state = window["_states_status-bandit-toggle"][i];
+                                            for (let i = 0;
+                                                 i < window["_states_pipeline-status-bandit-toggle"].length;
+                                                 i++
+                                            ) {
+                                                const state =
+                                                    window["_states_pipeline-status-bandit-toggle"][i];
                                                 if (
                                                     Object.keys(state.dataset).length > 0 &&
                                                     state.dataset.execsStatus === execsStatus
                                                 ) {
                                                     // Remove all states before the current one (index i)
-                                                    const before = window["_states_status-bandit-toggle"].splice(0, i);
-                                                    // Append those removed states to the end to keep their order
-                                                    window["_states_status-bandit-toggle"].push(...before);
+                                                    const before =
+                                                        window["_states_pipeline-status-bandit-toggle"
+                                                            ].splice(0, i);
+                                                    // Append those removed states to the end
+                                                    // to keep their order
+                                                    window["_states_pipeline-status-bandit-toggle"
+                                                        ].push(...before);
                                                     break;
                                                 } else {
                                                     const newLabel = document.createElement('div');
-                                                    newLabel.className = `bandit-toggle-label ${state.class}`;
+                                                    newLabel.className =
+                                                        `bandit-toggle-label ${state.class}`;
                                                     newLabel.textContent = state.text;
 
                                                     // Add all dataset entries as data-* attributes
-                                                    for (const [key, value] of Object.entries(state.dataset || {})) {
-                                                        // Convert camelCase key to dash-case data attribute name
+                                                    for (
+                                                        const [key, value] of
+                                                            Object.entries(state.dataset || {})
+                                                    ) {
+                                                        // Convert camelCase key to dash-case
+                                                        // data attribute name
                                                         const dataAttrName = 
-                                                            'data-' + key.replace(/[A-Z]/g, m => '-' + m.toLowerCase());
+                                                            'data-' +
+                                                            key.replace(/[A-Z]/g, m => '-' +
+                                                            m.toLowerCase());
                                                         newLabel.setAttribute(dataAttrName, value);
                                                     }
 
@@ -999,8 +1064,34 @@ def register(app, rt, prefix=""):
                                                 }
                                             }
                                             // console.log("labels", labels);
+                                            return;
                                         }
                                     }
+                                    /* *********************** */
+
+                                    /* ****************************************
+                                    * Didn't find a cookie for this element ; *
+                                    * handle user-triggered filters reset     *
+                                    **************************************** */
+                                    if ("execsStatus" in labels.children[0].dataset) {
+                                        // start by infering what value "currentIndex" holds
+                                        let labelsIndex;
+                                        const childrenArray = Array.from(labels.children);
+                                        for (const label of labels.children) {
+                                           if (!("execsStatus" in label.dataset)) {
+                                               labelsIndex = childrenArray.indexOf(label);
+                                               break;
+                                           }
+                                        }
+                                        // reset order of labels
+                                        while ("execsStatus" in labels.children[0].dataset) {
+                                            labels.appendChild(labels.children[0]);
+                                        }
+                                        // adjust order of states
+                                        const states = window["_states_pipeline-status-bandit-toggle"];
+                                        states.push(...states.splice(0, labelsIndex));
+                                    }
+                                    /* ************************************* */
                                 });
                             """),
                             Script(f"""// SSE events : new retraining-pipeline execution
@@ -1026,7 +1117,7 @@ def register(app, rt, prefix=""):
                                         console.error('Error parsing SSE message data:', e);
                                         return;
                                     }}
-console.log("newExecEventSource.onmessage", payload);
+                                    //console.log("newExecEventSource.onmessage", payload);
 
                                     /* ***********************************************
                                     * Keep autocomplete comboboxes dropdowns in sync *
@@ -1061,49 +1152,67 @@ console.log("newExecEventSource.onmessage", payload);
                                     template.innerHTML = payload.html.trim();
                                     const newExecutionElement = template.content.firstElementChild;
 
-// apply page filters
-console.log(newExecutionElement);
-const cookies = document.cookie.split("; ");
-for (const cookie of cookies) {{
-    const [key, val] = cookie.split("=");
-    if (key === COOKIE_PREFIX + 'pipeline-name-autocomplete') {{
-        const pipelineNameFilter = decodeURIComponent(val||"");
-        if (
-            pipelineNameFilter > "" &&
-            newExecutionElement.dataset.pipelineName != pipelineNameFilter
-        ) return;
-    }} else if (key === COOKIE_PREFIX + 'pipeline-user-autocomplete') {{
-        const userNameFilter = decodeURIComponent(val||"");
-        if (
-            userNameFilter > "" &&
-            newExecutionElement.dataset.username != userNameFilter
-        ) return;
-    }} else if (key === COOKIE_PREFIX + 'pipeline-before-datetime') {{
-        const pipelineBeforeDatetimeSelected =
-            document.getElementById("pipeline-before-datetime-selected").value;
-        if (pipelineBeforeDatetimeSelected > "") {{
-            pipelineBeforeDatetime = new Date(before_datetime_str);
-            if (
-                new Date(newExecutionElement.dataset.startTimestamp)
-                > pipelineBeforeDatetime
-            ) return;
-        }}
-    }} else if (key === COOKIE_PREFIX + 'status-bandit-toggle') {{
-        // if filtering on status
-        if (('failed' in newExecutionElement.dataset)) {{
-            // if the streamed newExecutionElement has end_timestamp
-            // (which may happen when we programatically fires that event,
-            //  which we do if execution-end event occurs
-            //  while user filters on execution-status)
-        }}
-console.log('status-bandit-toggle', decodeURIComponent(val||""), newExecutionElement.dataset.failed);
-    }}
-}}
+                                    // apply page filters
+                                    const cookies = document.cookie.split("; ");
+                                    for (const cookie of cookies) {{
+                                        const [key, val] = cookie.split("=");
+                                        if (key === COOKIE_PREFIX + 'pipeline-name-autocomplete') {{
+                                            const pipelineNameFilter = decodeURIComponent(val||"");
+                                            if (
+                                                pipelineNameFilter > "" &&
+                                                newExecutionElement.dataset.pipelineName !=
+                                                    pipelineNameFilter
+                                            ) return;
+                                        }} else if (key === COOKIE_PREFIX + 'pipeline-user-autocomplete') {{
+                                            const userNameFilter = decodeURIComponent(val||"");
+                                            if (
+                                                userNameFilter > "" &&
+                                                newExecutionElement.dataset.username != userNameFilter
+                                            ) return;
+                                        }} else if (key === COOKIE_PREFIX + 'pipeline-before-datetime') {{
+                                            const pipelineBeforeDatetimeSelected =
+                                                document.getElementById(
+                                                    "pipeline-before-datetime-selected").value;
+                                            if (pipelineBeforeDatetimeSelected > "") {{
+                                                pipelineBeforeDatetime = new Date(before_datetime_str);
+                                                if (
+                                                    new Date(newExecutionElement.dataset.startTimestamp)
+                                                    > pipelineBeforeDatetime
+                                                ) return;
+                                            }}
+                                        }} else if (
+                                            key === COOKIE_PREFIX + 'pipeline-status-bandit-toggle'
+                                        ) {{
+                                            // if filtering on status
+                                            const statusFilter = decodeURIComponent(val||"");
+                                            if ('success' in newExecutionElement.dataset) {{
+                                                // ('success (y/n)', i.e.
+                                                // if the streamed newExecutionElement
+                                                // has end_timestamp
+                                                // (which may happen when we programatically
+                                                //  fired that event, which we do
+                                                // if execution-end event occurs
+                                                //  while user filters on execution-status)
+                                                const successBool =
+                                                    newExecutionElement.dataset.success.toLowerCase()
+                                                    === "true";
+                                                const isMatch =
+                                                    (statusFilter === "success" && successBool)
+                                                     || (statusFilter === "failure" && !successBool);
+                                                if (!isMatch) return;
+                                            }} else {{
+                                                // filtering on status and
+                                                // execution is not completed yet
+                                                return;
+                                            }}
+                                        }}
+                                    }}
 
                                     // Find where to insert the newExecutionElement
                                     // assuming async from different seeders may occur
                                     let inserted = false;
-                                    const children = execContainer.getElementsByClassName('execution');
+                                    const children = 
+                                        execContainer.getElementsByClassName('execution');
                                     for (let i = 0; i < children.length; ++i) {{
                                         const existingDiv = children[i];
                                         const existingStartTS = existingDiv.dataset.startTimestamp;
@@ -1112,7 +1221,8 @@ console.log('status-bandit-toggle', decodeURIComponent(val||""), newExecutionEle
 
                                         // Descending: insert before the first older item
                                         if (newExecutionStart > existingStart) {{
-                                            execContainer.insertBefore(newExecutionElement, existingDiv);
+                                            execContainer.insertBefore(
+                                                newExecutionElement, existingDiv);
                                             inserted = true;
                                             break;
                                         }}
@@ -1139,23 +1249,23 @@ console.log('status-bandit-toggle', decodeURIComponent(val||""), newExecutionEle
                                     execEndEventSource.close();
                                 }});
 
-function formatTimeDelta(start, end) {{
-    const startDate = new Date(start);
-    const endDate = new Date(end);
+                                function formatTimeDelta(start, end) {{
+                                    const startDate = new Date(start);
+                                    const endDate = new Date(end);
 
-    const diffMs = endDate - startDate;
-    if (isNaN(diffMs)) {{
-        throw new Error("Invalid date(s) provided");
-    }}
+                                    const diffMs = endDate - startDate;
+                                    if (isNaN(diffMs)) {{
+                                        throw new Error("Invalid date(s) provided");
+                                    }}
 
-    const totalSeconds = Math.floor(diffMs / 1000);
-    const milliseconds = diffMs % 1000;
-    const seconds = totalSeconds % 60;
-    const minutes = Math.floor((totalSeconds % 3600) / 60);
-    const hours = Math.floor(totalSeconds / 3600);
+                                    const totalSeconds = Math.floor(diffMs / 1000);
+                                    const milliseconds = diffMs % 1000;
+                                    const seconds = totalSeconds % 60;
+                                    const minutes = Math.floor((totalSeconds % 3600) / 60);
+                                    const hours = Math.floor(totalSeconds / 3600);
 
-    return `${{hours}}:${{String(minutes).padStart(2, '0')}}:${{String(seconds).padStart(2, '0')}}.${{String(milliseconds).padStart(6, '0')}}`;
-}}
+                                    return `${{hours}}:${{String(minutes).padStart(2, '0')}}:${{String(seconds).padStart(2, '0')}}.${{String(milliseconds).padStart(6, '0')}}`;
+                                }}
 
                                 // Listen for incoming messages from the server
                                 execEndEventSource.onmessage = (event) => {{
@@ -1167,17 +1277,32 @@ function formatTimeDelta(start, end) {{
                                         console.error('Error parsing SSE message data:', e);
                                         return;
                                     }}
-console.log("execEndEventSource - payload:", payload);
-const executionElement = document.getElementById(payload.id);
-if (executionElement) {{
-    //console.log(executionElement);
-    const endTimestampElement = executionElement.querySelector('.end_timestamp');
-    endTimestampElement.innerText = formatTimeDelta(
-        executionElement.dataset.startTimestamp, payload.end_timestamp
-    );
-    endTimestampElement.classList.add(payload.success ? 'success' : 'failure');
-}}
+
+                                    //console.log("execEndEventSource - payload:", payload);
+                                    const executionElement = document.getElementById(payload.id);
+                                    if (executionElement) {{
+                                        const endTimestampElement = executionElement.querySelector('.end_timestamp');
+                                        endTimestampElement.innerText = formatTimeDelta(
+                                            executionElement.dataset.startTimestamp,
+                                            payload.end_timestamp
+                                        );
+                                        endTimestampElement.classList.add(
+                                            payload.success ? 'success' : 'failure');
+                                    }} else {{
+                                        // execution not found in container,
+                                        // dispatching to newExecEventSource
+                                        newExecEventSource.onmessage(event);
+                                    }}
                                 }}
+                            """),
+                            Script("""// executions list reload on window history.back()
+                                window.addEventListener('pageshow', function(event) {
+                                    if (event.persisted) {
+                                        document.dispatchEvent(
+                                            new Event('DOMContentLoaded', { bubbles: true })
+                                        );
+                                    }
+                                });
                             """),
                             id="params_panel",
                             style=(
@@ -1260,7 +1385,7 @@ if (executionElement) {{
 
                         // retireve executions status filter
                         execsStatus = "";
-                        const execsStatus_cookieKey = COOKIE_PREFIX + 'status-bandit-toggle';
+                        const execsStatus_cookieKey = COOKIE_PREFIX + 'pipeline-status-bandit-toggle';
                         for (const cookie of cookies) {{
                             const [key, val] = cookie.split("=");
                             if (key === execsStatus_cookieKey) {{
