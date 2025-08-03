@@ -371,6 +371,8 @@ def AutoCompleteSelect(
                         renderOptions(list, input.value);
 
                         selected = true;
+                    }}).catch(error => {{
+                        console.error("Error fetching {options_url}:", error);
                     }});
                 }});
 
@@ -660,7 +662,8 @@ def register(app, rt, prefix=""):
                 "422": {"description": "Invalid input"}
             }
         },
-        category="Executions")
+        category="Executions"
+    )
     async def post_new_execution_event(
         request: Request
     ):
@@ -729,7 +732,8 @@ def register(app, rt, prefix=""):
                 "422": {"description": "Invalid input"}
             }
         },
-        category="Executions")
+        category="Executions"
+    )
     async def post_execution_ended_event(
         request: Request
     ):
@@ -1250,8 +1254,9 @@ def register(app, rt, prefix=""):
                                 registerNewExecEvent();
                             """),
                             Script(f"""// SSE events : retraining-pipeline execution ended
+                                let execEndEventSource;
                                 function registerEndExecEvent() {{
-                                    const execEndEventSource = new EventSource(
+                                    execEndEventSource = new EventSource(
                                         `{prefix}/pipeline_exec_end_event`
                                     );
 
@@ -1320,6 +1325,34 @@ def register(app, rt, prefix=""):
                                     }
                                 });
                             """),
+                            Script("""// handling & recovering from server-loss
+                                const statusCircle = document.getElementById('status-circle');
+                                let previousClasses = Array.from(statusCircle.classList); // remember initial classes
+                                function onClassChange(mutationsList) {
+                                    for (let mutation of mutationsList) {
+                                        if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
+                                            const newClasses = Array.from(statusCircle.classList);
+
+                                            if (newClasses.includes('disconnected') && !previousClasses.includes('disconnected')) {
+                                                console.log("disconnected");
+                                                newExecEventSource.close();
+                                                execEndEventSource.close();
+                                            } else if (newClasses.includes('connected') && !previousClasses.includes('connected')) {
+                                                console.log("reconnected");
+                                                loadExecs();
+                                                registerNewExecEvent();
+                                                registerEndExecEvent();
+                                            }
+
+                                            // Update previousClasses for next mutation check
+                                            previousClasses = newClasses;
+                                        }
+                                    }
+                                }
+
+                                const observer = new MutationObserver(onClassChange);
+                                observer.observe(statusCircle, { attributes: true });
+                            """),
                             id="params_panel",
                             style=(
                                 "position: relative;"
@@ -1344,6 +1377,62 @@ def register(app, rt, prefix=""):
                     )
                 ),
                 Div(# Actual list
+                    Div(
+                        Div(
+                            Span(
+                                "load more",
+                                cls="shimmer-text"
+                            ),
+                            Style("""
+                                .shimmer-pill {
+                                  width: 140px; 
+                                  height: 12px;
+                                  border-radius: 4px;
+                                  cursor: pointer;
+                                  display: flex;
+                                  align-items: center;
+                                  justify-content: center;
+                                  margin: 0 auto;
+                                  font-size: 11px;
+                                  font-family: system-ui, -apple-system, sans-serif;
+                                  font-weight: 500;
+                                  backdrop-filter: blur(10px);
+                                }
+
+                                /* Idle State */
+                                .shimmer-pill.idle {
+                                  background: transparent;
+                                  color: rgba(255,255,255,0.15);
+                                  -webkit-text-stroke: 1px rgba(255,255,255,0.15);
+                                  text-shadow: 
+                                    0 0 8px rgba(255,255,255,0.15),
+                                    inset 0 1px 0 rgba(255,255,255,0.1),
+                                    0 1px 2px rgba(0,0,0,0.8);
+                                  letter-spacing: 4px;
+                                }
+
+                                /* Loading State */
+                                .shimmer-pill.loading {
+                                  background: linear-gradient(90deg, rgba(255,255,255,0.05), rgba(255,255,255,0.15), rgba(255,255,255,0.05));
+                                  background-size: 300% 100%;
+                                  animation: shimmer 2.5s ease-in-out infinite;
+                                  box-shadow: 0 0 8px rgba(255,255,255,0.15);
+                                  color: transparent;
+                                  -webkit-text-stroke: 0;
+                                  text-shadow: none;
+                                }
+
+                                @keyframes shimmer {
+                                  0% { background-position: 300% 0; }
+                                  100% { background-position: -300% 0; }
+                                }
+                            """),
+                            cls=["shimmer-pill", "idle"],
+                            id="loader",
+                        ),
+                        id="loader-container",
+                        style="width: 100% display: flex; justify-content: center;"
+                    ),
                     id="executions-container",
                     style=(
                         "height: calc(100vh - 200px); " # window height minus header & footer
@@ -1367,11 +1456,30 @@ def register(app, rt, prefix=""):
                 """),
                 Script("""// Cold start of executions list at page load time
                     const execContainer = document.getElementById("executions-container");
-                    function loadExecs() {
+                    const loader = document.getElementById("loader");
+                    const loaderContainer = document.getElementById("loader-container");
+                    let isLoadExecsRunning = false;
+
+                    function loadExecs(event, append = false) {
+                        if (append && loaderContainer.style.display === "none") return;
+                        if (isLoadExecsRunning) return;
+                        isLoadExecsRunning = true;
+
                         const server_status_circle = document.getElementById('status-circle');
                         server_status_circle.classList.add('spinning');
 
-                        execContainer.innerHTML = '';
+                        loaderContainer.style.display = "block";
+                        loader.classList.remove('idle');
+                        loader.classList.add('loading');
+                        loader.querySelector('.shimmer-text').textContent = "";
+
+                        if (!append) {
+                            execContainer.querySelectorAll(':scope > div').forEach(child => {
+                                if (child !== loaderContainer) {
+                                    execContainer.removeChild(child);
+                                }
+                            });
+                        }
 
                         // retrieve last validated comboboxes value from cookie
                         const cookies = document.cookie.split("; ");
@@ -1379,35 +1487,35 @@ def register(app, rt, prefix=""):
 
                         pipeline_name = "";
                         const pipeline_name_cookieKey = COOKIE_PREFIX + 'pipeline-name-autocomplete';
-                        for (const cookie of cookies) {{
+                        for (const cookie of cookies) {
                             const [key, val] = cookie.split("=");
-                            if (key === pipeline_name_cookieKey) {{
-                                pipeline_name = decodeURIComponent(val||"");
-                            }}
-                        }}
+                            if (key === pipeline_name_cookieKey) {
+                                pipeline_name = decodeURIComponent(val || "");
+                            }
+                        }
 
                         username = "";
                         const username_cookieKey = COOKIE_PREFIX + 'pipeline-user-autocomplete';
-                        for (const cookie of cookies) {{
+                        for (const cookie of cookies) {
                             const [key, val] = cookie.split("=");
-                            if (key === username_cookieKey) {{
-                                username = decodeURIComponent(val||"");
-                            }}
-                        }}
+                            if (key === username_cookieKey) {
+                                username = decodeURIComponent(val || "");
+                            }
+                        }
 
-                        // retireve last validated datetime value from hidden input
-                        before_datetime_str = document.getElementById(
-                            "pipeline-before-datetime-selected").value;
+                        // retrieve last validated datetime value from hidden input
+                        before_datetime_str = 
+                            document.getElementById("pipeline-before-datetime-selected").value;
 
-                        // retireve executions status filter
+                        // retrieve executions status filter
                         execsStatus = "";
                         const execsStatus_cookieKey = COOKIE_PREFIX + 'pipeline-status-bandit-toggle';
-                        for (const cookie of cookies) {{
+                        for (const cookie of cookies) {
                             const [key, val] = cookie.split("=");
-                            if (key === execsStatus_cookieKey) {{
-                                execsStatus = decodeURIComponent(val||"");
-                            }}
-                        }}
+                            if (key === execsStatus_cookieKey) {
+                                execsStatus = decodeURIComponent(val || "");
+                            }
+                        }
 
                         // form data for the html POST
                         const formData = new FormData();
@@ -1415,13 +1523,20 @@ def register(app, rt, prefix=""):
                             formData.append('pipeline_name', pipeline_name);
                         if (username != "")
                             formData.append('username', username);
-                        if (before_datetime_str != "")
-                            formData.append('before_datetime',
-                                            new Date(before_datetime_str));
+                        if (append) {
+                            const lastExecution = Array.from(
+                                    execContainer.querySelectorAll(':scope > div.execution')
+                                ).pop();
+                            formData.append(
+                                'before_datetime',
+                                new Date(lastExecution.dataset.startTimestamp)
+                            );
+                        } else if (before_datetime_str != "")
+                            formData.append('before_datetime', new Date(before_datetime_str));
                         if (execsStatus != "")
                             formData.append('execs_status', execsStatus);
-                        const batch_executions_count = 75;
-                        formData.append('n', batch_executions_count);
+                        const batchExecutionsCount = 50;
+                        formData.append('n', batchExecutionsCount);
 
                         fetch('/{prefix}load_executions', {
                             method: 'POST',
@@ -1429,15 +1544,50 @@ def register(app, rt, prefix=""):
                             body: formData
                         })
                         .then(response => response.text())
-                        .then(html => {
-                            execContainer.insertAdjacentHTML('beforeend', html);
+                        .then(async (html) => {
+                            const tempDiv = document.createElement('div');
+                            tempDiv.innerHTML = html;
+
+                            // Select only direct child div elements
+                            const divs = Array.from(tempDiv.querySelectorAll(':scope > div'));
+                            const executionsCount = divs.length;
+
+                            const delay = (delayMs) => new Promise(resolve => setTimeout(resolve, delayMs));
+                            for (const div of divs) {
+                                execContainer.insertBefore(div, loaderContainer);
+                                await delay(1);
+                            }
+                            if (executionsCount < batchExecutionsCount) {
+                                loaderContainer.style.display = "none";
+                            }
+
+                            loader.classList.remove('loading');
+                            loader.classList.add('idle');
+                            loader.querySelector('.shimmer-text').textContent = "load more";
 
                             server_status_circle.classList.remove('spinning');
+                        })
+                        .catch(error => {
+                            console.error("Error fetching executions:", error);
+                            loader.classList.remove('loading');
+                            loader.classList.add('idle');
+                            loader.querySelector('.shimmer-text').textContent = "load more";
+                        })
+                        .finally(() => {
+                            isLoadExecsRunning = false;
                         });
                     }
 
-                    // Assign to DOMContentLoaded event
                     window.addEventListener('DOMContentLoaded', loadExecs);
+                    loader.onclick = function (event) { loadExecs(event, true); }
+                    execContainer.addEventListener('scroll', function (event) {
+                        const container = event.target;
+                        const isAtBottom =
+                            container.scrollHeight - container.scrollTop <= container.clientHeight + 1;
+                        if (isAtBottom) {
+                            loadExecs(event, true);
+                        }
+                    });
                 """.replace("{prefix}", prefix+"/" if prefix > "" else "")
                 ),
                 style=(
