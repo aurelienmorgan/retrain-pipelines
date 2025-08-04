@@ -310,7 +310,7 @@ class AsyncDAO(DAOBase):
 
             for execution, has_failed in result.all():
                 execution_ext = ExecutionExt(**execution.__dict__)
-                execution_ext.failed = bool(has_failed)
+                execution_ext.success = not bool(has_failed)
                 executions_ext.append(execution_ext)
 
             return executions_ext

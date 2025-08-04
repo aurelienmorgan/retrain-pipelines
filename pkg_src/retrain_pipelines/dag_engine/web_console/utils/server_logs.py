@@ -14,7 +14,8 @@ from fasthtml.common import Div, Span
 from pydantic import BaseModel, validator
 from uvicorn.logging import AccessFormatter
 
-from ....utils import strip_ansi_escape_codes
+from ....utils import strip_ansi_escape_codes, \
+    rgb_to_rgba
 
 
 server_tz = tzlocal.get_localzone()
@@ -150,11 +151,6 @@ class AccessLogEntry(BaseModel):
            # #333, HTTP 3xx (not-modified, redirects, etc.)
            (51, 51, 51)
         )
-        def _rgb_to_rgba(rgb_tuple, alpha=1):
-            color_str = (
-                f"rgba({rgb_tuple[0]},{rgb_tuple[1]},{rgb_tuple[2]},{alpha})"
-            )
-            return color_str
 
         method_icon = {
             'GET':     "\N{DOWNWARDS BLACK ARROW}", # fetching data
@@ -198,7 +194,7 @@ class AccessLogEntry(BaseModel):
                 Span(
                     f"\u00A0{self.method}",
                     style=(
-                        f"color: {_rgb_to_rgba(status_color)}; "
+                        f"color: {rgb_to_rgba(status_color)}; "
                         "font-weight: bold; "
                         "margin-right: 10px; "
                         "min-width: 70px; "
@@ -239,8 +235,8 @@ class AccessLogEntry(BaseModel):
                style="position: relative; z-index: 1;"
             ),
             style=(
-                f"--status-color-normal: {_rgb_to_rgba(status_color, .45)}; "
-                f"--status-color-hover: {_rgb_to_rgba(status_color, .65)}; "
+                f"--status-color-normal: {rgb_to_rgba(status_color, .45)}; "
+                f"--status-color-hover: {rgb_to_rgba(status_color, .65)}; "
                 f"background: var(--status-color-normal); "
                 "padding-top: 1px; padding-bottom: 1px; padding-left: 12px; "
                 "padding-right: 12px; margin-bottom: 4px; "
@@ -249,7 +245,7 @@ class AccessLogEntry(BaseModel):
                     "0 8px 16px rgba(0,0,0,0.05), "
                     "inset 0 1px 0 rgba(255,255,255,0.4), "
                     "inset 0 -1px 0 rgba(0,0,0,0.1); "
-                f"border-left: 4px solid {_rgb_to_rgba(status_color)}; "
+                f"border-left: 4px solid {rgb_to_rgba(status_color)}; "
                 "display: flex; align-items: flex-start; "
                 "backdrop-filter: blur(10px); "
                 "-webkit-backdrop-filter: blur(10px); position: relative; "

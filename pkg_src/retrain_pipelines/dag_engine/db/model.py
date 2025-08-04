@@ -36,6 +36,8 @@ class Execution(Base):
         back_populates="execution"
     )
 
+    ui_css = Column(JSON, nullable=True)
+
     def __init__(self, *args, **kwargs):
         # Support dict as the ONLY positional argument
         data = None
@@ -95,7 +97,7 @@ class ExecutionExt(Execution):
     }
 
     def __init__(self, **kwargs):
-        success = kwargs.pop('success', True)
+        success = kwargs.pop('success', None)
         # Remove SQLAlchemy internal attributes
         kwargs.pop('_sa_instance_state', None)
 
@@ -183,6 +185,8 @@ class Task(Base):
     _end_timestamp = Column('end_timestamp', DateTime(timezone=True), nullable=True)
 
     failed = Column(Boolean, nullable=True)
+
+    ui_css = Column(JSON, nullable=True)
 
     __table_args__ = (
         CheckConstraint(

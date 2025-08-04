@@ -21,7 +21,9 @@ from ..utils.executions.events import \
     new_exec_subscribers, new_exec_event_generator, \
     exec_end_subscribers, exec_end_event_generator
 from ...db.model import Execution, ExecutionExt
+from ....utils import hex_to_rgba
 from ..views.api import rt_api
+
 
 def AutoCompleteSelect(
     options_url: str,
@@ -1298,9 +1300,10 @@ def register(app, rt, prefix=""):
                                         }}
 
                                         //console.log("execEndEventSource - payload:", payload);
-                                        const executionElement = document.getElementById(payload.id);
+                                        const executionElement = document.getElementById("_"+payload.id);
                                         if (executionElement) {{
-                                            const endTimestampElement = executionElement.querySelector('.end_timestamp');
+                                            const endTimestampElement =
+                                                executionElement.querySelector('.end_timestamp');
                                             endTimestampElement.innerText = formatTimeDelta(
                                                 executionElement.dataset.startTimestamp,
                                                 payload.end_timestamp
@@ -1327,17 +1330,27 @@ def register(app, rt, prefix=""):
                             """),
                             Script("""// handling & recovering from server-loss
                                 const statusCircle = document.getElementById('status-circle');
-                                let previousClasses = Array.from(statusCircle.classList); // remember initial classes
+                                let previousClasses =
+                                    Array.from(statusCircle.classList); // remember initial classes
                                 function onClassChange(mutationsList) {
                                     for (let mutation of mutationsList) {
-                                        if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
+                                        if (
+                                            mutation.type === 'attributes' &&
+                                            mutation.attributeName === 'class'
+                                        ) {
                                             const newClasses = Array.from(statusCircle.classList);
 
-                                            if (newClasses.includes('disconnected') && !previousClasses.includes('disconnected')) {
+                                            if (
+                                                newClasses.includes('disconnected') &&
+                                                !previousClasses.includes('disconnected')
+                                            ) {
                                                 console.log("disconnected");
                                                 newExecEventSource.close();
                                                 execEndEventSource.close();
-                                            } else if (newClasses.includes('connected') && !previousClasses.includes('connected')) {
+                                            } else if (
+                                                newClasses.includes('connected') &&
+                                                !previousClasses.includes('connected')
+                                            ) {
                                                 console.log("reconnected");
                                                 loadExecs();
                                                 registerNewExecEvent();
@@ -1378,7 +1391,7 @@ def register(app, rt, prefix=""):
                 ),
                 Div(# Actual list
                     Div(
-                        Div(
+                        Div(# load-more
                             Span(
                                 "load more",
                                 cls="shimmer-text"
@@ -1433,6 +1446,59 @@ def register(app, rt, prefix=""):
                         id="loader-container",
                         style="width: 100% display: flex; justify-content: center;"
                     ),
+                    Style(f"""
+                        .execution {{
+                            display: flex;
+                            justify-content: space-between;
+                            align-items: center;
+                            width: 100%;
+                            line-height: 1em;
+                            position: relative;
+                            background: var(--exec_background-normal);
+                            border-radius: 4px;
+                            box-shadow: 0 2px 4px rgba(0,0,0,0.1),
+                                0 8px 16px rgba(0,0,0,0.05),
+                                inset 0 1px 0 rgba(255,255,255,0.4),
+                                inset 0 -1px 0 rgba(0,0,0,0.1);
+                            backdrop-filter: blur(10px);
+                            -webkit-backdrop-filter: blur(10px);
+                            overflow: hidden;
+                            transition: all 0.3s ease;
+                            transform-origin: center center;
+                        }}
+
+                        .execution:hover {{
+                            background: var(--exec_background-hover);
+                            transform: translateY(-1px);
+                        }}
+
+                        .end_timestamp {{
+                            width: 170px;
+                            text-align: right;
+                            padding: 2px 2px 2px 6px;
+                            border-radius: 3px;
+                            min-height: 1.265em;
+                        }}
+
+                        .success {{
+                            background: {
+                                f"linear-gradient(90deg, transparent 0%, {hex_to_rgba('#28a745', 0.6)} 100%)"
+                            };
+                        }}
+
+                        .failure {{
+                            background: {
+                                f"linear-gradient(90deg, transparent 0%, {hex_to_rgba('#dc3545', 0.6)} 100%)"
+                            };
+                        }}
+
+                        .execution:hover .success {{
+                            background: linear-gradient(90deg, transparent 0%, {hex_to_rgba('#28a745', 1)} 100%);
+                        }}
+                        .execution:hover .failure {{
+                            background: linear-gradient(90deg, transparent 0%, {hex_to_rgba('#dc3545', 1)} 100%);
+                        }}
+                    """),
                     id="executions-container",
                     style=(
                         "height: calc(100vh - 200px); " # window height minus header & footer
@@ -1446,14 +1512,6 @@ def register(app, rt, prefix=""):
                             "0 1px 3px rgba(0,0,0,0.1); "
                     )
                 ),
-                Style("""
-                    .execution {
-                      display: flex;
-                      justify-content: space-between;
-                      align-items: center;
-                      width: 100%;
-                    }
-                """),
                 Script("""// Cold start of executions list at page load time
                     const execContainer = document.getElementById("executions-container");
                     const loader = document.getElementById("loader");

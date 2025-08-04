@@ -2,6 +2,7 @@
 from .rich_wave import animate_wave
 
 from .utils import strip_ansi_escape_codes, \
+                   rgb_to_rgba, hex_to_rgba, \
                    parse_datetime, \
                    dict_dict_list_get_all_combinations, \
                    flatten_dict, \

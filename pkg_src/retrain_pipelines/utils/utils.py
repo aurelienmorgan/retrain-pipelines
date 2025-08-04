@@ -37,6 +37,22 @@ def strip_ansi_escape_codes(text):
     return ansi_escape.sub('', text)
 
 
+def rgb_to_rgba(rgb_tuple, alpha=1):
+    color_str = (
+        f"rgba({rgb_tuple[0]},{rgb_tuple[1]},{rgb_tuple[2]},{alpha})"
+    )
+    return color_str
+
+
+def hex_to_rgba(hex_color, alpha=1):
+    hex_color = hex_color.lstrip('#')
+    if len(hex_color) == 3:
+        # Convert shorthand hex to full form, e.g., "2a7" → "22aa77"
+        hex_color = ''.join([c*2 for c in hex_color])
+    r, g, b = [int(hex_color[i:i+2], 16) for i in (0, 2, 4)]
+    return f"rgba({r},{g},{b},{alpha})"
+
+
 def parse_datetime(value: str) -> datetime:
     dt = isoparse(value)
     if dt.tzinfo is None:
