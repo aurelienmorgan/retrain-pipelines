@@ -3,7 +3,7 @@ import os
 from typing import List, Union
 
 from retrain_pipelines.dag_engine.core import \
-    TaskPayload, task, parallel_task
+    TaskPayload, task, parallel_task, dag
 from retrain_pipelines.dag_engine.runtime import \
     execute
 from retrain_pipelines.dag_engine.renderer import \
@@ -86,17 +86,19 @@ def end(payload: TaskPayload):
     return None
 
 
-# Compose the DAG using operator overloading (>>)
-final = start >> outer_parallel >> inner_parallel >> merge_inner >> merge_outer >> end
+@dag(ui_css={"background": "#ffffff"})
+def retrain_pipeline():
+    # Compose the DAG using operator overloading (>>)
+    return start >> outer_parallel >> inner_parallel >> merge_inner >> merge_outer >> end
 
 
 if __name__ == "__main__":
     # Run the DAG
-    print("Final result:", execute(final))
-    print(f"execution {os.path.splitext(os.path.basename(__file__))[0]}[{final.exec_id}]")
+    print("Final result:", execute(retrain_pipeline, dag_params=None))
+    print(f"execution {os.path.splitext(os.path.basename(__file__))[0]}[{retrain_pipeline.exec_id}]")
     # Render the DAG
-    render_svg(final, os.path.join(os.environ["RP_ARTIFACTS_STORE"], "dag.svg"))
+    render_svg(retrain_pipeline, os.path.join(os.environ["RP_ARTIFACTS_STORE"], "dag.svg"))
     print("DAG SVG written to dag.svg")
-    render_networkx(final, os.path.join(os.environ["RP_ARTIFACTS_STORE"], "dag.png"))
-    render_plotly(final, os.path.join(os.environ["RP_ARTIFACTS_STORE"], "dag.html"))
+    render_networkx(retrain_pipeline, os.path.join(os.environ["RP_ARTIFACTS_STORE"], "dag.png"))
+    render_plotly(retrain_pipeline, os.path.join(os.environ["RP_ARTIFACTS_STORE"], "dag.html"))
 

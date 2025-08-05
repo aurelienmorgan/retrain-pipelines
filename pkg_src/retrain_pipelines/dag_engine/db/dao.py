@@ -362,7 +362,6 @@ def after_end_timestamp_change(target, newValue, oldvalue, initiator):
     Emits an ExecutionEnd dict.
     """
     if newValue != oldvalue and newValue is not None:
-        print(f"[Listener] _end_timestamp set: old={oldvalue}, new={newValue}")
         # Check if any Tasks have failed=True
         failure_exists = any(task.failed for task in target.tasks)
 

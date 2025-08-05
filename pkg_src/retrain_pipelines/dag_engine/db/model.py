@@ -173,7 +173,7 @@ class Task(Base):
 
     id = Column(Integer, primary_key=True)
 
-    exec_id = Column(Integer, ForeignKey('executions.id'))
+    exec_id = Column(Integer, ForeignKey('executions.id'), nullable=False)
     execution = relationship(
         "Execution",
         back_populates="tasks"

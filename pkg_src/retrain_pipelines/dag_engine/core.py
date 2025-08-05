@@ -236,34 +236,6 @@ class Task(BaseModel):
 
         Allows chaining: a >> b >> c or a >> TaskGroup(b, c).
         """
-        # execution_id cascading
-        dao = DAO(os.environ["RP_METADATASTORE_URL"])
-
-        if self.exec_id is None:
-            # Get the calling frame (1 level up)
-            frame = inspect.currentframe()
-            caller_frame = frame.f_back
-            caller_module_name = os.path.basename(
-                    caller_frame.f_code.co_filename
-                ).split(".")[-2]
-            self.exec_id = dao.add_execution(
-                name=caller_module_name,
-                username=getpass.getuser(),
-                start_timestamp=datetime.now(timezone.utc)
-            )
-            self.log.info(f"[bold red]{self.name} has no exec_id[/]")
-            for child in self.children:
-                self._cascade_exec_id(self.exec_id, child)
-        if other.exec_id is None:
-            other.exec_id = self.exec_id
-            if isinstance(other, Task):
-                for child in other.children:
-                    self._cascade_exec_id(self.exec_id, child)
-            if isinstance(other, TaskGroup):
-                for element in other.elements:
-                    self._cascade_exec_id(self.exec_id, element)
-
-        # actual chaining
         if isinstance(other, Task):
             self.children.append(other)
             other.parents.append(self)
@@ -274,13 +246,6 @@ class Task(BaseModel):
             return other
         else:
             raise TypeError("The right-hand side of '>>' must be a Task object, or a TaskGroup object.")
-
-    def _cascade_exec_id(self, exec_id, element):
-        if element.exec_id is None:
-            element.exec_id = exec_id
-            if isinstance(element, TaskGroup):
-                for sub_element in element.elements:
-                    self._cascade_exec_id(exec_id, sub_element)
 
     def _add_child(self, child):
         """Recursively add children to the task."""
@@ -339,7 +304,7 @@ class TaskGroup(BaseModel):
         default_factory=lambda: str(uuid.uuid4()),
         description="Unique ID for graph rendering"
     )
-    exec_id: Optional[str] = None
+    exec_id: Optional[int] = None
 
 
     # Private attributes (not validated or included in .dict())
@@ -399,29 +364,6 @@ class TaskGroup(BaseModel):
 
         Allows chaining: a >> b >> c or a >> TaskGroup(b, c).
         """
-        # execution_id cascading
-        dao = DAO(os.environ["RP_METADATASTORE_URL"])
-
-        if self.exec_id is None:
-            # SHOULD NEVER OCCUR !
-            # (since in the most extreme case
-            #  of that group opening the DAG,
-            #  the "start" node cascaded to it)
-            self.exec_id = dao.add_execution()
-            self.log.info(f"[bold red]{self.name} has no exec_id[/]")
-            for child in self.children:
-                self._cascade_exec_id(self.exec_id, child)
-
-        if other.exec_id is None:
-            other.exec_id = self.exec_id
-            if isinstance(other, Task):
-                for child in other.children:
-                    self._cascade_exec_id(self.exec_id, child)
-            if isinstance(other, TaskGroup):
-                for element in other.elements:
-                    self._cascade_exec_id(self.exec_id, element)
-
-        # actual chaining
         if isinstance(other, Task):
             if other.merge_func:
                 # Note: TODO, implement support for that someday (or not)
@@ -436,13 +378,6 @@ class TaskGroup(BaseModel):
         else:
             raise TypeError(
                 "The right-hand side of '>>' must be a Task object, or a TaskGroup object.")
-
-    def _cascade_exec_id(self, exec_id, element):
-        if element.exec_id is None:
-            element.exec_id = exec_id
-            if isinstance(element, TaskGroup):
-                for sub_element in element.elements:
-                    self._cascade_exec_id(exec_id, sub_element)
 
     def _add_child(self, child):
         """Recursively add children to the task or task group."""
@@ -478,6 +413,76 @@ class TaskGroup(BaseModel):
 
     def __repr__(self):
         return f"TaskGroup({self.__str__()})"
+
+
+class DAG(BaseModel):
+    """Represents a DAG.
+
+    Note: The class is instantiated at DAG declaration time.
+          Attributes related to DAG execution
+          (such as `exec_id` and `exec_params`)
+          are populated at execution time.
+    """
+    roots: List["Task"] = Field(...)
+    ui_css: Optional[Dict[str, Any]] = Field(default_factory=dict)
+
+    exec_id: Optional[int] = None
+    exec_params: Optional[Dict[str, Any]] = Field(default_factory=dict)
+
+
+    def __init__(self, *args, **kwargs):
+        task_anchor = kwargs.pop('task_anchor')
+        roots = DAG._find_root_tasks(task_anchor)
+        super().__init__(*args, roots=roots, **kwargs)
+
+
+    def init(self):
+        """Shall be called programmatically 
+        by the DAG execution routine.
+        """
+        # Get the calling frame (1 level up)
+        frame = inspect.currentframe()
+        caller_frame = frame.f_back.f_back
+        caller_module_name = os.path.basename(
+                caller_frame.f_code.co_filename
+            ).split(".")[-2]
+
+        dao = DAO(os.environ["RP_METADATASTORE_URL"])
+        self.exec_id = dao.add_execution(
+            name=caller_module_name,
+            username=getpass.getuser(),
+            ui_css=self.ui_css,
+            start_timestamp=datetime.now(timezone.utc)
+        )
+
+        for root in self.roots:
+            root.exec_id = self.exec_id
+            for child in root.children:
+                DAG._cascade_exec_id(self.exec_id, child)
+
+
+    @staticmethod
+    def _find_root_tasks(task: Task) -> list[Task]:
+        """Find all root tasks in the DAG starting from the given task."""
+        all_tasks = set()
+        stack = [task]
+        while stack:
+            current = stack.pop()
+            if current not in all_tasks:
+                all_tasks.add(current)
+                stack.extend(current.parents)
+        return [t for t in all_tasks if not t.parents]
+
+
+    @staticmethod
+    def _cascade_exec_id(exec_id, element):
+        element.exec_id = exec_id
+        if isinstance(element, TaskGroup):
+            for sub_element in element.elements:
+                DAG._cascade_exec_id(exec_id, sub_element)
+        else:
+            for child in element.children:
+                DAG._cascade_exec_id(exec_id, child)
 
 
 # ---- Decorators for Task Declaration ----
@@ -543,6 +548,24 @@ def taskgroup(func):
         return tg
 
     return decorator(func)
+
+
+def dag(_func=None, *, ui_css=None):
+    """Decorator factory for a DAG."""
+    def decorator(f):
+        task_anchor = f()
+        pipeline = DAG(
+            task_anchor=task_anchor,
+            ui_css=ui_css
+        )
+        return pipeline
+
+    if _func is None:
+        # Called as @dag(...) with optional arguments
+        return decorator
+    else:
+        # Called as @dag without parentheses
+        return decorator(_func)
 
 
 # ---- DAG Traversal and Execution Utilities ----

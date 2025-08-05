@@ -8,19 +8,7 @@ from typing import List, Optional, Union, \
     Any
 
 from .core import Task, TaskGroup, TaskPayload, \
-    TaskFuncException
-
-
-def find_root_tasks(task: Task) -> list[Task]:
-    """Find all root tasks in the DAG starting from the given task."""
-    all_tasks = set()
-    stack = [task]
-    while stack:
-        current = stack.pop()
-        if current not in all_tasks:
-            all_tasks.add(current)
-            stack.extend(current.parents)
-    return [t for t in all_tasks if not t.parents]
+    TaskFuncException, DAG
 
 
 def _topological_sort(
@@ -291,7 +279,7 @@ def _run_regular_taskgroup(
 
 
 def execute(
-    task: Task,
+    dag: DAG,
     dag_params: Any = None
 ) -> TaskPayload:
     """From the start, executes the DAG that contains the given task.
@@ -309,12 +297,12 @@ def execute(
         - (TaskPayload)
             results of the last task in the DAG.
     """
-    _rich_log_execution_id_with_timestamp(task.exec_id)
+    dag.init()
+    _rich_log_execution_id_with_timestamp(dag.exec_id)
 
-    roots = find_root_tasks(task)
-    print(f"Root tasks: {[t.name for t in roots]}")
+    print(f"Root tasks: {[t.name for t in dag.roots]}")
 
-    order = _topological_sort(roots)
+    order = _topological_sort(dag.roots)
     print(f"Topological order: {[e.name for e in order]}")
 
     results = TaskPayload({})

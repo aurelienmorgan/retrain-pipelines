@@ -4,13 +4,12 @@ import networkx as nx
 import matplotlib.pyplot as plt
 import plotly.graph_objects as go
 
-from .runtime import find_root_tasks
-
+from .core import DAG
 
 # ---- SVG Rendering ----
 
 
-def render_svg(task, filename="dag.svg"):
+def render_svg(dag: DAG, filename="dag.svg"):
     """Renders the DAG as an SVG file for visualization.
 
     Parallel tasks are colored differently.
@@ -66,10 +65,9 @@ def render_svg(task, filename="dag.svg"):
             max_y = max(max_y, cy)
         return (max_x, max_y)
 
-    roots = find_root_tasks(task)
     positions = {}
     max_x, max_y = 0, 0
-    for i, root in enumerate(roots):
+    for i, root in enumerate(dag.roots):
         mx, my = layout_tasks(root, 50, 50 + i * 100, 0, positions)
         max_x = max(max_x, mx)
         max_y = max(max_y, my)
@@ -93,7 +91,7 @@ def render_svg(task, filename="dag.svg"):
 # ---- networkx Rendering ----
 
 
-def render_networkx(task, filename="dag.png"):
+def render_networkx(dag: DAG, filename="dag.png"):
     """Renders the DAG using NetworkX."""
 
     G = nx.DiGraph()
@@ -104,8 +102,7 @@ def render_networkx(task, filename="dag.png"):
             add_nodes_edges(child)
             G.add_edge(task.id, child.id)
 
-    roots = find_root_tasks(task)
-    for root in roots:
+    for root in dag.roots:
         add_nodes_edges(root)
 
     pos = nx.spring_layout(G)
@@ -133,7 +130,7 @@ def render_networkx(task, filename="dag.png"):
 
 
 
-def render_plotly(task, filename="dag.html"):
+def render_plotly(dag: DAG, filename="dag.html"):
     """Renders the DAG using Plotly with arrowheads and nodes on top."""
     fig = go.Figure()
     added_nodes = set()
@@ -167,8 +164,7 @@ def render_plotly(task, filename="dag.html"):
                 trace.y = [pos[node_id][1]]
         return pos
 
-    roots = find_root_tasks(task)
-    for root in roots:
+    for root in dag.roots:
         add_nodes(root)
 
     pos = layout_nodes()
