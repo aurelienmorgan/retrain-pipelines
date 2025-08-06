@@ -1,0 +1,170 @@
+
+<svg id="dag" width="2000" height="1000">
+    <defs>
+        <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L9,3 z" fill="#ffd700" />
+        </marker>
+        <linearGradient id="glassGradient" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="white" stop-opacity="0.6" />
+            <stop offset="50%" stop-color="#4a90e2" stop-opacity="0.3" />
+            <stop offset="100%" stop-color="#1a3d7c" stop-opacity="0.2" />
+        </linearGradient>
+    </defs>
+
+    {% set spacing_x = 200 %}
+    {% set spacing_y = 100 %}
+    {% set node_width = 120 %}
+    {% set node_height = 40 %}
+
+    {% set id_to_node = {} %}
+    {% for node in nodes %}
+        {% set _ = id_to_node.update({node.id: node}) %}
+    {% endfor %}
+
+    {# Determine depth by DFS #}
+    {% set levels = {} %}
+    {% macro visit(node_id, depth=0) %}
+        {% if node_id in levels %}
+            {% set _ = levels[node_id].append(depth) %}
+        {% else %}
+            {% set _ = levels.update({node_id: [depth]}) %}
+        {% endif %}
+        {% for child in id_to_node[node_id].children %}
+            {{ visit(child, depth + 1) }}
+        {% endfor %}
+    {% endmacro %}
+    {{ visit(nodes[0].id) }}
+
+    {% set depth_to_nodes = {} %}
+    {% for node_id, dlist in levels.items() %}
+        {% set depth = dlist|max %}
+        {% set _ = depth_to_nodes.update({depth: (depth_to_nodes.get(depth, []) + [node_id])}) %}
+    {% endfor %}
+
+    {% set id_to_pos = {} %}
+    {% for depth, ids in depth_to_nodes.items() %}
+        {% for id in ids %}
+            {% set i = loop.index0 %}
+            {% set x = spacing_x + i * spacing_x %}
+            {% set y = spacing_y + depth * spacing_y %}
+            {% set _ = id_to_pos.update({id: {'x': x, 'y': y} }) %}
+        {% endfor %}
+    {% endfor %}
+
+    {# Draw arrows #}
+    {% for node in nodes %}
+        {% set src = id_to_pos[node.id] %}
+        {% for child_id in node.children %}
+            {% set tgt = id_to_pos[child_id] %}
+            <line id="arrow-{{ node.id }}-{{ child_id }}"
+                x1="{{ src.x + node_width/2 }}" y1="{{ src.y + node_height }}"
+                x2="{{ tgt.x + node_width/2 }}" y2="{{ tgt.y }}"
+                marker-end="url(#arrow)" />
+        {% endfor %}
+    {% endfor %}
+
+    {# Draw nodes #}
+    {% for node in nodes %}
+        {% set pos = id_to_pos[node.id] %}
+        <g class="node" id="node-{{ node.id }}" transform="translate({{ pos.x }}, {{ pos.y }})" style="cursor: grab;">
+            <rect class="box" width="{{ node_width }}" height="{{ node_height }}" rx="6" ry="6" fill="#add8e6" stroke="#333"></rect>
+            <text class="label" x="{{ node_width/2 }}" y="{{ node_height/2 + 4 }}" text-anchor="middle" font-family="sans-serif" font-size="14">
+                {{ node.name }}
+            </text>
+        </g>
+    {% endfor %}
+</svg>
+
+<script>
+    const nodeWidth = {{ node_width }};
+    const nodeHeight = {{ node_height }};
+    const svg = document.getElementById('dag');
+
+    let selected = null;
+    let startMouse = null;       // mouse position at drag start {x, y}
+    let startPos = null;         // node position at drag start {x, y}
+
+    function getMouseSVGCoords(evt) {
+        const pt = svg.createSVGPoint();
+        pt.x = evt.clientX;
+        pt.y = evt.clientY;
+        return pt.matrixTransform(svg.getScreenCTM().inverse());
+    }
+
+    function updateLines(nodeId, x, y) {
+        // Outgoing arrows from dragged node
+        document.querySelectorAll(`line[id^="arrow-${nodeId}-"]`).forEach(line => {
+            const parts = line.id.split('-');
+            if (parts.length < 3) return;
+            const targetId = parts.slice(6, 11).join('-'); // support dashes in ids
+            const tgt = document.getElementById(`node-${targetId}`);
+            if (!tgt) return;
+            const transform = tgt.getAttribute('transform');
+            const match = transform.match(/translate\(([-\d.]+),\s*([-\d.]+)\)/);
+            if (!match) return;
+            const tx = parseFloat(match[1]);
+            const ty = parseFloat(match[2]);
+            line.setAttribute('x1', x + nodeWidth / 2);
+            line.setAttribute('y1', y + nodeHeight);
+            line.setAttribute('x2', tx + nodeWidth / 2);
+            line.setAttribute('y2', ty);
+        });
+
+        // Incoming arrows to dragged node
+        document.querySelectorAll(`line[id$="-${nodeId}"]`).forEach(line => {
+            const parts = line.id.split('-');
+            if (parts.length < 3) return;
+            const srcId = parts.slice(1, 6).join('-'); // support dashes in ids
+            const src = document.getElementById(`node-${srcId}`);
+            if (!src) return;
+            const transform = src.getAttribute('transform');
+            const match = transform.match(/translate\(([-\d.]+),\s*([-\d.]+)\)/);
+            if (!match) return;
+            const sx = parseFloat(match[1]);
+            const sy = parseFloat(match[2]);
+            line.setAttribute('x1', sx + nodeWidth / 2);
+            line.setAttribute('y1', sy + nodeHeight);
+            line.setAttribute('x2', x + nodeWidth / 2);
+            line.setAttribute('y2', y);
+        });
+    }
+
+    svg.querySelectorAll('.node').forEach(node => {
+        node.addEventListener('mousedown', (e) => {
+            selected = node;
+            startMouse = getMouseSVGCoords(e);
+            const transform = selected.getAttribute('transform');
+            const match = transform.match(/translate\(([-\d.]+),\s*([-\d.]+)\)/);
+            startPos = {
+                x: parseFloat(match[1]),
+                y: parseFloat(match[2])
+            };
+            svg.style.cursor = 'grabbing';
+            e.preventDefault();
+        });
+    });
+
+    window.addEventListener('mousemove', (e) => {
+        if (!selected) return;
+        const coords = getMouseSVGCoords(e);
+        const dx = coords.x - startMouse.x;
+        const dy = coords.y - startMouse.y;
+        const newX = startPos.x + dx;
+        const newY = startPos.y + dy;
+
+        selected.setAttribute('transform', `translate(${newX},${newY})`);
+        const nodeId = selected.id.replace('node-', '');
+        updateLines(nodeId, newX, newY);
+    });
+
+    window.addEventListener('mouseup', () => {
+        if (selected) {
+            svg.style.cursor = 'grab';
+        }
+        selected = null;
+        startMouse = null;
+        startPos = null;
+    });
+</script>
+
+

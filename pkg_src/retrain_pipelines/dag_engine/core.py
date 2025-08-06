@@ -1,5 +1,6 @@
 
 import os
+import re
 import sys
 import uuid
 import getpass
@@ -14,7 +15,7 @@ from datetime import datetime, timezone
 from typing import Callable, List, Optional, Union, \
     Dict, Any
 from pydantic import BaseModel, Field, PrivateAttr, \
-    model_validator
+    field_validator
 
 from .db.dao import DAO
 from ..utils.rich_logging import framed_rich_log_str
@@ -49,11 +50,11 @@ class Task(BaseModel):
     """
     func: Callable
     is_parallel: bool = False
-    merge_func: Optional[Callable] = None
+    merge_func: Optional[Callable] = Field(default=None)
     id: str = Field(default_factory=lambda: str(uuid.uuid4()),
                     description="Unique ID for graph rendering")
-    exec_id: Optional[int] = None
-    task_id: Optional[int] = None
+    exec_id: Optional[int] = Field(default=None)
+    task_id: Optional[int] = Field(default=None)
 
     rank: Optional[List[int]] = Field(
         default=None,
@@ -69,7 +70,7 @@ class Task(BaseModel):
     _parents: List["Task"] = PrivateAttr(default_factory=list)
     _children: List["Task"] = PrivateAttr(default_factory=list)
     # in case of a task part of a taskgroup
-    _task_group: Optional["TaskGroup"] = None
+    _task_group: Optional["TaskGroup"] = PrivateAttr(default=None)
 
 
     def __init__(self, **data):
@@ -304,7 +305,7 @@ class TaskGroup(BaseModel):
         default_factory=lambda: str(uuid.uuid4()),
         description="Unique ID for graph rendering"
     )
-    exec_id: Optional[int] = None
+    exec_id: Optional[int] = Field(default = None)
 
 
     # Private attributes (not validated or included in .dict())
@@ -312,7 +313,7 @@ class TaskGroup(BaseModel):
     _parents: List["Task"] = PrivateAttr(default_factory=list)
     _children: List["Task"] = PrivateAttr(default_factory=list)
     # in case of a taskgroup itself part of a taskgroup
-    _task_group: Optional["TaskGroup"] = None
+    _task_group: Optional["TaskGroup"] = PrivateAttr(default = None)
 
 
     def __init__(self, *args, **kwargs):
@@ -424,9 +425,9 @@ class DAG(BaseModel):
           are populated at execution time.
     """
     roots: List["Task"] = Field(...)
-    ui_css: Optional[Dict[str, Any]] = Field(default_factory=dict)
+    ui_css: Optional["UiCss"] = Field(default=None)
 
-    exec_id: Optional[int] = None
+    exec_id: Optional[int] = Field(default=None)
     exec_params: Optional[Dict[str, Any]] = Field(default_factory=dict)
 
 
@@ -440,7 +441,7 @@ class DAG(BaseModel):
         """Shall be called programmatically 
         by the DAG execution routine.
         """
-        # Get the calling frame (1 level up)
+        # Get the calling frame (2 levels up)
         frame = inspect.currentframe()
         caller_frame = frame.f_back.f_back
         caller_module_name = os.path.basename(
@@ -450,8 +451,9 @@ class DAG(BaseModel):
         dao = DAO(os.environ["RP_METADATASTORE_URL"])
         self.exec_id = dao.add_execution(
             name=caller_module_name,
+            nodes_list= self.to_nodes_list(), # for dag rendering
             username=getpass.getuser(),
-            ui_css=self.ui_css,
+            ui_css=self.ui_css.__dict__ if self.ui_css else None,
             start_timestamp=datetime.now(timezone.utc)
         )
 
@@ -459,6 +461,41 @@ class DAG(BaseModel):
             root.exec_id = self.exec_id
             for child in root.children:
                 DAG._cascade_exec_id(self.exec_id, child)
+
+
+    def to_nodes_list(self) -> List[Dict[str, Any]]:
+        """
+        Returns a human-readable, serializable DAG structure.
+
+        Example output:
+        [
+            {"id": 1, "name": "Root", "children": [2, 3]},
+            {"id": 2, "name": "Child A", "children": [4]},
+            {"id": 3, "name": "Child B", "children": []},
+            {"id": 4, "name": "Leaf", "children": []}
+        ]
+        """
+        visited = set()
+        result = []
+        def dump_task(task):
+            if task.id in visited:
+                return
+            visited.add(task.id)
+            result.append(
+                {
+                    "id": task.id,
+                    "name": task.name,
+                    "task_group": task.task_group.name \
+                                  if task.task_group else None,
+                    "children": [c.id for c in task.children]
+                }
+            )
+            for child in task.children:
+                dump_task(child)
+
+        for root in self.roots:
+            dump_task(root)
+        return result
 
 
     @staticmethod
@@ -550,7 +587,7 @@ def taskgroup(func):
     return decorator(func)
 
 
-def dag(_func=None, *, ui_css=None):
+def dag(func=None, *, ui_css=None):
     """Decorator factory for a DAG."""
     def decorator(f):
         task_anchor = f()
@@ -560,12 +597,12 @@ def dag(_func=None, *, ui_css=None):
         )
         return pipeline
 
-    if _func is None:
+    if func is None:
         # Called as @dag(...) with optional arguments
         return decorator
     else:
         # Called as @dag without parentheses
-        return decorator(_func)
+        return decorator(func)
 
 
 # ---- DAG Traversal and Execution Utilities ----
@@ -679,4 +716,43 @@ class TaskPayload:
 
     def __repr__(self):
         return self.__str__()
+
+
+class UiCss(BaseModel):
+    background: Optional[str] = Field(
+        default=None,
+        description=(
+            "The color of the background of the record "
+            "in the WebConsole's 'executions-list' page. "
+            "Must be a hex color code starting with #."
+        )
+    )
+    color: Optional[str] = Field(
+        default=None,
+        description=(
+            "The font color of the record "
+            "in the WebConsole's 'executions-list' page. "
+            "Must be a hex color code starting with #."
+        )
+    )
+    border: Optional[str] = Field(
+        default=None,
+        description=(
+            "The color of the border of the record "
+            "in the WebConsole's 'executions-list' page. "
+            "Must be a hex color code starting with #."
+        )
+    )
+
+    @field_validator("background", "color", "border")
+    def must_be_hex_color(cls, v, info):
+        if (
+            v is not None and
+            not re.match(r'^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$', v)
+        ):
+            raise ValueError(
+                f"{cls.__name__}.{info.field_name} got invalid value {v!r}:" +
+                " must be a hex color code starting with #."
+            )
+        return v
 

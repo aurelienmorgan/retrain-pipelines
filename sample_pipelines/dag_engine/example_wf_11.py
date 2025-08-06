@@ -3,11 +3,12 @@ import os
 from typing import List, Union
 
 from retrain_pipelines.dag_engine.core import \
-    TaskPayload, task, parallel_task, dag
+    TaskPayload, task, parallel_task, \
+    dag, UiCss
 from retrain_pipelines.dag_engine.runtime import \
     execute
 from retrain_pipelines.dag_engine.renderer import \
-    render_svg, render_networkx, render_plotly
+    render_svg
 
 
 # ---- Example: Nested Parallelism and Merging with intermediary inline tasks ----
@@ -116,7 +117,7 @@ def end(payload: TaskPayload):
     return None
 
 
-@dag(ui_css={"background": "#e100ff"})
+@dag(ui_css=UiCss(background="#e100ff"))
 def retrain_pipeline():
     # Compose the DAG using operator overloading (>>)
     return start >> outer_parallel >> inline1 \
@@ -125,12 +126,11 @@ def retrain_pipeline():
 
 
 if __name__ == "__main__":
+    # Render the DAG
+    svg_fullname = os.path.join(os.environ["RP_ARTIFACTS_STORE"], "dag.html")
+    render_svg(retrain_pipeline, svg_fullname)
     # Run the DAG
     print("Final result:", execute(retrain_pipeline, dag_params=None))
     print(f"execution {os.path.splitext(os.path.basename(__file__))[0]}[{retrain_pipeline.exec_id}]")
-    # Render the DAG
-    render_svg(retrain_pipeline, os.path.join(os.environ["RP_ARTIFACTS_STORE"], "dag.svg"))
-    print("DAG SVG written to dag.svg")
-    render_networkx(retrain_pipeline, os.path.join(os.environ["RP_ARTIFACTS_STORE"], "dag.png"))
-    render_plotly(retrain_pipeline, os.path.join(os.environ["RP_ARTIFACTS_STORE"], "dag.html"))
+    print(f"DAG SVG written to {svg_fullname}")
 

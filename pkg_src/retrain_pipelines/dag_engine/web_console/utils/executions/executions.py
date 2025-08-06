@@ -8,6 +8,7 @@ from typing import List, Optional, Union
 from fasthtml.common import Div, A, Span, \
     Style
 
+from ....core import UiCss
 from ....db.dao import AsyncDAO
 from ....db.model import Execution, ExecutionExt
 from .....utils import hex_to_rgba
@@ -38,23 +39,9 @@ def execution_to_html(execution_ext: Union[Execution, ExecutionExt]) -> Div:
     localized_start_timestamp_str = \
         localized_start_timestamp.strftime('%Y-%m-%d %H:%M:%S')
 
-    exec_background = \
-        execution_ext.ui_css["background"] \
-        if (execution_ext.ui_css and "background" in execution_ext.ui_css) \
-        else "#4d0066" # "#ffffff"
-
-    exec_color = execution_ext.ui_css["background"] \
-                 if (execution_ext.ui_css and "background" in execution_ext.ui_css) \
-                 else "#4d0066" # "#ffffff"
-    # status_color = (
-        # (
-            # "#28a745"
-            # if execution_ext.success else
-            # "#dc3545"
-        # ) if execution_ext.end_timestamp else
-        # None
-    # )
-    # print(execution_ext.end_timestamp, execution_ext.success, status_color)
+    ui_css = UiCss(**execution_ext.ui_css) if execution_ext.ui_css else UiCss()
+    exec_background = ui_css.background or "#4d0066"
+    exec_color = ui_css.color or "#fff"
 
     return Div(
 
@@ -79,7 +66,8 @@ def execution_to_html(execution_ext: Union[Execution, ExecutionExt]) -> Div:
                 href=f"/execution?id={execution_ext.id}",
                 target="_self"
             ),
-            Span(f" - {localized_start_timestamp_str}")
+            Span(f" - {localized_start_timestamp_str}"),
+            cls="execution-body"
         ),
         Div(
             (execution_ext.end_timestamp - execution_ext.start_timestamp) \
@@ -92,74 +80,10 @@ def execution_to_html(execution_ext: Union[Execution, ExecutionExt]) -> Div:
             #_{execution_ext.id}.execution {{
                 --exec_background-normal: {hex_to_rgba(exec_background, .45)};
                 --exec_background-hover: {hex_to_rgba(exec_background, .65)};
+                --exec_color-normal: {hex_to_rgba(exec_color, .45)};
+                --exec_color-hover: {hex_to_rgba(exec_color, .65)};
             }}
         """),
-
-        # Style(f"""
-            # #_{execution_ext.id}.execution {{
-                # display: flex;
-                # justify-content: space-between;
-                # align-items: center;
-                # width: 100%;
-                # position: relative;
-                # --status-color-normal: {hex_to_rgba(exec_background, .45)};
-                # --status-color-hover: {hex_to_rgba(exec_background, .65)};
-                # background: {
-                    # f"linear-gradient(120deg, var(--status-color-normal) 0%, var(--status-color-normal) 40%, {hex_to_rgba(status_color, 0.5)} 70%, {hex_to_rgba(status_color, 0)} 100%)"
-                    # if status_color else "var(--status-color-normal)"
-                # };
-                # padding: 8px 20px;
-                # margin-bottom: 4px;
-                # border-radius: 8px;
-                # box-shadow: 0 2px 4px rgba(0,0,0,0.1),
-                    # 0 8px 16px rgba(0,0,0,0.05),
-                    # inset 0 1px 0 rgba(255,255,255,0.4),
-                    # inset 0 -1px 0 rgba(0,0,0,0.1);
-                # backdrop-filter: blur(10px);
-                # -webkit-backdrop-filter: blur(10px);
-                # overflow: hidden;
-                # transition: all 0.3s ease;
-                # transform-origin: center center;
-            # }}
-
-            # #_{execution_ext.id}.execution:hover {{
-                # {"background: linear-gradient(120deg, var(--status-color-hover) 0%, var(--status-color-hover) 40%, " + hex_to_rgba(status_color, 0.7) + " 70%, " + hex_to_rgba(status_color, 0) + " 100%);" if status_color else ""}
-                # transform: translateY(-1px);
-            # }}
-        # """),
-
-        # Style(f"""
-            # #_{execution_ext.id}.execution {{
-                # display: flex;
-                # justify-content: space-between;
-                # align-items: center;
-                # width: 100%;
-                # position: relative;
-                # --status-color-normal: {hex_to_rgba(exec_background, .45)};
-                # --status-color-hover: {hex_to_rgba(exec_background, .65)};
-                # background: {
-                    # f"radial-gradient(ellipse at 100% 50%, {hex_to_rgba(status_color, 0.6)} 0%, {hex_to_rgba(status_color, 0.3)} 30%, transparent 60%), var(--status-color-normal)"
-                    # if status_color else "var(--status-color-normal)"
-                # };
-                # padding: 8px 20px;
-                # margin-bottom: 4px;
-                # border-radius: 8px;
-                # box-shadow: 0 2px 4px rgba(0,0,0,0.1),
-                    # 0 8px 16px rgba(0,0,0,0.05),
-                    # inset 0 1px 0 rgba(255,255,255,0.4),
-                    # inset 0 -1px 0 rgba(0,0,0,0.1);
-                # backdrop-filter: blur(10px);
-                # -webkit-backdrop-filter: blur(10px);
-                # overflow: hidden;
-                # transition: all 0.3s ease;
-                # transform-origin: center center;
-            # }}
-
-            # #_{execution_ext.id}.execution:hover {{
-                # {"background: radial-gradient(ellipse at 100% 50%, " + hex_to_rgba(status_color, 0.8) + " 0%, " + hex_to_rgba(status_color, 0.5) + " 30%, transparent 60%), var(--status-color-hover);" if status_color else ""}
-                # transform: translateY(-1px);
-            # }}
-        # """),
 
         **{
             'data-pipeline-name': execution_ext.name,

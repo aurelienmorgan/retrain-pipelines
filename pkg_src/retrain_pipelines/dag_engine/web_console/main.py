@@ -15,7 +15,7 @@ from starlette.routing import WebSocketRoute
 from ...utils.rich_logging import framed_rich_log_str
 from .utils.server_logs import get_log_config, \
     get_log_websocket_endpoint
-from .views import home, server, api
+from .views import home, server, api, execution
 from . import APP_STATIC_DIR
 
 
@@ -40,7 +40,7 @@ def start_server_once():
     app = FastHTML(exts="ws")
     rt = app.route
 
-    for view in [home, server, api]:
+    for view in [home, server, api, execution]:
         view.register(app, rt)
 
     # Add the server-logs WebSocket route.

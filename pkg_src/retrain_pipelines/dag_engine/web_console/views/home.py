@@ -811,12 +811,6 @@ def register(app, rt, prefix=""):
 
     @rt(f"{prefix}/")
     def home():
-        content = (
-            H1("Placeholder", style="color: white;"),
-            P(Code("retrain-pipelines"), " executions!",
-              style="color: white;")
-        )
-
         return page_layout(current_page="/", title="retrain-pipelines", \
             content=Div(# page content
                 Div(# params panel
@@ -1450,12 +1444,10 @@ def register(app, rt, prefix=""):
                         .execution {{
                             display: flex;
                             justify-content: space-between;
-                            align-items: center;
                             width: 100%;
                             line-height: 1em;
                             position: relative;
-                            background: var(--exec_background-normal);
-                            border-radius: 4px;
+                            border-radius: 3px;
                             box-shadow: 0 2px 4px rgba(0,0,0,0.1),
                                 0 8px 16px rgba(0,0,0,0.05),
                                 inset 0 1px 0 rgba(255,255,255,0.4),
@@ -1468,35 +1460,91 @@ def register(app, rt, prefix=""):
                         }}
 
                         .execution:hover {{
-                            background: var(--exec_background-hover);
                             transform: translateY(-1px);
+                        }}
+
+                        .execution-body {{
+                            background: var(--exec_background-normal);
+                            color: var(--exec_color-normal);
+                            border-radius: 3px 0 0 3px;
+                            width: 100%;
+                            display: flex;
+                            align-items: center;
+                            min-height: 1.265em;
                         }}
 
                         .end_timestamp {{
                             width: 170px;
                             text-align: right;
                             padding: 2px 2px 2px 6px;
-                            border-radius: 3px;
+                            border-radius: 0 3px 3px 0;
                             min-height: 1.265em;
+                            background: var(--exec_background-normal);
                         }}
 
-                        .success {{
-                            background: {
-                                f"linear-gradient(90deg, transparent 0%, {hex_to_rgba('#28a745', 0.6)} 100%)"
-                            };
+                        .end_timestamp.success {{
+                            --status-color: #28a745;
+                            background: 
+                                linear-gradient(90deg,
+                                    transparent 0%,
+                                    rgba(from var(--status-color) r g b / 0.3) 50%,
+                                    rgba(from var(--status-color) r g b / 0.6) 100%
+                                ),
+                                linear-gradient(90deg,
+                                    var(--exec_background-normal) 0%,
+                                    transparent 50%,
+                                    transparent 100%
+                                );
                         }}
 
-                        .failure {{
-                            background: {
-                                f"linear-gradient(90deg, transparent 0%, {hex_to_rgba('#dc3545', 0.6)} 100%)"
-                            };
+                        .end_timestamp.failure {{
+                            --status-color: #dc3545;
+                            background: 
+                                linear-gradient(90deg,
+                                    transparent 0%,
+                                    transparent 20%,
+                                    rgba(from var(--status-color) r g b / 0.3) 40%,
+                                    rgba(from var(--status-color) r g b / 0.6) 100%
+                                ),
+                                linear-gradient(90deg,
+                                    var(--exec_background-normal) 0%,
+                                    transparent 50%,
+                                    transparent 100%
+                                );
+                        }}
+
+                        .execution:hover .execution-body,
+                        .execution:hover .end_timestamp {{
+                            background: var(--exec_background-hover);
+                            color: var(--exec_color-hover);
                         }}
 
                         .execution:hover .success {{
-                            background: linear-gradient(90deg, transparent 0%, {hex_to_rgba('#28a745', 1)} 100%);
+                            background:
+                                linear-gradient(90deg,
+                                    transparent 0%,
+                                    rgba(from var(--status-color) r g b / 0.4) 50%,
+                                    rgba(from var(--status-color) r g b / 1) 100%
+                                ),
+                                linear-gradient(90deg,
+                                    var(--exec_background-hover) 0%,
+                                    transparent 50%,
+                                    transparent 100%
+                                );
                         }}
                         .execution:hover .failure {{
-                            background: linear-gradient(90deg, transparent 0%, {hex_to_rgba('#dc3545', 1)} 100%);
+                            background:
+                                linear-gradient(90deg,
+                                    transparent 0%,
+                                    transparent 20%,
+                                    rgba(from var(--status-color) r g b / 0.4) 40%,
+                                    rgba(from var(--status-color) r g b / 1) 100%
+                                ),
+                                linear-gradient(90deg,
+                                    var(--exec_background-hover) 0%,
+                                    transparent 50%,
+                                    transparent 100%
+                                );
                         }}
                     """),
                     id="executions-container",

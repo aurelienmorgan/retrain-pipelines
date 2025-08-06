@@ -315,6 +315,17 @@ class AsyncDAO(DAOBase):
 
             return executions_ext
 
+    async def get_execution_nodes_list(
+        self, execution_id: int
+    ) -> Optional[List[dict]]:
+        statement = select(Execution.nodes_list) \
+                    .where(Execution.id == execution_id)
+
+        async with self._get_session() as session:
+            result = await session.execute(statement)
+            row = result.scalar_one_or_none()
+            return row
+
 
 #////////////////////////////////////////////////////////////////////////////
 

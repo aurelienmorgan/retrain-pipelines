@@ -37,6 +37,8 @@ class Execution(Base):
     )
 
     ui_css = Column(JSON, nullable=True)
+    # for rendering (known at DAG-declaration time)
+    nodes_list = Column(JSON, nullable=False)
 
     def __init__(self, *args, **kwargs):
         # Support dict as the ONLY positional argument
