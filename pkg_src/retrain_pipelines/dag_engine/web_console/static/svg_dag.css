@@ -20,7 +20,7 @@ svg {
 .label {
     pointer-events: none;
     font-family: sans-serif;
-    font-size: 12px;
+    font-size: 9.5px;
     fill: #fff;
     font-weight: 600;
     user-select: none;

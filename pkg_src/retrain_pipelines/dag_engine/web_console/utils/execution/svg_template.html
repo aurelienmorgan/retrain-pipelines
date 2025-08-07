@@ -1,5 +1,5 @@
 
-<svg id="dag" width="2000" height="1000">
+<svg id="dag" width="100%">
     <defs>
         <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
             <path d="M0,0 L0,6 L9,3 z" fill="#ffd700" />
@@ -10,75 +10,108 @@
             <stop offset="100%" stop-color="#1a3d7c" stop-opacity="0.2" />
         </linearGradient>
     </defs>
+    <g id="canvas-group" transform="translate(0,0) scale(1)" visibility="hidden">
+        {% set spacing_x = 160 %}
+        {% set spacing_y = 80 %}
+        {% set node_width = 96 %}
+        {% set node_height = 32 %}
 
-    {% set spacing_x = 200 %}
-    {% set spacing_y = 100 %}
-    {% set node_width = 120 %}
-    {% set node_height = 40 %}
+        {% set id_to_node = {} %}
+        {% for node in nodes %}
+            {% set _ = id_to_node.update({node.id: node}) %}
+        {% endfor %}
 
-    {% set id_to_node = {} %}
-    {% for node in nodes %}
-        {% set _ = id_to_node.update({node.id: node}) %}
-    {% endfor %}
+        {# Determine depth by DFS #}
+        {% set levels = {} %}
+        {% macro visit(node_id, depth=0) %}
+            {% if node_id in levels %}
+                {% set _ = levels[node_id].append(depth) %}
+            {% else %}
+                {% set _ = levels.update({node_id: [depth]}) %}
+            {% endif %}
+            {% for child in id_to_node[node_id].children %}
+                {{ visit(child, depth + 1) }}
+            {% endfor %}
+        {% endmacro %}
+        {{ visit(nodes[0].id) }}
 
-    {# Determine depth by DFS #}
-    {% set levels = {} %}
-    {% macro visit(node_id, depth=0) %}
-        {% if node_id in levels %}
-            {% set _ = levels[node_id].append(depth) %}
-        {% else %}
-            {% set _ = levels.update({node_id: [depth]}) %}
+        {% set depth_to_nodes = {} %}
+        {% for node_id, dlist in levels.items() %}
+            {% set depth = dlist|max %}
+            {% set _ = depth_to_nodes.update({depth: (depth_to_nodes.get(depth, []) + [node_id])}) %}
+        {% endfor %}
+
+        {# Calculate centered positions #}
+        {% set max_nodes_per_level = 0 %}
+        {% for depth, ids in depth_to_nodes.items() %}
+            {% if ids|length > max_nodes_per_level %}
+                {% set max_nodes_per_level = ids|length %}
+            {% endif %}
+        {% endfor %}
+
+        {# Calculate total width needed for the widest level #}
+        {% set total_width = (max_nodes_per_level - 1) * spacing_x %}
+
+        {# Calculate starting offset to center the entire DAG #}
+        {% set svg_width = 800 %}  {# Approximate SVG viewport width - varies with webbrowser window size #}
+        {% set dag_start_x = (svg_width - total_width) / 2 %}
+        {% if dag_start_x < spacing_x %}
+            {% set dag_start_x = spacing_x %}
         {% endif %}
-        {% for child in id_to_node[node_id].children %}
-            {{ visit(child, depth + 1) }}
+
+        {% set id_to_pos = {} %}
+        {% for depth, ids in depth_to_nodes.items() %}
+            {% set level_width = (ids|length - 1) * spacing_x %}
+            {% set level_start_x = dag_start_x + (total_width - level_width) / 2 %}
+
+            {% for id in ids %}
+                {% set i = loop.index0 %}
+                {% set x = level_start_x + i * spacing_x %}
+                {% set y = node_height + depth * spacing_y %} // DAG top margin = 1*node_height
+                {% set _ = id_to_pos.update({id: {'x': x, 'y': y} }) %}
+            {% endfor %}
         {% endfor %}
-    {% endmacro %}
-    {{ visit(nodes[0].id) }}
 
-    {% set depth_to_nodes = {} %}
-    {% for node_id, dlist in levels.items() %}
-        {% set depth = dlist|max %}
-        {% set _ = depth_to_nodes.update({depth: (depth_to_nodes.get(depth, []) + [node_id])}) %}
-    {% endfor %}
-
-    {% set id_to_pos = {} %}
-    {% for depth, ids in depth_to_nodes.items() %}
-        {% for id in ids %}
-            {% set i = loop.index0 %}
-            {% set x = spacing_x + i * spacing_x %}
-            {% set y = spacing_y + depth * spacing_y %}
-            {% set _ = id_to_pos.update({id: {'x': x, 'y': y} }) %}
+        {# Draw arrows #}
+        {% for node in nodes %}
+            {% set src = id_to_pos[node.id] %}
+            {% for child_id in node.children %}
+                {% set tgt = id_to_pos[child_id] %}
+                <line id="arrow-{{ node.id }}-{{ child_id }}"
+                    x1="{{ src.x + node_width/2 }}" y1="{{ src.y + node_height }}"
+                    x2="{{ tgt.x + node_width/2 }}" y2="{{ tgt.y }}"
+                    marker-end="url(#arrow)" />
+            {% endfor %}
         {% endfor %}
-    {% endfor %}
 
-    {# Draw arrows #}
-    {% for node in nodes %}
-        {% set src = id_to_pos[node.id] %}
-        {% for child_id in node.children %}
-            {% set tgt = id_to_pos[child_id] %}
-            <line id="arrow-{{ node.id }}-{{ child_id }}"
-                x1="{{ src.x + node_width/2 }}" y1="{{ src.y + node_height }}"
-                x2="{{ tgt.x + node_width/2 }}" y2="{{ tgt.y }}"
-                marker-end="url(#arrow)" />
+        {# Draw nodes #}
+        {% for node in nodes %}
+            {% set pos = id_to_pos[node.id] %}
+            <g class="node" id="node-{{ node.id }}" transform="translate({{ pos.x }}, {{ pos.y }})" style="cursor: grab;">
+                <rect class="box" width="{{ node_width }}" height="{{ node_height }}" rx="6" ry="6" fill="#add8e6" stroke="#333"></rect>
+                <text class="label" x="{{ node_width/2 }}" y="{{ node_height/2 + 3 }}" text-anchor="middle" font-family="sans-serif" font-size="11">
+                    {{ node.name }}
+                </text>
+            </g>
         {% endfor %}
-    {% endfor %}
-
-    {# Draw nodes #}
-    {% for node in nodes %}
-        {% set pos = id_to_pos[node.id] %}
-        <g class="node" id="node-{{ node.id }}" transform="translate({{ pos.x }}, {{ pos.y }})" style="cursor: grab;">
-            <rect class="box" width="{{ node_width }}" height="{{ node_height }}" rx="6" ry="6" fill="#add8e6" stroke="#333"></rect>
-            <text class="label" x="{{ node_width/2 }}" y="{{ node_height/2 + 4 }}" text-anchor="middle" font-family="sans-serif" font-size="14">
-                {{ node.name }}
-            </text>
-        </g>
-    {% endfor %}
+    </g>
 </svg>
 
 <script>
+    /* ***************
+    * Nodes-dragging *
+    *************** */
     const nodeWidth = {{ node_width }};
     const nodeHeight = {{ node_height }};
     const svg = document.getElementById('dag');
+    const canvasGroup = document.getElementById('canvas-group');
+
+    // Transform state
+    let currentTransform = {
+        x: 0,
+        y: 0,
+        scale: 1
+    };
 
     let selected = null;
     let startMouse = null;       // mouse position at drag start {x, y}
@@ -88,7 +121,18 @@
         const pt = svg.createSVGPoint();
         pt.x = evt.clientX;
         pt.y = evt.clientY;
-        return pt.matrixTransform(svg.getScreenCTM().inverse());
+        const transformed = pt.matrixTransform(svg.getScreenCTM().inverse());
+
+        // Convert to canvas coordinate system (account for pan and zoom)
+        return {
+            x: (transformed.x - currentTransform.x) / currentTransform.scale,
+            y: (transformed.y - currentTransform.y) / currentTransform.scale
+        };
+    }
+
+    function updateTransform() {
+        canvasGroup.setAttribute('transform', 
+            `translate(${currentTransform.x},${currentTransform.y}) scale(${currentTransform.scale})`);
     }
 
     function updateLines(nodeId, x, y) {
@@ -139,7 +183,7 @@
                 x: parseFloat(match[1]),
                 y: parseFloat(match[2])
             };
-            svg.style.cursor = 'grabbing';
+            selected.style.cursor = 'grabbing';
             e.preventDefault();
         });
     });
@@ -159,12 +203,167 @@
 
     window.addEventListener('mouseup', () => {
         if (selected) {
-            svg.style.cursor = 'grab';
+            selected.style.cursor = 'grab';
         }
         selected = null;
         startMouse = null;
         startPos = null;
     });
+    /* ************ */
+
+
+    /* ***************************
+    * DAG-centering at load time *
+    *************************** */
+    function adjustSVGHeight() {
+        const nodes = svg.querySelectorAll('.node');
+        if (nodes.length === 0) return;
+
+        let minY = Infinity, maxY = -Infinity;
+
+        nodes.forEach(node => {
+            const transform = node.getAttribute('transform');
+            const match = transform.match(/translate\(([-\d.]+),\s*([-\d.]+)\)/);
+            if (match) {
+                const y = parseFloat(match[2]);
+                minY = Math.min(minY, y);
+                maxY = Math.max(maxY, y + nodeHeight);
+            }
+        });
+
+        // Calculate dagHeight and add top/bottom margin
+        const dagHeight = maxY - minY;
+        const newHeight = dagHeight + 2 * {{ node_height }};
+
+        // Set new SVG height (in pixels)
+        svg.setAttribute('height', newHeight);
+    }
+
+    function centerDAG() {
+        const nodes = svg.querySelectorAll('.node');
+        if (nodes.length === 0) return;
+
+        let minX = Infinity, maxX = -Infinity;
+        let minY = Infinity;
+
+        nodes.forEach(node => {
+            const transform = node.getAttribute('transform');
+            const match = transform.match(/translate\(([-\d.]+),\s*([-\d.]+)\)/);
+            if (match) {
+                const x = parseFloat(match[1]);
+                const y = parseFloat(match[2]);
+
+                minX = Math.min(minX, x);
+                maxX = Math.max(maxX, x + nodeWidth);
+                minY = Math.min(minY, y);
+            }
+        });
+
+        const contentWidth = maxX - minX;
+        const contentCenterX = minX + contentWidth / 2;
+
+        const svgRect = svg.getBoundingClientRect();
+        const viewportCenterX = svgRect.width / 2;
+
+        // Horizontal centering
+        currentTransform.x = viewportCenterX - contentCenterX * currentTransform.scale;
+        // Vertical top alignment (e.g. top of DAG starts at, from top of viewport)
+        const desiredTopOffset = {{ node_height }};
+        currentTransform.y = desiredTopOffset - minY * currentTransform.scale;
+
+        updateTransform();
+    }
+
+    adjustSVGHeight();
+    centerDAG();
+    canvasGroup.style.visibility = 'visible';
+    // Also center on resize
+    window.addEventListener('resize', centerDAG);
+    /* ************************ */
+
+    /* ****************
+    * Canvas-dragging *
+    **************** */
+    let canvasDrag = false;
+    let canvasStartMouse = null;
+    let canvasStartTransform = {x: 0, y: 0};
+
+    svg.addEventListener('mousedown', (e) => {
+        // Only start if not clicking on a node
+        if (e.target === svg) {
+            canvasDrag = true;
+            const pt = svg.createSVGPoint();
+            pt.x = e.clientX;
+            pt.y = e.clientY;
+            canvasStartMouse = pt.matrixTransform(svg.getScreenCTM().inverse());
+
+            canvasStartTransform = {
+                x: currentTransform.x,
+                y: currentTransform.y
+            };
+            svg.style.cursor = 'move';
+            e.preventDefault();
+        }
+    });
+
+    window.addEventListener('mousemove', (e) => {
+        if (canvasDrag) {
+            const pt = svg.createSVGPoint();
+            pt.x = e.clientX;
+            pt.y = e.clientY;
+            const coords = pt.matrixTransform(svg.getScreenCTM().inverse());
+
+            const dx = coords.x - canvasStartMouse.x;
+            const dy = coords.y - canvasStartMouse.y;
+
+            currentTransform.x = canvasStartTransform.x + dx;
+            currentTransform.y = canvasStartTransform.y + dy;
+
+            updateTransform();
+        }
+    });
+
+    window.addEventListener('mouseup', () => {
+        if (canvasDrag) {
+            svg.style.cursor = 'default';
+        }
+        canvasDrag = false;
+        canvasStartMouse = null;
+    });
+
+    /* ***************
+    * Canvas-zooming *
+    *************** */
+    svg.addEventListener('wheel', (e) => {
+        if (!e.ctrlKey) return; // Only zoom when Ctrl is held
+        e.preventDefault();
+
+        // Get mouse position in SVG coordinates before zoom
+        const pt = svg.createSVGPoint();
+        pt.x = e.clientX;
+        pt.y = e.clientY;
+        const svgPoint = pt.matrixTransform(svg.getScreenCTM().inverse());
+
+        // Calculate zoom factor
+        const zoomFactor = e.deltaY < 0 ? 1.1 : 0.9;
+        const newScale = Math.max(0.1, Math.min(5, currentTransform.scale * zoomFactor));
+
+        // Calculate the point in canvas coordinates before zoom
+        const canvasPointBefore = {
+            x: (svgPoint.x - currentTransform.x) / currentTransform.scale,
+            y: (svgPoint.y - currentTransform.y) / currentTransform.scale
+        };
+
+        // Update scale
+        currentTransform.scale = newScale;
+
+        // Calculate new translation to keep the mouse point fixed
+        currentTransform.x = svgPoint.x - canvasPointBefore.x * currentTransform.scale;
+        currentTransform.y = svgPoint.y - canvasPointBefore.y * currentTransform.scale;
+
+        updateTransform();
+    });
+    /* ************ */
 </script>
 
 

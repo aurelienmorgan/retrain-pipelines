@@ -85,8 +85,6 @@ def start_server_once():
         registered_routes_str += "\n" + \
             f"['ws'] {path} -> {handle}"
     logger.info(framed_rich_log_str(registered_routes_str[1:]))
-    logger.info("--- Registered ServerSideEvent Endpoints ---")
-    logger.info(framed_rich_log_str(" "))
 
     # Create the ASGI server (uvicorn.Server)
     config = uvicorn.Config(

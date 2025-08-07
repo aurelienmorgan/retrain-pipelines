@@ -1440,7 +1440,7 @@ def register(app, rt, prefix=""):
                         id="loader-container",
                         style="width: 100% display: flex; justify-content: center;"
                     ),
-                    Style(f"""
+                    Style(f""" /* execution-item (loaded at runtime) */
                         .execution {{
                             display: flex;
                             justify-content: space-between;
