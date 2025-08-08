@@ -11,91 +11,186 @@
         </linearGradient>
     </defs>
     <g id="canvas-group" transform="translate(0,0) scale(1)" visibility="hidden">
-        {% set spacing_x = 160 %}
-        {% set spacing_y = 80 %}
-        {% set node_width = 96 %}
-        {% set node_height = 32 %}
+        {%- set spacing_x = 160 %}
+        {%- set spacing_y = 80 %}
+        {%- set node_width = 96 %}
+        {%- set node_height = 32 %}
 
-        {% set id_to_node = {} %}
-        {% for node in nodes %}
-            {% set _ = id_to_node.update({node.uuid: node}) %}
-        {% endfor %}
+        {%- set id_to_node = {} %}
+        {%- for node in nodes %}
+            {%- set _ = id_to_node.update({node.uuid: node}) %}
+        {%- endfor %}
 
         {# Determine depth by DFS #}
-        {% set levels = {} %}
-        {% macro visit(node_id, depth=0) %}
-            {% if node_id in levels %}
-                {% set _ = levels[node_id].append(depth) %}
-            {% else %}
-                {% set _ = levels.update({node_id: [depth]}) %}
-            {% endif %}
-            {% for child in id_to_node[node_id].children %}
-                {{ visit(child, depth + 1) }}
-            {% endfor %}
-        {% endmacro %}
-        {{ visit(nodes[0].uuid) }}
+        {%- set levels = {} %}
+        {%- macro visit(node_id, depth=0) -%}
+            {%- if node_id in levels %}
+                {%- set _ = levels[node_id].append(depth) %}
+            {%- else %}
+                {%- set _ = levels.update({node_id: [depth]}) %}
+            {%- endif %}
+            {%- for child in id_to_node[node_id].children %}
+                {{- visit(child, depth + 1) -}}
+            {%- endfor %}
+        {%- endmacro %}
+        {{- visit(nodes[0].uuid) }}
 
-        {% set depth_to_nodes = {} %}
-        {% for node_id, dlist in levels.items() %}
-            {% set depth = dlist|max %}
-            {% set _ = depth_to_nodes.update({depth: (depth_to_nodes.get(depth, []) + [node_id])}) %}
-        {% endfor %}
+        {%- set depth_to_nodes = {} %}
+        {%- for node_id, dlist in levels.items() %}
+            {%- set depth = dlist|max %}
+            {%- set _ = depth_to_nodes.update({depth: (depth_to_nodes.get(depth, []) + [node_id])}) %}
+        {%- endfor %}
 
         {# Calculate centered positions #}
-        {% set max_nodes_per_level = 0 %}
-        {% for depth, ids in depth_to_nodes.items() %}
-            {% if ids|length > max_nodes_per_level %}
-                {% set max_nodes_per_level = ids|length %}
-            {% endif %}
-        {% endfor %}
+        {%- set max_nodes_per_level = 0 %}
+        {%- for depth, ids in depth_to_nodes.items() %}
+            {%- if ids|length > max_nodes_per_level %}
+                {%- set max_nodes_per_level = ids|length %}
+            {%- endif %}
+        {%- endfor %}
 
         {# Calculate total width needed for the widest level #}
-        {% set total_width = (max_nodes_per_level - 1) * spacing_x %}
+        {%- set total_width = (max_nodes_per_level - 1) * spacing_x %}
 
         {# Calculate starting offset to center the entire DAG #}
-        {% set svg_width = 800 %}  {# Approximate SVG viewport width - varies with webbrowser window size #}
-        {% set dag_start_x = (svg_width - total_width) / 2 %}
-        {% if dag_start_x < spacing_x %}
-            {% set dag_start_x = spacing_x %}
-        {% endif %}
+        {%- set svg_width = 800 %}  {# Approximate SVG viewport width - varies with webbrowser window size #}
+        {%- set dag_start_x = (svg_width - total_width) / 2 %}
+        {%- if dag_start_x < spacing_x %}
+            {%- set dag_start_x = spacing_x %}
+        {%- endif %}
 
-        {% set id_to_pos = {} %}
-        {% for depth, ids in depth_to_nodes.items() %}
-            {% set level_width = (ids|length - 1) * spacing_x %}
-            {% set level_start_x = dag_start_x + (total_width - level_width) / 2 %}
+        {%- set id_to_pos = {} %}
+        {%- for depth, ids in depth_to_nodes.items() %}
+            {%- set level_width = (ids|length - 1) * spacing_x %}
+            {%- set level_start_x = dag_start_x + (total_width - level_width) / 2 %}
 
-            {% for id in ids %}
-                {% set i = loop.index0 %}
-                {% set x = level_start_x + i * spacing_x %}
-                {% set y = node_height + depth * spacing_y %} // DAG top margin = 1*node_height
-                {% set _ = id_to_pos.update({id: {'x': x, 'y': y} }) %}
-            {% endfor %}
-        {% endfor %}
+            {%- for id in ids %}
+                {%- set i = loop.index0 %}
+                {%- set x = level_start_x + i * spacing_x %}
+                {%- set y = node_height + depth * spacing_y %} {# DAG top margin = 1*node_height #}
+                {%- set _ = id_to_pos.update({id: {'x': x, 'y': y} }) %}
+            {%- endfor %}
+        {%- endfor %}
 
         {# Draw arrows #}
-        {% for node in nodes %}
-            {% set src = id_to_pos[node.uuid] %}
-            {% for child_id in node.children %}
-                {% set tgt = id_to_pos[child_id] %}
+        {%- for node in nodes %}
+            {%- set src = id_to_pos[node.uuid] %}
+            {%- for child_id in node.children %}
+                {%- set tgt = id_to_pos[child_id] %}
                 <line id="arrow-{{ node.uuid }}-{{ child_id }}"
                     x1="{{ src.x + node_width/2 }}" y1="{{ src.y + node_height }}"
                     x2="{{ tgt.x + node_width/2 }}" y2="{{ tgt.y }}"
                     marker-end="url(#arrow)" />
-            {% endfor %}
-        {% endfor %}
+            {%- endfor %}
+        {%- endfor %}
 
         {# Draw nodes #}
-        {% for node in nodes %}
-            {% set pos = id_to_pos[node.uuid] %}
+        {%- set state = {'parallel_depth': 0} %}
+        {%- for node in nodes %}
+            {%- set pos = id_to_pos[node.uuid] %}
+
+            {# Increase parallel depth BEFORE rendering node if parallel #}
+            {%- if node.is_parallel %}
+                {%- set _ = state.update({'parallel_depth': state.parallel_depth + 1}) %}
+            {%- endif %}
+
+            {# Decrease parallel depth BEFORE rendering node if merge #}
+            {%- if node.merge_func is not none and not node.is_parallel %}
+                <!-- DEBUG: decrease nesting - node {{ node.uuid }} parallel_depth={{ state.parallel_depth }} is_parallel={{ node.is_parallel }} merge_func={{ node.merge_func is not none }} -->
+                {%- set _ = state.update({'parallel_depth': state.parallel_depth - 1}) %}
+            {%- endif %}
+
             <g class="node" id="node-{{ node.uuid }}" transform="translate({{ pos.x }}, {{ pos.y }})" style="cursor: grab;">
-                <rect class="box" width="{{ node_width }}" height="{{ node_height }}" rx="6" ry="6" fill="#add8e6" stroke="#333"></rect>
+
+            <!-- DEBUG: node {{ node.uuid }} parallel_depth={{ state.parallel_depth }} is_parallel={{ node.is_parallel }} merge_func={{ node.merge_func is not none }} -->
+
+                {# Render one full shifted underlay per nesting level for all nodes except merges #}
+                {%- if state.parallel_depth > 0 %}
+                    {%- for level in range(state.parallel_depth, 0, -1) %}
+                        <!-- DEBUG: level {{ level }} {{ node.name }} -->
+                        {%- set offset = 3 * level %}
+                        <g transform="translate({{ offset }}, {{ offset }})">
+                            {%- if node.is_parallel %}
+                                {%- set top_margin = 5 %}
+                                {%- set r = 6 %}
+                                <path class="box" d="
+                                    M{{ top_margin + r }},0
+                                    L{{ node_width - top_margin - r }},0
+                                    A{{ r }},{{ r }} 0 0 1 {{ node_width - top_margin }},{{ r }}
+                                    L{{ node_width }},{{ node_height - r }}
+                                    A{{ r }},{{ r }} 0 0 1 {{ node_width - r }},{{ node_height }}
+                                    L{{ r }},{{ node_height }}
+                                    A{{ r }},{{ r }} 0 0 1 0,{{ node_height - r }}
+                                    L{{ top_margin }},{{ r }}
+                                    A{{ r }},{{ r }} 0 0 1 {{ top_margin + r }},0
+                                    Z"
+                                    fill="#add8e6" stroke="#333" />
+                            {%- elif node.merge_func is not none %}
+                                {%- set bottom_margin = 5 %}
+                                {%- set r = 6 %}
+                                <path class="box" d="
+                                    M{{ r }},0
+                                    L{{ node_width - r }},0
+                                    A{{ r }},{{ r }} 0 0 1 {{ node_width }},{{ r }}
+                                    L{{ node_width - bottom_margin }},{{ node_height - r }}
+                                    A{{ r }},{{ r }} 0 0 1 {{ node_width - bottom_margin - r }},{{ node_height }}
+                                    L{{ bottom_margin + r }},{{ node_height }}
+                                    A{{ r }},{{ r }} 0 0 1 {{ bottom_margin }},{{ node_height - r }}
+                                    L0,{{ r }}
+                                    A{{ r }},{{ r }} 0 0 1 {{ r }},0
+                                    Z"
+                                    fill="#add8e6" stroke="#333" />
+                            {%- else %}
+                                <rect class="box" width="{{ node_width }}" height="{{ node_height }}" rx="6" ry="6" fill="pink" stroke="pink" />
+                            {%- endif %}
+                        </g>
+                    {%- endfor %}
+                {%- endif %}
+
+                {# Render main node shape on top #}
+                {%- if node.is_parallel %}
+                    {%- set top_margin = 5 %}
+                    {%- set r = 6 %}
+                    <path class="box" d="
+                        M{{ top_margin + r }},0
+                        L{{ node_width - top_margin - r }},0
+                        A{{ r }},{{ r }} 0 0 1 {{ node_width - top_margin }},{{ r }}
+                        L{{ node_width }},{{ node_height - r }}
+                        A{{ r }},{{ r }} 0 0 1 {{ node_width - r }},{{ node_height }}
+                        L{{ r }},{{ node_height }}
+                        A{{ r }},{{ r }} 0 0 1 0,{{ node_height - r }}
+                        L{{ top_margin }},{{ r }}
+                        A{{ r }},{{ r }} 0 0 1 {{ top_margin + r }},0
+                        Z"
+                        fill="#add8e6" stroke="#333" />
+                {%- elif node.merge_func is not none %}
+                    {%- set bottom_margin = 5 %}
+                    {%- set r = 6 %}
+                    <path class="box" d="
+                        M{{ r }},0
+                        L{{ node_width - r }},0
+                        A{{ r }},{{ r }} 0 0 1 {{ node_width }},{{ r }}
+                        L{{ node_width - bottom_margin }},{{ node_height - r }}
+                        A{{ r }},{{ r }} 0 0 1 {{ node_width - bottom_margin - r }},{{ node_height }}
+                        L{{ bottom_margin + r }},{{ node_height }}
+                        A{{ r }},{{ r }} 0 0 1 {{ bottom_margin }},{{ node_height - r }}
+                        L0,{{ r }}
+                        A{{ r }},{{ r }} 0 0 1 {{ r }},0
+                        Z"
+                        fill="#add8e6" stroke="#333" />
+                {%- else %}
+                    <rect class="box" width="{{ node_width }}" height="{{ node_height }}" rx="6" ry="6" fill="#add8e6" stroke="#333" />
+                {%- endif %}
+
                 <text class="label" x="{{ node_width/2 }}" y="{{ node_height/2 + 3 }}" text-anchor="middle" font-family="sans-serif" font-size="11">
                     {{ node.name }}
                 </text>
             </g>
-        {% endfor %}
+        {%- endfor %}
+
     </g>
 </svg>
+
 
 <script>
     /* ***************

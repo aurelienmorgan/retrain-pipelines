@@ -10,6 +10,7 @@ import functools
 import concurrent.futures
 
 from uuid import UUID, uuid4
+from collections import deque
 from datetime import datetime, timezone
 
 from typing import Callable, List, Optional, Union, \
@@ -468,7 +469,7 @@ class DAG(BaseModel):
     ) -> List[Dict[str, Any]]:
         """
         Returns a human-readable, (optionally serializable)
-        DAG structure.
+        DAG structure using breadth-first traversal.
 
         Example output (not all TaskType attributes shown):
         [
@@ -480,33 +481,39 @@ class DAG(BaseModel):
         """
         visited = set()
         result = []
-        def dump_task(task):
-            if task.tasktype_uuid in visited:
-                return
-            visited.add(task.tasktype_uuid)
-            result.append(
-                {
-                    "uuid": str(task.tasktype_uuid) \
-                            if serializable else task.tasktype_uuid,
-                    "name": task.name,
-                    "docstring": None,
-                    "is_parallel": task.is_parallel,
-                    "merge_func": (
-                        {"name": task.merge_func.__name__,
-                         "docstring": None}
-                        if task.merge_func is not None
-                        else None
-                    ),
-                    "task_group": task.task_group.name \
-                                  if task.task_group else None,
-                    "children": [str(c.tasktype_uuid) for c in task.children]
-                }
-            )
-            for child in task.children:
-                dump_task(child)
+        queue = deque(self.roots)
 
-        for root in self.roots:
-            dump_task(root)
+        while queue:
+            # Process all nodes at current level
+            current_level_size = len(queue)
+            for _ in range(current_level_size):
+                task = queue.popleft()
+
+                if task.tasktype_uuid in visited:
+                    continue
+                visited.add(task.tasktype_uuid)
+
+                result.append(
+                    {
+                        "uuid": str(task.tasktype_uuid) if serializable else task.tasktype_uuid,
+                        "name": task.name,
+                        "docstring": task.func.__doc__,
+                        "is_parallel": task.is_parallel,
+                        "merge_func": (
+                            {"name": task.merge_func.__name__, "docstring": task.merge_func.__doc__}
+                            if task.merge_func is not None
+                            else None
+                        ),
+                        "task_group": task.task_group.name if task.task_group else None,
+                        "children": [str(c.tasktype_uuid) for c in task.children]
+                    }
+                )
+
+                # Enqueue children to process in next level
+                for child in task.children:
+                    if child.tasktype_uuid not in visited:
+                        queue.append(child)
+
         return result
 
 
