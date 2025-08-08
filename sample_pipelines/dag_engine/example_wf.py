@@ -77,6 +77,7 @@ def retrain_pipeline():
 
 
 if __name__ == "__main__":
+    # print(f"to_tasktypes_list : {retrain_pipeline.to_tasktypes_list(serializable=True)}")
     # Render the DAG
     svg_fullname = os.path.join(os.environ["RP_ARTIFACTS_STORE"], "dag.html")
     render_svg(retrain_pipeline, svg_fullname)

@@ -18,7 +18,7 @@
 
         {% set id_to_node = {} %}
         {% for node in nodes %}
-            {% set _ = id_to_node.update({node.id: node}) %}
+            {% set _ = id_to_node.update({node.uuid: node}) %}
         {% endfor %}
 
         {# Determine depth by DFS #}
@@ -33,7 +33,7 @@
                 {{ visit(child, depth + 1) }}
             {% endfor %}
         {% endmacro %}
-        {{ visit(nodes[0].id) }}
+        {{ visit(nodes[0].uuid) }}
 
         {% set depth_to_nodes = {} %}
         {% for node_id, dlist in levels.items() %}
@@ -74,10 +74,10 @@
 
         {# Draw arrows #}
         {% for node in nodes %}
-            {% set src = id_to_pos[node.id] %}
+            {% set src = id_to_pos[node.uuid] %}
             {% for child_id in node.children %}
                 {% set tgt = id_to_pos[child_id] %}
-                <line id="arrow-{{ node.id }}-{{ child_id }}"
+                <line id="arrow-{{ node.uuid }}-{{ child_id }}"
                     x1="{{ src.x + node_width/2 }}" y1="{{ src.y + node_height }}"
                     x2="{{ tgt.x + node_width/2 }}" y2="{{ tgt.y }}"
                     marker-end="url(#arrow)" />
@@ -86,8 +86,8 @@
 
         {# Draw nodes #}
         {% for node in nodes %}
-            {% set pos = id_to_pos[node.id] %}
-            <g class="node" id="node-{{ node.id }}" transform="translate({{ pos.x }}, {{ pos.y }})" style="cursor: grab;">
+            {% set pos = id_to_pos[node.uuid] %}
+            <g class="node" id="node-{{ node.uuid }}" transform="translate({{ pos.x }}, {{ pos.y }})" style="cursor: grab;">
                 <rect class="box" width="{{ node_width }}" height="{{ node_height }}" rx="6" ry="6" fill="#add8e6" stroke="#333"></rect>
                 <text class="label" x="{{ node_width/2 }}" y="{{ node_height/2 + 3 }}" text-anchor="middle" font-family="sans-serif" font-size="11">
                     {{ node.name }}

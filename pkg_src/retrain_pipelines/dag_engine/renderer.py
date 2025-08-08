@@ -17,7 +17,8 @@ def render_svg(dag: DAG, filename="dag.html"):
         "web_console", "utils", "execution")
     env = Environment(loader=FileSystemLoader(template_dir))
     template = env.get_template("svg_template.html")
-    rendering_content = template.render(nodes=dag.to_nodes_list())
+    rendering_content = template.render(
+        nodes=dag.to_tasktypes_list(serializable=True))
 
     static_dir = os.path.join(
         os.path.dirname(__file__), "web_console", "static")

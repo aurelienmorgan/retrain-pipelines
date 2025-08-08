@@ -4,17 +4,18 @@ import logging
 import asyncio
 import requests
 
+from uuid import UUID
 from typing import List, Optional
 from datetime import datetime, date
 
-from sqlalchemy import create_engine, select, \
-    and_, desc, case, func, event
+from sqlalchemy import create_engine, Uuid, \
+    select, and_, desc, case, func, event
 from sqlalchemy.orm import scoped_session, sessionmaker
 from sqlalchemy.ext.asyncio import create_async_engine, \
     AsyncSession
 
 from .model import Base, Execution, ExecutionExt, \
-    Task
+    TaskType, Task
 
 logger = logging.getLogger()
 
@@ -66,7 +67,8 @@ class DAOBase:
         new_entity = entity_class(**kwargs)
         session.add(new_entity)
         session.flush()
-        entity_id = new_entity.id
+        entity_id = getattr(new_entity, "id", None) \
+                    or getattr(new_entity, "uuid", None)
         session.commit()
         session.close()
         return entity_id
@@ -181,6 +183,9 @@ class DAO(DAOBase):
 
     def add_execution(self, **kwargs) -> int:
         return self._add_entity(Execution, **kwargs)
+
+    def add_tasktype(self, **kwargs) -> Uuid:
+        return self._add_entity(TaskType, **kwargs)
 
     def add_task(self, **kwargs) -> int:
         return self._add_entity(Task, **kwargs)
@@ -315,16 +320,46 @@ class AsyncDAO(DAOBase):
 
             return executions_ext
 
-    async def get_execution_nodes_list(
-        self, execution_id: int
+    async def get_execution_tasktypes_list(
+        self, execution_id: int,
+        serializable: bool = False
     ) -> Optional[List[dict]]:
-        statement = select(Execution.nodes_list) \
-                    .where(Execution.id == execution_id)
+        """
+        Return all TaskType rows for the given execution_id
+        as list of dicts.
+
+        Params:
+            - execution_id (int):
+                The Execution.id to filter TaskTypes on.
+            - serializable (bool):
+                If True, UUIDs are converted to strings
+                for JSON-safe output.
+        """
+        statement = (
+            select(TaskType)
+            .where(TaskType.exec_id == execution_id)
+            .order_by(TaskType.order)
+        )
 
         async with self._get_session() as session:
             result = await session.execute(statement)
-            row = result.scalar_one_or_none()
-            return row
+            rows = result.scalars().all()
+
+            if not rows:
+                return None
+
+            # Convert ORM objects to pure dictionaries
+            out_list = []
+            for row in rows:
+                row_dict = {}
+                for col in TaskType.__table__.columns:
+                    val = getattr(row, col.name)
+                    if serializable and isinstance(val, UUID):
+                        val = str(val)
+                    row_dict[col.name] = val
+                out_list.append(row_dict)
+
+            return out_list
 
 
 #////////////////////////////////////////////////////////////////////////////

@@ -2,7 +2,6 @@
 import os
 import re
 import sys
-import uuid
 import getpass
 import inspect
 import logging
@@ -10,6 +9,7 @@ import textwrap
 import functools
 import concurrent.futures
 
+from uuid import UUID, uuid4
 from datetime import datetime, timezone
 
 from typing import Callable, List, Optional, Union, \
@@ -51,8 +51,8 @@ class Task(BaseModel):
     func: Callable
     is_parallel: bool = False
     merge_func: Optional[Callable] = Field(default=None)
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()),
-                    description="Unique ID for graph rendering")
+    tasktype_uuid: UUID = Field(default_factory=uuid4,
+                                description="Unique ID for graph rendering")
     exec_id: Optional[int] = Field(default=None)
     task_id: Optional[int] = Field(default=None)
 
@@ -121,7 +121,7 @@ class Task(BaseModel):
             dao = DAO(os.environ["RP_METADATASTORE_URL"])
             self.task_id = dao.add_task(
                 exec_id=self.exec_id,
-                name=self.name,
+                tasktype_uuid=self.tasktype_uuid,
                 rank=self.rank,
                 start_timestamp=datetime.now(timezone.utc)
             )
@@ -175,7 +175,7 @@ class Task(BaseModel):
             if self.merge_func is None :
                 self.task_id = dao.add_task(
                     exec_id=self.exec_id,
-                    name=self.name,
+                    tasktype_uuid=self.tasktype_uuid,
                     rank=rank,
                     start_timestamp=datetime.now(timezone.utc)
                 )
@@ -260,18 +260,18 @@ class Task(BaseModel):
                 self._add_child(child_element)
 
     def __hash__(self):
-        return hash(self.id)
+        return hash(self.tasktype_uuid)
 
     def __eq__(self, other):
         if isinstance(other, Task):
-            return self.id == other.id
+            return self.tasktype_uuid == other.tasktype_uuid
         return False
 
     def __str__(self):
         return (f"Task({self.name!r}, is_parallel={self.is_parallel}, "
                 f"merge_func={{self.merge_func.__name__!r if self.merge_func else None}}, "
-                f"id={self.id!r}, exec_id={self.exec_id!r}, task_id={self.task_id!r}, "
-                f"rank={self.rank!r})")
+                f"tasktype_uuid={self.tasktype_uuid!r}, exec_id={self.exec_id!r}, "
+                f"task_id={self.task_id!r}, rank={self.rank!r})")
 
 
     def __repr__(self):
@@ -301,10 +301,8 @@ class TaskGroup(BaseModel):
         default_factory=list,
         description="List of consituent items: tasks and/or taskgroups"
     )
-    id: str = Field(
-        default_factory=lambda: str(uuid.uuid4()),
-        description="Unique ID for graph rendering"
-    )
+    uuid: UUID = Field(default_factory=uuid4,
+                       description="Unique ID for graph rendering")
     exec_id: Optional[int] = Field(default = None)
 
 
@@ -399,11 +397,11 @@ class TaskGroup(BaseModel):
                     element._add_child(child)
 
     def __hash__(self):
-        return hash(self.id)
+        return hash(self.uuid)
 
     def __eq__(self, other):
         if isinstance(other, TaskGroup):
-            return self.id == other.id
+            return self.uuid == other.uuid
         return False
 
     def _get_elements_names(self):
@@ -451,11 +449,13 @@ class DAG(BaseModel):
         dao = DAO(os.environ["RP_METADATASTORE_URL"])
         self.exec_id = dao.add_execution(
             name=caller_module_name,
-            nodes_list= self.to_nodes_list(), # for dag rendering
             username=getpass.getuser(),
             ui_css=self.ui_css.__dict__ if self.ui_css else None,
             start_timestamp=datetime.now(timezone.utc)
         )
+        for i, tasktype in enumerate(self.to_tasktypes_list()):
+            dao.add_tasktype(exec_id=self.exec_id, order=i,
+                             **tasktype)
 
         for root in self.roots:
             root.exec_id = self.exec_id
@@ -463,31 +463,43 @@ class DAG(BaseModel):
                 DAG._cascade_exec_id(self.exec_id, child)
 
 
-    def to_nodes_list(self) -> List[Dict[str, Any]]:
+    def to_tasktypes_list(
+        self, serializable: bool = False
+    ) -> List[Dict[str, Any]]:
         """
-        Returns a human-readable, serializable DAG structure.
+        Returns a human-readable, (optionally serializable)
+        DAG structure.
 
-        Example output:
+        Example output (not all TaskType attributes shown):
         [
-            {"id": 1, "name": "Root", "children": [2, 3]},
-            {"id": 2, "name": "Child A", "children": [4]},
-            {"id": 3, "name": "Child B", "children": []},
-            {"id": 4, "name": "Leaf", "children": []}
+            {"uuid": 1, "name": "Root", "children": [2, 3]},
+            {"uuid": 2, "name": "Child A", "children": [4]},
+            {"uuid": 3, "name": "Child B", "children": []},
+            {"uuid": 4, "name": "Leaf", "children": []}
         ]
         """
         visited = set()
         result = []
         def dump_task(task):
-            if task.id in visited:
+            if task.tasktype_uuid in visited:
                 return
-            visited.add(task.id)
+            visited.add(task.tasktype_uuid)
             result.append(
                 {
-                    "id": task.id,
+                    "uuid": str(task.tasktype_uuid) \
+                            if serializable else task.tasktype_uuid,
                     "name": task.name,
+                    "docstring": None,
+                    "is_parallel": task.is_parallel,
+                    "merge_func": (
+                        {"name": task.merge_func.__name__,
+                         "docstring": None}
+                        if task.merge_func is not None
+                        else None
+                    ),
                     "task_group": task.task_group.name \
                                   if task.task_group else None,
-                    "children": [c.id for c in task.children]
+                    "children": [str(c.tasktype_uuid) for c in task.children]
                 }
             )
             for child in task.children:

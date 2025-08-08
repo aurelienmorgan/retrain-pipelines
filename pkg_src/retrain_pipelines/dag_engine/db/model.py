@@ -9,7 +9,9 @@ from datetime import datetime, timezone, \
 
 from sqlalchemy import ForeignKey, Column, \
     Integer, String, DateTime, Boolean, \
-    JSON, CheckConstraint
+    Uuid, JSON, PrimaryKeyConstraint, \
+    ForeignKeyConstraint, CheckConstraint, \
+    UniqueConstraint
 
 from sqlalchemy.orm import relationship
 from sqlalchemy.ext.declarative import declarative_base
@@ -33,12 +35,15 @@ class Execution(Base):
 
     tasks = relationship(
         "Task",
+        back_populates="execution",
+        viewonly=True
+    )
+    tasktypes = relationship(
+        "TaskType",
         back_populates="execution"
     )
 
     ui_css = Column(JSON, nullable=True)
-    # for rendering (known at DAG-declaration time)
-    nodes_list = Column(JSON, nullable=False)
 
     def __init__(self, *args, **kwargs):
         # Support dict as the ONLY positional argument
@@ -170,27 +175,92 @@ class ExecutionExt(Execution):
         return result
 
 
+class TaskType(Base):
+    """Basically holder of DAG-declaration time
+    task-related metadata (task name, task ui_css,
+    task docstring), i.e. equivalent to a DAG node."""
+    __tablename__ = 'tasktypes'
+
+    uuid = Column(Uuid, nullable=False)
+    exec_id = Column(Integer, ForeignKey('executions.id'),
+        nullable=False)
+    execution = relationship(
+        "Execution",
+        back_populates="tasktypes"
+    )
+    order =  Column(Integer, nullable=False) # topological order
+    __table_args__ = (
+        PrimaryKeyConstraint('exec_id', 'uuid',
+                             name='tasktype_pk'),
+        UniqueConstraint('exec_id', 'order',
+                         name='uq_tasktypes_exec_order')
+    )
+
+    tasks = relationship(
+        "Task",
+        back_populates="tasktype"
+    )
+
+    name = Column(String, nullable=False)
+
+    docstring = Column(String, nullable=True)
+
+    ui_css = Column(JSON, nullable=True)
+
+    is_parallel = Column(Boolean, nullable=False)
+    merge_func = Column(JSON, nullable=True)
+    task_group = Column(String, nullable=True)
+    children = Column(JSON, nullable=False)  # ARRAY(str(Uuid))
+
+
 class Task(Base):
+    """Individual instances of tasktypes,
+    living at DAG execution runtime.
+
+    e.g. a tasktype can be part of a parallel line,
+    in which case several instances of Task
+    having such a tasktype exist,
+    each dealing with a subpart of their
+    prior non-parallel task outputs.
+    """
     __tablename__ = 'tasks'
 
     id = Column(Integer, primary_key=True)
 
-    exec_id = Column(Integer, ForeignKey('executions.id'), nullable=False)
-    execution = relationship(
-        "Execution",
+    tasktype_uuid = Column(Uuid, nullable=False)
+
+    exec_id = Column(Integer, ForeignKey('executions.id'),
+                     nullable=False)
+
+    tasktype = relationship(
+        "TaskType",
+        primaryjoin=(
+            "and_(Task.exec_id==TaskType.exec_id, " +
+            "Task.tasktype_uuid==TaskType.uuid)"
+        ),
         back_populates="tasks"
     )
-    name = Column(String, nullable=False)
+    execution = relationship(
+        "Execution",
+        back_populates="tasks",
+        viewonly=True
+    )
+
     rank = Column(JSON, nullable=True)  # ARRAY(Integer)
 
-    _start_timestamp = Column('start_timestamp', DateTime(timezone=True), nullable=False)
-    _end_timestamp = Column('end_timestamp', DateTime(timezone=True), nullable=True)
+    _start_timestamp = Column('start_timestamp',
+        DateTime(timezone=True), nullable=False)
+    _end_timestamp = Column('end_timestamp',
+        DateTime(timezone=True), nullable=True)
 
     failed = Column(Boolean, nullable=True)
 
-    ui_css = Column(JSON, nullable=True)
-
     __table_args__ = (
+        ForeignKeyConstraint(
+            ['exec_id', 'tasktype_uuid'],
+            ['tasktypes.exec_id', 'tasktypes.uuid'],
+            name='task_fk_tasktype'
+        ),
         CheckConstraint(
             '(end_timestamp IS NULL AND failed IS NULL) OR '
             '(end_timestamp IS NOT NULL AND failed IS NOT NULL)',
