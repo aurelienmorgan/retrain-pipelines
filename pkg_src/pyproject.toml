@@ -62,6 +62,7 @@ dependencies = [
     "jinja2>=3",
     "scikit-learn>=1",
     "numpy>=1.17.3,<2",
+    "pillow>=11.0.0",
     "regex>=2022.10.31",
     "rich>=14.0.0",
     "alembic>=1.16.2"

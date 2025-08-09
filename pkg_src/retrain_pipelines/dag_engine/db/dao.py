@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, \
     AsyncSession
 
 from .model import Base, Execution, ExecutionExt, \
-    TaskType, Task
+    TaskType, Task, TaskGroup
 
 logger = logging.getLogger()
 
@@ -190,6 +190,9 @@ class DAO(DAOBase):
     def add_task(self, **kwargs) -> int:
         return self._add_entity(Task, **kwargs)
 
+    def add_taskgroup(self, **kwargs) -> Uuid:
+        return self._add_entity(TaskGroup, **kwargs)
+
     def update_execution(self, id, **kwargs) -> Execution:
         """Update execution row’s fields by its id."""
         return self._update_entity(Execution, entity_id=id, **kwargs)
@@ -330,7 +333,7 @@ class AsyncDAO(DAOBase):
 
         Params:
             - execution_id (int):
-                The Execution.id to filter TaskTypes on.
+                The Execution.id to filter TaskType items on.
             - serializable (bool):
                 If True, UUIDs are converted to strings
                 for JSON-safe output.
@@ -353,6 +356,47 @@ class AsyncDAO(DAOBase):
             for row in rows:
                 row_dict = {}
                 for col in TaskType.__table__.columns:
+                    val = getattr(row, col.name)
+                    if serializable and isinstance(val, UUID):
+                        val = str(val)
+                    row_dict[col.name] = val
+                out_list.append(row_dict)
+
+            return out_list
+
+    async def get_execution_taskgroups_list(
+        self, execution_id: int,
+        serializable: bool = False
+    ) -> Optional[List[dict]]:
+        """
+        Return all TaskGroup rows for the given execution_id
+        as list of dicts.
+
+        Params:
+            - execution_id (int):
+                The Execution.id to filter TaskGroup items on.
+            - serializable (bool):
+                If True, UUIDs are converted to strings
+                for JSON-safe output.
+        """
+        statement = (
+            select(TaskGroup)
+            .where(TaskGroup.exec_id == execution_id)
+            .order_by(TaskGroup.order)
+        )
+
+        async with self._get_session() as session:
+            result = await session.execute(statement)
+            rows = result.scalars().all()
+
+            if not rows:
+                return None
+
+            # Convert ORM objects to pure dictionaries
+            out_list = []
+            for row in rows:
+                row_dict = {}
+                for col in TaskGroup.__table__.columns:
                     val = getattr(row, col.name)
                     if serializable and isinstance(val, UUID):
                         val = str(val)

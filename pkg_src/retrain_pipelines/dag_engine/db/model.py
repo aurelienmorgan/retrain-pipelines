@@ -27,6 +27,7 @@ class Execution(Base):
 
     id = Column(Integer, primary_key=True)
     name = Column(String, nullable=False)
+    docstring = Column(String, nullable=True)
     username = Column(String, nullable=False)
     _start_timestamp = Column('start_timestamp',
         DateTime(timezone=True), nullable=False)
@@ -58,6 +59,7 @@ class Execution(Base):
             kwargs = {**data, **kwargs}
             kwargs["id"] = int(kwargs["id"])
             kwargs["name"] = str(kwargs["name"])
+            kwargs["docstring"] = str(kwargs["docstring"])
             kwargs["username"] = str(kwargs["username"])
             kwargs["_start_timestamp"] = \
                 parse_datetime(kwargs["start_timestamp"])
@@ -291,4 +293,32 @@ class Task(Base):
     @end_timestamp.setter
     def end_timestamp(self, value: datetime):
         self._end_timestamp = value
+
+
+class TaskGroup(Base):
+    """Can hold TaskType and Taskgroup elements."""
+    __tablename__ = 'taskgroups'
+
+    uuid = Column(Uuid, nullable=False)
+    exec_id = Column(Integer, ForeignKey('executions.id'),
+        nullable=False)
+    # execution = relationship(
+        # "Execution",
+        # back_populates="taskgroups"
+    # )
+    order =  Column(Integer, nullable=False) # topological order
+    __table_args__ = (
+        PrimaryKeyConstraint('exec_id', 'uuid',
+                             name='taskgroup_pk'),
+        UniqueConstraint('exec_id', 'order',
+                         name='uq_taskgroups_exec_order')
+    )
+
+    name = Column(String, nullable=False)
+
+    docstring = Column(String, nullable=True)
+
+    ui_css = Column(JSON, nullable=True)
+
+    elements = Column(JSON, nullable=False)  # ARRAY(str(Uuid))
 

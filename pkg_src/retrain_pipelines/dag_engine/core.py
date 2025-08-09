@@ -14,7 +14,7 @@ from collections import deque
 from datetime import datetime, timezone
 
 from typing import Callable, List, Optional, Union, \
-    Dict, Any
+    Dict, Any, Tuple
 from pydantic import BaseModel, Field, PrivateAttr, \
     field_validator
 
@@ -52,6 +52,10 @@ class Task(BaseModel):
     func: Callable
     is_parallel: bool = False
     merge_func: Optional[Callable] = Field(default=None)
+
+    docstring: Optional[str] = Field(default=None)
+    ui_css: Optional["UiCss"] = Field(default=None)
+
     tasktype_uuid: UUID = Field(default_factory=uuid4,
                                 description="Unique ID for graph rendering")
     exec_id: Optional[int] = Field(default=None)
@@ -233,6 +237,7 @@ class Task(BaseModel):
 
         return wrapper
 
+
     def __rshift__(self, other):
         """Operator overloading for '>>' to connect tasks in the DAG.
 
@@ -248,6 +253,7 @@ class Task(BaseModel):
             return other
         else:
             raise TypeError("The right-hand side of '>>' must be a Task object, or a TaskGroup object.")
+
 
     def _add_child(self, child):
         """Recursively add children to the task."""
@@ -274,7 +280,6 @@ class Task(BaseModel):
                 f"tasktype_uuid={self.tasktype_uuid!r}, exec_id={self.exec_id!r}, "
                 f"task_id={self.task_id!r}, rank={self.rank!r})")
 
-
     def __repr__(self):
         return f"{self.__str__()}"
 
@@ -298,6 +303,9 @@ class TaskGroup(BaseModel):
     and task2's result and task3's result respectively and in that order.
     """
     name: str = Field(..., description="Name of the task group (required)")
+    docstring: Optional[str] = Field(default=None)
+    ui_css: Optional["UiCss"] = Field(default=None)
+
     elements: List[Union["Task", "TaskGroup"]] = Field(
         default_factory=list,
         description="List of consituent items: tasks and/or taskgroups"
@@ -305,7 +313,6 @@ class TaskGroup(BaseModel):
     uuid: UUID = Field(default_factory=uuid4,
                        description="Unique ID for graph rendering")
     exec_id: Optional[int] = Field(default = None)
-
 
     # Private attributes (not validated or included in .dict())
     _log: logging.Logger = PrivateAttr(default_factory=logging.getLogger)
@@ -424,6 +431,7 @@ class DAG(BaseModel):
           are populated at execution time.
     """
     roots: List["Task"] = Field(...)
+    docstring: Optional[str] = Field(default=None)
     ui_css: Optional["UiCss"] = Field(default=None)
 
     exec_id: Optional[int] = Field(default=None)
@@ -450,13 +458,18 @@ class DAG(BaseModel):
         dao = DAO(os.environ["RP_METADATASTORE_URL"])
         self.exec_id = dao.add_execution(
             name=caller_module_name,
+            docstring=self.docstring,
             username=getpass.getuser(),
             ui_css=self.ui_css.__dict__ if self.ui_css else None,
             start_timestamp=datetime.now(timezone.utc)
         )
-        for i, tasktype in enumerate(self.to_tasktypes_list()):
+        tasktypes_list, taskgroups_list = self.to_elements_lists()
+        for i, tasktype in enumerate(tasktypes_list):
             dao.add_tasktype(exec_id=self.exec_id, order=i,
                              **tasktype)
+        for i, taskgroup in enumerate(taskgroups_list):
+            dao.add_taskgroup(exec_id=self.exec_id, order=i,
+                             **taskgroup)
 
         for root in self.roots:
             root.exec_id = self.exec_id
@@ -464,24 +477,31 @@ class DAG(BaseModel):
                 DAG._cascade_exec_id(self.exec_id, child)
 
 
-    def to_tasktypes_list(
+    def to_elements_lists(
         self, serializable: bool = False
-    ) -> List[Dict[str, Any]]:
+    ) -> (List[Dict[str, Any]], List[Dict[str, Any]]):
         """
         Returns a human-readable, (optionally serializable)
         DAG structure using breadth-first traversal.
+        Two topologically-ordered lists
 
-        Example output (not all TaskType attributes shown):
+        Example output (not all TaskType & TaskGroup
+        attributes shown):
         [
             {"uuid": 1, "name": "Root", "children": [2, 3]},
             {"uuid": 2, "name": "Child A", "children": [4]},
             {"uuid": 3, "name": "Child B", "children": []},
             {"uuid": 4, "name": "Leaf", "children": []}
+        ],
+        [
+            {"uuid": 1, "name": "taskgroup A", "elements": [2, 3]}
         ]
         """
         visited = set()
-        result = []
+        tasktypes_list = []
         queue = deque(self.roots)
+
+        taskgroups_dict = {}
 
         while queue:
             # Process all nodes at current level
@@ -493,7 +513,7 @@ class DAG(BaseModel):
                     continue
                 visited.add(task.tasktype_uuid)
 
-                result.append(
+                tasktypes_list.append(
                     {
                         "uuid": str(task.tasktype_uuid) if serializable else task.tasktype_uuid,
                         "name": task.name,
@@ -509,12 +529,24 @@ class DAG(BaseModel):
                     }
                 )
 
+                if task.task_group and task.task_group.uuid not in taskgroups_dict:
+                    taskgroups_dict[task.task_group.uuid] = {
+                        "uuid": task.task_group.uuid,
+                        "name": task.task_group.name,
+                        "docstring": task.task_group.docstring,
+                        "elements": [
+                            str(e.tasktype_uuid) if isinstance(e, Task)
+                            else str(e.uuid) # inner TaskGroup
+                            for e in task.task_group.elements
+                        ]
+                    }
+
                 # Enqueue children to process in next level
                 for child in task.children:
                     if child.tasktype_uuid not in visited:
                         queue.append(child)
 
-        return result
+        return tasktypes_list, list(taskgroups_dict.values())
 
 
     @staticmethod
@@ -544,14 +576,20 @@ class DAG(BaseModel):
 # ---- Decorators for Task Declaration ----
 
 
-def task(func=None, *, merge_func=None):
+def task(func=None, *, merge_func=None, ui_css=None):
     """Decorator for regular (non-parallel) tasks.
 
     Optionally takes a merge_func for merging results from parallel tasks.
     """
 
     def decorator(f):
-        t = Task(func=f, is_parallel=False, merge_func=merge_func)
+        t = Task(
+            func=f,
+            is_parallel=False,
+            merge_func=merge_func,
+            docstring=f.__doc__,
+            ui_css=ui_css
+        )
 
         @functools.wraps(f)
         def wrapper(*args, **kwargs):
@@ -563,11 +601,17 @@ def task(func=None, *, merge_func=None):
     return decorator(func) if func else decorator
 
 
-def parallel_task(func=None):
+def parallel_task(func=None, ui_css=None):
     """Decorator for parallel tasks."""
 
     def decorator(f):
-        t = Task(func=f, is_parallel=True, merge_func=None)
+        t = Task(
+            func=f,
+            is_parallel=True,
+            merge_func=None,
+            docstring=f.__doc__,
+            ui_css=ui_css
+        )
 
         @functools.wraps(f)
         def wrapper(*args, **kwargs):
@@ -579,7 +623,7 @@ def parallel_task(func=None):
     return decorator(func) if func else decorator
 
 
-def taskgroup(func):
+def taskgroup(func=None, *, ui_css=None):
     """Decorator for task groups."""
     def decorator(f):
         try:
@@ -596,14 +640,21 @@ def taskgroup(func):
                     f"taskgroup `{taskgroup_name}` failed to construct"
                 ) from ex
 
-        if isinstance(tasks, (list, tuple)):
-            tg = TaskGroup(f.__name__, *tasks)
-        else:
-            tg = TaskGroup(f.__name__, tasks)
+        tg = TaskGroup(
+            name=f.__name__,
+            docstring=f.__doc__,
+            ui_css=ui_css,
+            *tasks if isinstance(tasks, (list, tuple)) else tasks
+        )
 
         return tg
 
-    return decorator(func)
+    if func is None:
+        # Called as @dag(...) with optional arguments
+        return decorator
+    else:
+        # Called as @dag without parentheses
+        return decorator(func)
 
 
 def dag(func=None, *, ui_css=None):
@@ -612,6 +663,7 @@ def dag(func=None, *, ui_css=None):
         task_anchor = f()
         pipeline = DAG(
             task_anchor=task_anchor,
+            docstring=f.__doc__,
             ui_css=ui_css
         )
         return pipeline

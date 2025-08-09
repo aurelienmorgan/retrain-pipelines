@@ -1,4 +1,41 @@
 
+{# Macros for trapezoid shapes to avoid code duplication #}
+{% macro trapezoid_entry(node_width, node_height, top_margin=5, r=6, fill="#add8e6", stroke="#333") -%}
+<path class="box" d="
+    M{{ top_margin + r }},0
+    L{{ node_width - top_margin - r }},0
+    A{{ r }},{{ r }} 0 0 1 {{ node_width - top_margin }},{{ r }}
+    L{{ node_width }},{{ node_height - r }}
+    A{{ r }},{{ r }} 0 0 1 {{ node_width - r }},{{ node_height }}
+    L{{ r }},{{ node_height }}
+    A{{ r }},{{ r }} 0 0 1 0,{{ node_height - r }}
+    L{{ top_margin }},{{ r }}
+    A{{ r }},{{ r }} 0 0 1 {{ top_margin + r }},0
+    Z"
+    fill="{{ fill }}" stroke="{{ stroke }}" />
+{%- endmacro %}
+
+{% macro trapezoid_exit(node_width, node_height, bottom_margin=5, r=6, fill="#add8e6", stroke="#333") -%}
+<path class="box" d="
+    M{{ r }},0
+    L{{ node_width - r }},0
+    A{{ r }},{{ r }} 0 0 1 {{ node_width }},{{ r }}
+    L{{ node_width - bottom_margin }},{{ node_height - r }}
+    A{{ r }},{{ r }} 0 0 1 {{ node_width - bottom_margin - r }},{{ node_height }}
+    L{{ bottom_margin + r }},{{ node_height }}
+    A{{ r }},{{ r }} 0 0 1 {{ bottom_margin }},{{ node_height - r }}
+    L0,{{ r }}
+    A{{ r }},{{ r }} 0 0 1 {{ r }},0
+    Z"
+    fill="{{ fill }}" stroke="{{ stroke }}" />
+{%- endmacro %}
+
+{% macro rect_box(node_width, node_height, rx=6, ry=6, fill="#add8e6", stroke="#333") -%}
+<rect class="box" width="{{ node_width }}" height="{{ node_height }}" rx="{{ rx }}" ry="{{ ry }}" fill="{{ fill }}" stroke="{{ stroke }}" />
+{%- endmacro %}
+
+
+
 <svg id="dag" width="100%">
     <defs>
         <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
@@ -53,7 +90,7 @@
         {%- set total_width = (max_nodes_per_level - 1) * spacing_x %}
 
         {# Calculate starting offset to center the entire DAG #}
-        {%- set svg_width = 800 %}  {# Approximate SVG viewport width - varies with webbrowser window size #}
+        {%- set svg_width = 800 %}  {# Approximate SVG viewport width - varies with browser window size #}
         {%- set dag_start_x = (svg_width - total_width) / 2 %}
         {%- if dag_start_x < spacing_x %}
             {%- set dag_start_x = spacing_x %}
@@ -101,8 +138,7 @@
             {%- endif %}
 
             <g class="node" id="node-{{ node.uuid }}" transform="translate({{ pos.x }}, {{ pos.y }})" style="cursor: grab;">
-
-            <!-- DEBUG: node {{ node.uuid }} parallel_depth={{ state.parallel_depth }} is_parallel={{ node.is_parallel }} merge_func={{ node.merge_func is not none }} -->
+                <!-- DEBUG: node {{ node.uuid }} parallel_depth={{ state.parallel_depth }} is_parallel={{ node.is_parallel }} merge_func={{ node.merge_func is not none }} -->
 
                 {# Render one full shifted underlay per nesting level for all nodes except merges #}
                 {%- if state.parallel_depth > 0 %}
@@ -111,37 +147,11 @@
                         {%- set offset = 3 * level %}
                         <g transform="translate({{ offset }}, {{ offset }})">
                             {%- if node.is_parallel %}
-                                {%- set top_margin = 5 %}
-                                {%- set r = 6 %}
-                                <path class="box" d="
-                                    M{{ top_margin + r }},0
-                                    L{{ node_width - top_margin - r }},0
-                                    A{{ r }},{{ r }} 0 0 1 {{ node_width - top_margin }},{{ r }}
-                                    L{{ node_width }},{{ node_height - r }}
-                                    A{{ r }},{{ r }} 0 0 1 {{ node_width - r }},{{ node_height }}
-                                    L{{ r }},{{ node_height }}
-                                    A{{ r }},{{ r }} 0 0 1 0,{{ node_height - r }}
-                                    L{{ top_margin }},{{ r }}
-                                    A{{ r }},{{ r }} 0 0 1 {{ top_margin + r }},0
-                                    Z"
-                                    fill="#add8e6" stroke="#333" />
+                                {{ trapezoid_entry(node_width, node_height) }}
                             {%- elif node.merge_func is not none %}
-                                {%- set bottom_margin = 5 %}
-                                {%- set r = 6 %}
-                                <path class="box" d="
-                                    M{{ r }},0
-                                    L{{ node_width - r }},0
-                                    A{{ r }},{{ r }} 0 0 1 {{ node_width }},{{ r }}
-                                    L{{ node_width - bottom_margin }},{{ node_height - r }}
-                                    A{{ r }},{{ r }} 0 0 1 {{ node_width - bottom_margin - r }},{{ node_height }}
-                                    L{{ bottom_margin + r }},{{ node_height }}
-                                    A{{ r }},{{ r }} 0 0 1 {{ bottom_margin }},{{ node_height - r }}
-                                    L0,{{ r }}
-                                    A{{ r }},{{ r }} 0 0 1 {{ r }},0
-                                    Z"
-                                    fill="#add8e6" stroke="#333" />
+                                {{ trapezoid_exit(node_width, node_height) }}
                             {%- else %}
-                                <rect class="box" width="{{ node_width }}" height="{{ node_height }}" rx="6" ry="6" fill="pink" stroke="pink" />
+                                {{ rect_box(node_width, node_height, fill="pink", stroke="pink") }}
                             {%- endif %}
                         </g>
                     {%- endfor %}
@@ -149,37 +159,17 @@
 
                 {# Render main node shape on top #}
                 {%- if node.is_parallel %}
-                    {%- set top_margin = 5 %}
-                    {%- set r = 6 %}
-                    <path class="box" d="
-                        M{{ top_margin + r }},0
-                        L{{ node_width - top_margin - r }},0
-                        A{{ r }},{{ r }} 0 0 1 {{ node_width - top_margin }},{{ r }}
-                        L{{ node_width }},{{ node_height - r }}
-                        A{{ r }},{{ r }} 0 0 1 {{ node_width - r }},{{ node_height }}
-                        L{{ r }},{{ node_height }}
-                        A{{ r }},{{ r }} 0 0 1 0,{{ node_height - r }}
-                        L{{ top_margin }},{{ r }}
-                        A{{ r }},{{ r }} 0 0 1 {{ top_margin + r }},0
-                        Z"
-                        fill="#add8e6" stroke="#333" />
+                    {{ trapezoid_entry(node_width, node_height) }}
                 {%- elif node.merge_func is not none %}
-                    {%- set bottom_margin = 5 %}
-                    {%- set r = 6 %}
-                    <path class="box" d="
-                        M{{ r }},0
-                        L{{ node_width - r }},0
-                        A{{ r }},{{ r }} 0 0 1 {{ node_width }},{{ r }}
-                        L{{ node_width - bottom_margin }},{{ node_height - r }}
-                        A{{ r }},{{ r }} 0 0 1 {{ node_width - bottom_margin - r }},{{ node_height }}
-                        L{{ bottom_margin + r }},{{ node_height }}
-                        A{{ r }},{{ r }} 0 0 1 {{ bottom_margin }},{{ node_height - r }}
-                        L0,{{ r }}
-                        A{{ r }},{{ r }} 0 0 1 {{ r }},0
-                        Z"
-                        fill="#add8e6" stroke="#333" />
+                    {{ trapezoid_exit(node_width, node_height) }}
+                    {%- set text_width = get_text_pixel_width(node.merge_func.name, "sans-serif", "11") %}
+                    <rect x="-8" y="-3" width="{{ text_width + 6 }}" height="10" fill="url(#glassGradient)" rx="3" ry="3" stroke="#ffd700" stroke-width="0.5" opacity="0.9" />
+                    <rect x="-7.5" y="-2.5" width="{{ text_width + 5 }}" height="9" fill="none" stroke="rgba(255,255,255,0.4)" stroke-width="0.5" rx="2.5" ry="2.5" />
+                    <text class="label" x="-6" y="5" text-anchor="left" font-family="sans-serif" font-size="11" style="fill: #ffd700; stroke: none; filter: drop-shadow(0 0 2px rgba(0,0,0,0.3));">
+                       {{ node.merge_func.name }}
+                    </text>
                 {%- else %}
-                    <rect class="box" width="{{ node_width }}" height="{{ node_height }}" rx="6" ry="6" fill="#add8e6" stroke="#333" />
+                    {{ rect_box(node_width, node_height) }}
                 {%- endif %}
 
                 <text class="label" x="{{ node_width/2 }}" y="{{ node_height/2 + 3 }}" text-anchor="middle" font-family="sans-serif" font-size="11">
@@ -187,9 +177,10 @@
                 </text>
             </g>
         {%- endfor %}
-
     </g>
 </svg>
+
+
 
 
 <script>

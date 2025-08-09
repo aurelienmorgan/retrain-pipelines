@@ -6,6 +6,8 @@ from jinja2 import Environment, FileSystemLoader
 
 from .core import DAG
 
+from ..utils import get_text_pixel_width
+
 
 def render_svg(dag: DAG, filename="dag.html"):
     """Renders the DAG for visualization
@@ -16,9 +18,13 @@ def render_svg(dag: DAG, filename="dag.html"):
         os.path.dirname(__file__), 
         "web_console", "utils", "execution")
     env = Environment(loader=FileSystemLoader(template_dir))
+    env.globals['get_text_pixel_width'] = get_text_pixel_width
     template = env.get_template("svg_template.html")
-    rendering_content = template.render(
-        nodes=dag.to_tasktypes_list(serializable=True))
+
+    tasktypes_list, taskgroups_list = \
+        dag.to_elements_lists(serializable=True)
+
+    rendering_content = template.render(nodes=tasktypes_list)
 
     static_dir = os.path.join(
         os.path.dirname(__file__), "web_console", "static")

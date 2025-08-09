@@ -1,5 +1,6 @@
 
 import os
+import asyncio
 
 from typing import Optional, List
 from fasthtml.common import H1, H2, Div, P, \
@@ -7,22 +8,27 @@ from fasthtml.common import H1, H2, Div, P, \
     Request, Response, JSONResponse
 from jinja2 import Environment, FileSystemLoader
 
-from .page_template import page_layout
-
 from ...db.dao import AsyncDAO
+from .page_template import page_layout
+from ....utils import get_text_pixel_width
 
 
-async def get_execution_tasktypes_list(
+async def get_execution_elements_lists(
     execution_id: int
 ) -> Optional[List[str]]:
     """Can be None, e.g. if no execution with that id exists."""
     dao = AsyncDAO(
         db_url=os.environ["RP_METADATASTORE_ASYNC_URL"]
     )
-    execution_tasktypes_list = \
-        await dao.get_execution_tasktypes_list(execution_id, serializable=True)
+
+    execution_tasktypes_list, execution_taskgroups_list = await asyncio.gather(
+        dao.get_execution_tasktypes_list(execution_id, serializable=True),
+        dao.get_execution_taskgroups_list(execution_id, serializable=True)
+    )
     # print(f"execution_tasktypes_list : {execution_tasktypes_list}")
-    return execution_tasktypes_list
+    # print(f"execution_taskgroups_list : {execution_taskgroups_list}")
+
+    return execution_tasktypes_list, execution_taskgroups_list
 
 
 def register(app, rt, prefix=""):
@@ -34,16 +40,18 @@ def register(app, rt, prefix=""):
         except (TypeError, ValueError):
             return Div(P(f"Invalid execution ID {execution_id}"))
 
-        nodes = await get_execution_tasktypes_list(execution_id)
-        if nodes is None:
+        tasktypes_list, taskgroups_list = \
+            await get_execution_elements_lists(execution_id)
+        if tasktypes_list is None:
             return Div(P(f"Invalid execution ID {execution_id}"))
 
         template_dir = os.path.join(
             os.path.dirname(os.path.dirname(__file__)),
             "utils", "execution")
         env = Environment(loader=FileSystemLoader(template_dir))
+        env.globals['get_text_pixel_width'] = get_text_pixel_width
         template = env.get_template("svg_template.html")
-        rendering_content = template.render(nodes=nodes)
+        rendering_content = template.render(nodes=tasktypes_list)
 
         return rendering_content
 

@@ -14,8 +14,10 @@ import importlib.util
 from typing import Any
 from os import _Environ
 from textwrap import dedent
+from functools import lru_cache
 from dateutil.parser import isoparse
 from datetime import datetime, timezone
+from PIL import Image, ImageDraw, ImageFont
 
 # conditional import of the "torch" package
 # required for some callables in hp_dict
@@ -58,6 +60,20 @@ def parse_datetime(value: str) -> datetime:
     if dt.tzinfo is None:
         return dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc)
+
+
+@lru_cache
+def get_text_pixel_width(text, font_name, font_size):
+    img = Image.new('RGB', (1, 1))
+    draw = ImageDraw.Draw(img)
+
+    try:
+       font = ImageFont.truetype(font_name, font_size)
+    except:
+       font = ImageFont.load_default()
+
+    bbox = draw.textbbox((0, 0), text, font=font)
+    return bbox[2] - bbox[0]
 
 
 def _load_and_get_function(
