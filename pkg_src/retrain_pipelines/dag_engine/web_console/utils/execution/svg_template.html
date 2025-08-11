@@ -1,44 +1,44 @@
 
-{# Macros for trapezoid shapes to avoid code duplication #}
+{# Trapezoid and rect macros #}
 {% macro trapezoid_entry(node_width, node_height, top_margin=5, r=6, fill="#add8e6", stroke="#333") -%}
-<path class="box" d="
-    M{{ top_margin + r }},0
-    L{{ node_width - top_margin - r }},0
-    A{{ r }},{{ r }} 0 0 1 {{ node_width - top_margin }},{{ r }}
-    L{{ node_width }},{{ node_height - r }}
-    A{{ r }},{{ r }} 0 0 1 {{ node_width - r }},{{ node_height }}
-    L{{ r }},{{ node_height }}
-    A{{ r }},{{ r }} 0 0 1 0,{{ node_height - r }}
-    L{{ top_margin }},{{ r }}
-    A{{ r }},{{ r }} 0 0 1 {{ top_margin + r }},0
-    Z"
+    <path class="box" d="
+        M{{ top_margin + r }},0
+        L{{ node_width - top_margin - r }},0
+        A{{ r }},{{ r }} 0 0 1 {{ node_width - top_margin }},{{ r }}
+        L{{ node_width }},{{ node_height - r }}
+        A{{ r }},{{ r }} 0 0 1 {{ node_width - r }},{{ node_height }}
+        L{{ r }},{{ node_height }}
+        A{{ r }},{{ r }} 0 0 1 0,{{ node_height - r }}
+        L{{ top_margin }},{{ r }}
+        A{{ r }},{{ r }} 0 0 1 {{ top_margin + r }},0
+        Z"
     fill="{{ fill }}" stroke="{{ stroke }}" />
 {%- endmacro %}
 
 {% macro trapezoid_exit(node_width, node_height, bottom_margin=5, r=6, fill="#add8e6", stroke="#333") -%}
-<path class="box" d="
-    M{{ r }},0
-    L{{ node_width - r }},0
-    A{{ r }},{{ r }} 0 0 1 {{ node_width }},{{ r }}
-    L{{ node_width - bottom_margin }},{{ node_height - r }}
-    A{{ r }},{{ r }} 0 0 1 {{ node_width - bottom_margin - r }},{{ node_height }}
-    L{{ bottom_margin + r }},{{ node_height }}
-    A{{ r }},{{ r }} 0 0 1 {{ bottom_margin }},{{ node_height - r }}
-    L0,{{ r }}
-    A{{ r }},{{ r }} 0 0 1 {{ r }},0
-    Z"
+    <path class="box" d="
+        M{{ r }},0
+        L{{ node_width - r }},0
+        A{{ r }},{{ r }} 0 0 1 {{ node_width }},{{ r }}
+        L{{ node_width - bottom_margin }},{{ node_height - r }}
+        A{{ r }},{{ r }} 0 0 1 {{ node_width - bottom_margin - r }},{{ node_height }}
+        L{{ bottom_margin + r }},{{ node_height }}
+        A{{ r }},{{ r }} 0 0 1 {{ bottom_margin }},{{ node_height - r }}
+        L0,{{ r }}
+        A{{ r }},{{ r }} 0 0 1 {{ r }},0
+        Z"
     fill="{{ fill }}" stroke="{{ stroke }}" />
 {%- endmacro %}
 
 {% macro rect_box(node_width, node_height, rx=6, ry=6, fill="#add8e6", stroke="#333") -%}
-<rect class="box" width="{{ node_width }}" height="{{ node_height }}" rx="{{ rx }}" ry="{{ ry }}" fill="{{ fill }}" stroke="{{ stroke }}" />
+    <rect class="box" width="{{ node_width }}" height="{{ node_height }}"
+          rx="{{ rx }}" ry="{{ ry }}" fill="{{ fill }}" stroke="{{ stroke }}" />
 {%- endmacro %}
-
-
 
 <svg id="dag" width="100%">
     <defs>
-        <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+        <marker id="arrow" markerWidth="10" markerHeight="10"
+                refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
             <path d="M0,0 L0,6 L9,3 z" fill="#ffd700" />
         </marker>
         <linearGradient id="glassGradient" x1="0" y1="0" x2="0" y2="1">
@@ -47,6 +47,7 @@
             <stop offset="100%" stop-color="#1a3d7c" stop-opacity="0.2" />
         </linearGradient>
     </defs>
+
     <g id="canvas-group" transform="translate(0,0) scale(1)" visibility="hidden">
         {%- set spacing_x = 160 %}
         {%- set spacing_y = 80 %}
@@ -56,6 +57,11 @@
         {%- set id_to_node = {} %}
         {%- for node in nodes %}
             {%- set _ = id_to_node.update({node.uuid: node}) %}
+        {%- endfor %}
+
+        {%- set id_to_taskgroup = {} %}
+        {%- for tg in taskgroups %}
+            {%- set _ = id_to_taskgroup.update({tg.uuid: tg}) %}
         {%- endfor %}
 
         {# Determine depth by DFS #}
@@ -95,12 +101,10 @@
         {%- if dag_start_x < spacing_x %}
             {%- set dag_start_x = spacing_x %}
         {%- endif %}
-
         {%- set id_to_pos = {} %}
         {%- for depth, ids in depth_to_nodes.items() %}
             {%- set level_width = (ids|length - 1) * spacing_x %}
             {%- set level_start_x = dag_start_x + (total_width - level_width) / 2 %}
-
             {%- for id in ids %}
                 {%- set i = loop.index0 %}
                 {%- set x = level_start_x + i * spacing_x %}
@@ -109,16 +113,141 @@
             {%- endfor %}
         {%- endfor %}
 
-        {# Draw arrows #}
-        {%- for node in nodes %}
-            {%- set src = id_to_pos[node.uuid] %}
-            {%- for child_id in node.children %}
-                {%- set tgt = id_to_pos[child_id] %}
-                <line id="arrow-{{ node.uuid }}-{{ child_id }}"
-                    x1="{{ src.x + node_width/2 }}" y1="{{ src.y + node_height }}"
-                    x2="{{ tgt.x + node_width/2 }}" y2="{{ tgt.y }}"
-                    marker-end="url(#arrow)" />
+        {# Calculate taskgroup bounds and centers #}
+        {%- set taskgroup_bounds = {} %}
+        {%- set taskgroup_nodes = {} %}
+        {%- for tg in taskgroups %}
+            {%- set tg_coords = {'min_x': 999999, 'max_x': -999999, 'min_y': 999999, 'max_y': -999999} %}
+            {%- set found_nodes = {'found_nodes': false} %}
+            {%- set tg_node_list = [] %}
+            {%- for node in nodes %}
+                {%- if node.taskgroup_uuid == tg.uuid %}
+                    {%- set _ = found_nodes.update({'found_nodes': true}) %}
+                    {%- set _ = tg_node_list.append(node.uuid) %}
+                    {%- set pos = id_to_pos[node.uuid] %}
+                    {%- if pos.x < tg_coords.min_x %}
+                        {%- set _ = tg_coords.update({'min_x': pos.x}) %}
+                    {%- endif %}
+                    {%- if pos.x + node_width > tg_coords.max_x %}
+                        {%- set _ = tg_coords.update({'max_x': pos.x + node_width}) %}
+                    {%- endif %}
+                    {%- if pos.y < tg_coords.min_y %}
+                        {%- set _ = tg_coords.update({'min_y': pos.y}) %}
+                    {%- endif %}
+                    {%- if pos.y + node_height > tg_coords.max_y %}
+                        {%- set _ = tg_coords.update({'max_y': pos.y + node_height}) %}
+                    {%- endif %}
+                {%- endif %}
             {%- endfor %}
+            {%- if found_nodes.found_nodes %}
+                {%- set center_x = tg_coords.min_x + (tg_coords.max_x - tg_coords.min_x)/2 %}
+                {%- set _ = tg_coords.update({'center_x': center_x,
+                                              'container_top': tg_coords.min_y - 25,
+                                              'container_bottom': tg_coords.max_y + 15}) %}
+                {%- set _ = taskgroup_bounds.update({tg.uuid: tg_coords}) %}
+                {%- set _ = taskgroup_nodes.update({tg.uuid: tg_node_list}) %}
+            {%- endif %}
+        {%- endfor %}
+
+        {# Draw arrows #}
+        {# --- ARROW LOGIC FOR TASKGROUPS --- #}
+        {# To ensure only one outgoing (and one incoming) arrow per taskgroup: #}
+        {%- set tg_outs = {} %}
+        {%- set tg_ins = {} %}
+        {%- set tg_link_pairs = [] %}
+        {%- set normal_arrows = [] %}
+
+        {%- for node in nodes %}
+            {%- set src_tg = node.taskgroup_uuid %}
+            {%- for child_id in node.children %}
+                {%- set child_node = id_to_node[child_id] %}
+                {%- set tgt_tg = child_node.taskgroup_uuid %}
+                {%- if src_tg and tgt_tg and src_tg == tgt_tg %}
+                    {%- set _ = normal_arrows.append((node.uuid, child_id)) %}
+                {%- elif src_tg and (not tgt_tg or src_tg != tgt_tg) %}
+                    {%- set pair = (src_tg, tgt_tg or '__NONE__') %}
+                    {%- if pair not in tg_outs %}
+                        {%- set _ = tg_outs.update({pair: (node.uuid, child_id)}) %}
+                        {%- set _ = tg_link_pairs.append(('out', pair, node.uuid, child_id)) %}
+                    {%- endif %}
+                {%- elif tgt_tg and (not src_tg or src_tg != tgt_tg) %}
+                    {%- set pair = (src_tg or '__NONE__', tgt_tg) %}
+                    {%- if pair not in tg_ins %}
+                        {%- set _ = tg_ins.update({pair: (node.uuid, child_id)}) %}
+                        {%- set _ = tg_link_pairs.append(('in', pair, node.uuid, child_id)) %}
+                    {%- endif %}
+                {%- else %}
+                    {%- set _ = normal_arrows.append((node.uuid, child_id)) %}
+                {%- endif %}
+            {%- endfor %}
+        {%- endfor %}
+
+        {# Draw one arrow for each stored pair for incoming/outgoing tg pairs #}
+        {%- for kind, pair, src, tgt in tg_link_pairs %}
+            {%- set src_tg = pair[0] %}
+            {%- set tgt_tg = pair[1] %}
+            {%- if kind == 'out' and src_tg != '__NONE__' %}
+                {%- set tg_bounds = taskgroup_bounds[src_tg] %}
+                {%- set src_x = tg_bounds.center_x %}
+                {%- set src_y = tg_bounds.container_bottom %}
+                {%- set tgt_x = id_to_pos[tgt].x + node_width/2 %}
+                {%- set tgt_y = id_to_pos[tgt].y %}
+                {%- if tgt_tg != '__NONE__' and tgt_tg in taskgroup_bounds %}
+                    {%- set tgt_bounds = taskgroup_bounds[tgt_tg] %}
+                    {%- set tgt_x = tgt_bounds.center_x %}
+                    {%- set tgt_y = tgt_bounds.container_top %}
+                    <line id="arrow-{{ id_to_taskgroup[src_tg].uuid }}-{{ id_to_taskgroup[tgt_tg].uuid }}"
+                          x1="{{ src_x }}" y1="{{ src_y }}" x2="{{ tgt_x }}" y2="{{ tgt_y }}"
+                          marker-end="url(#arrow)" />
+                {%- else %}
+                    <line id="arrow-{{ id_to_taskgroup[src_tg].uuid }}-{{ tgt }}"
+                          x1="{{ src_x }}" y1="{{ src_y }}" x2="{{ tgt_x }}" y2="{{ tgt_y }}"
+                          marker-end="url(#arrow)" />
+                {%- endif %}
+            {%- elif kind == 'in' and tgt_tg != '__NONE__' %}
+                {%- if src_tg == '__NONE__' %}
+                    {%- set tgt_bounds = taskgroup_bounds[tgt_tg] %}
+                    {%- set tgt_x = tgt_bounds.center_x %}
+                    {%- set tgt_y = tgt_bounds.container_top %}
+                    {%- set src_x = id_to_pos[src].x + node_width/2 %}
+                    {%- set src_y = id_to_pos[src].y + node_height %}
+                    <line id="arrow-{{ src }}-{{ id_to_taskgroup[tgt_tg].uuid }}"
+                          x1="{{ src_x }}" y1="{{ src_y }}" x2="{{ tgt_x }}" y2="{{ tgt_y }}"
+                          marker-end="url(#arrow)" />
+                {%- endif %}
+            {%- endif %}
+        {%- endfor %}
+
+        {# Draw all standard arrows (within taskgroups or outside any) #}
+        {%- for src, tgt in normal_arrows %}
+            {%- set src_pos = id_to_pos[src] %}
+            {%- set tgt_pos = id_to_pos[tgt] %}
+            <line id="arrow-{{ src }}-{{ tgt }}"
+                x1="{{ src_pos.x + node_width/2 }}" y1="{{ src_pos.y + node_height }}"
+                x2="{{ tgt_pos.x + node_width/2 }}" y2="{{ tgt_pos.y }}"
+                marker-end="url(#arrow)" />
+        {%- endfor %}
+
+        {# Draw taskgroups containers and tags #}
+        {%- for tg in taskgroups %}
+            {%- set tg_coords = taskgroup_bounds.get(tg.uuid) %}
+            {%- if tg_coords %}
+                <g class="taskgroup" id="taskgroup-{{ tg.uuid }}" style="cursor: grab;" 
+                   data-name="{{ tg.name }}"
+                   data-nodes="{{ taskgroup_nodes[tg.uuid]|join(',') }}">
+                    <rect class="taskgroup-container"
+                          x="{{ tg_coords.min_x - 15 }}" y="{{ tg_coords.min_y - 25 }}"
+                          width="{{ tg_coords.max_x - tg_coords.min_x + 30 }}"
+                          height="{{ tg_coords.max_y - tg_coords.min_y + 40 }}"
+                          rx="8" ry="8" fill="rgba(220,220,220,0.4)" 
+                          stroke="#888" stroke-width="1.5" stroke-dasharray="4,4"/>
+                    <text class="taskgroup-label" 
+                          x="{{ tg_coords.min_x + (tg_coords.max_x - tg_coords.min_x)/2 }}"
+                          y="{{ tg_coords.min_y - 10 }}" 
+                          text-anchor="middle" font-family="sans-serif" font-size="11" 
+                          font-weight="bold" fill="#555">{{ tg.name }}</text>
+                </g>
+            {%- endif %}
         {%- endfor %}
 
         {# Draw nodes #}
@@ -137,10 +266,10 @@
                 {%- set _ = state.update({'parallel_depth': state.parallel_depth - 1}) %}
             {%- endif %}
 
-            <g class="node" id="node-{{ node.uuid }}" transform="translate({{ pos.x }}, {{ pos.y }})" style="cursor: grab;">
-                <!-- DEBUG: node {{ node.uuid }} parallel_depth={{ state.parallel_depth }} is_parallel={{ node.is_parallel }} merge_func={{ node.merge_func is not none }} -->
-
-                {# Render one full shifted underlay per nesting level for all nodes except merges #}
+            <!-- DEBUG: node {{ node.uuid }} parallel_depth={{ state.parallel_depth }} is_parallel={{ node.is_parallel }} merge_func={{ node.merge_func is not none }} -->
+            {# Render one full shifted underlay per nesting level for all nodes except merges #}
+            <g class="node" id="node-{{ node.uuid }}" transform="translate({{ pos.x }}, {{ pos.y }})" 
+               style="cursor: grab;" data-taskgroup="{{ node.taskgroup_uuid or '' }}">
                 {%- if state.parallel_depth > 0 %}
                     {%- for level in range(state.parallel_depth, 0, -1) %}
                         <!-- DEBUG: level {{ level }} {{ node.name }} -->
@@ -162,26 +291,24 @@
                     {{ trapezoid_entry(node_width, node_height) }}
                 {%- elif node.merge_func is not none %}
                     {{ trapezoid_exit(node_width, node_height) }}
-                    {%- set text_width = get_text_pixel_width(node.merge_func.name, "sans-serif", "11") %}
-                    <rect x="-8" y="-3" width="{{ text_width + 6 }}" height="10" fill="url(#glassGradient)" rx="3" ry="3" stroke="#ffd700" stroke-width="0.5" opacity="0.9" />
-                    <rect x="-7.5" y="-2.5" width="{{ text_width + 5 }}" height="9" fill="none" stroke="rgba(255,255,255,0.4)" stroke-width="0.5" rx="2.5" ry="2.5" />
-                    <text class="label" x="-6" y="5" text-anchor="left" font-family="sans-serif" font-size="11" style="fill: #ffd700; stroke: none; filter: drop-shadow(0 0 2px rgba(0,0,0,0.3));">
+                    <rect x="-8" y="-3" width="80" height="10" fill="url(#glassGradient)"
+                          rx="3" ry="3" stroke="#ffd700" stroke-width="0.5" opacity="0.9" />
+                    <text class="label" x="-6" y="5" text-anchor="left"
+                          font-family="sans-serif" font-size="11"
+                          style="fill: #ffd700; stroke: none; filter: drop-shadow(0 0 2px rgba(0,0,0,0.3));">
                        {{ node.merge_func.name }}
                     </text>
                 {%- else %}
                     {{ rect_box(node_width, node_height) }}
                 {%- endif %}
-
-                <text class="label" x="{{ node_width/2 }}" y="{{ node_height/2 + 3 }}" text-anchor="middle" font-family="sans-serif" font-size="11">
+                <text class="label" x="{{ node_width/2 }}" y="{{ node_height/2 + 3 }}"
+                      text-anchor="middle" font-family="sans-serif" font-size="11">
                     {{ node.name }}
                 </text>
             </g>
         {%- endfor %}
     </g>
 </svg>
-
-
-
 
 <script>
     /* ***************
@@ -200,8 +327,10 @@
     };
 
     let selected = null;
-    let startMouse = null;       // mouse position at drag start {x, y}
-    let startPos = null;         // node position at drag start {x, y}
+    let selectedTaskgroup = null;
+    let startMouse = null;               // mouse position at drag start {x, y}
+    let startPos = null;                 // node position at drag start {x, y}
+    let taskgroupStartPositions = null;  // taskgroup position at drag start {x, y}
 
     function getMouseSVGCoords(evt) {
         const pt = svg.createSVGPoint();
@@ -217,48 +346,144 @@
     }
 
     function updateTransform() {
-        canvasGroup.setAttribute('transform', 
-            `translate(${currentTransform.x},${currentTransform.y}) scale(${currentTransform.scale})`);
+        canvasGroup.setAttribute(
+            'transform',
+            `translate(${currentTransform.x},
+                       ${currentTransform.y}) scale(${currentTransform.scale})`
+        );
     }
 
-    function updateLines(nodeId, x, y) {
-        // Outgoing arrows from dragged node
-        document.querySelectorAll(`line[id^="arrow-${nodeId}-"]`).forEach(line => {
-            const parts = line.id.split('-');
-            if (parts.length < 3) return;
-            const targetId = parts.slice(6, 11).join('-'); // support dashes in ids
-            const tgt = document.getElementById(`node-${targetId}`);
-            if (!tgt) return;
-            const transform = tgt.getAttribute('transform');
-            const match = transform.match(/translate\(([-\d.]+),\s*([-\d.]+)\)/);
-            if (!match) return;
-            const tx = parseFloat(match[1]);
-            const ty = parseFloat(match[2]);
-            line.setAttribute('x1', x + nodeWidth / 2);
-            line.setAttribute('y1', y + nodeHeight);
-            line.setAttribute('x2', tx + nodeWidth / 2);
-            line.setAttribute('y2', ty);
+    function updateLines(elementId, x, y) {
+        // Helper to get position and size info of an element (node or taskgroup)
+        function getPosAndSize(el) {
+            if (!el) return null;
+
+            let posX = 0, posY = 0, width = 0, height = 0;
+
+            // For nodes, position is from transform translate, size fixed as nodeWidth, nodeHeight
+            if (el.classList.contains('node')) {
+                const transform = el.getAttribute('transform');
+                if (!transform) return null;
+                const match = transform.match(/translate\(([-\d.]+),\s*([-\d.]+)\)/);
+                if (!match) return null;
+                posX = parseFloat(match[1]);
+                posY = parseFloat(match[2]);
+                width = nodeWidth;
+                height = nodeHeight;
+            }
+            // For taskgroups, position and size come from <rect> inside the group
+            else if (el.classList.contains('taskgroup')) {
+                const rect = el.querySelector('rect');
+                if (!rect) return null;
+                posX = parseFloat(rect.getAttribute('x'));
+                posY = parseFloat(rect.getAttribute('y'));
+                width = parseFloat(rect.getAttribute('width'));
+                height = parseFloat(rect.getAttribute('height'));
+            }
+            // fallback, try transform + nodeWidth/nodeHeight
+            else {
+                const transform = el.getAttribute('transform');
+                if (!transform) return null;
+                const match = transform.match(/translate\(([-\d.]+),\s*([-\d.]+)\)/);
+                if (!match) return null;
+                posX = parseFloat(match[1]);
+                posY = parseFloat(match[2]);
+                width = nodeWidth;
+                height = nodeHeight;
+            }
+
+            return { x: posX, y: posY, width: width, height: height };
+        }
+
+        // Update lines where element is source (start)
+        document.querySelectorAll(`line[id^="arrow-${elementId}-"]`).forEach(line => {
+            const targetId = line.id.slice(`arrow-${elementId}-`.length);
+            const targetEl =
+                document.getElementById('taskgroup-' + targetId) ||
+                document.getElementById('node-' + targetId);
+
+            if (!targetEl) return;
+
+            const sourceInfo = getPosAndSize(document.getElementById(elementId) || document.getElementById('node-' + elementId) || document.getElementById('taskgroup-' + elementId));
+            if (!sourceInfo) return;
+
+            const targetInfo = getPosAndSize(targetEl);
+            if (!targetInfo) return;
+
+            // Arrow goes from bottom center of source to top center of target
+            const x1 = sourceInfo.x + sourceInfo.width / 2;
+            const y1 = sourceInfo.y + sourceInfo.height;
+            const x2 = targetInfo.x + targetInfo.width / 2;
+            const y2 = targetInfo.y;
+
+            line.setAttribute('x1', x1);
+            line.setAttribute('y1', y1);
+            line.setAttribute('x2', x2);
+            line.setAttribute('y2', y2);
         });
 
-        // Incoming arrows to dragged node
-        document.querySelectorAll(`line[id$="-${nodeId}"]`).forEach(line => {
-            const parts = line.id.split('-');
-            if (parts.length < 3) return;
-            const srcId = parts.slice(1, 6).join('-'); // support dashes in ids
-            const src = document.getElementById(`node-${srcId}`);
-            if (!src) return;
-            const transform = src.getAttribute('transform');
-            const match = transform.match(/translate\(([-\d.]+),\s*([-\d.]+)\)/);
-            if (!match) return;
-            const sx = parseFloat(match[1]);
-            const sy = parseFloat(match[2]);
-            line.setAttribute('x1', sx + nodeWidth / 2);
-            line.setAttribute('y1', sy + nodeHeight);
-            line.setAttribute('x2', x + nodeWidth / 2);
-            line.setAttribute('y2', y);
+        // Update lines where element is target (end)
+        document.querySelectorAll(`line[id$="-${elementId}"]`).forEach(line => {
+            // line id format: arrow-source-target
+            const prefix = 'arrow-';
+            const srcId = line.id.slice(prefix.length, -(`-${elementId}`).length);
+            const srcEl =
+                document.getElementById('taskgroup-' + srcId) ||
+                document.getElementById('node-' + srcId);
+
+            if (!srcEl) return;
+
+            const sourceInfo = getPosAndSize(srcEl);
+            if (!sourceInfo) return;
+
+            const targetInfo = getPosAndSize(document.getElementById(elementId) || document.getElementById('node-' + elementId) || document.getElementById('taskgroup-' + elementId));
+            if (!targetInfo) return;
+
+            // Arrow goes from bottom center of source to top center of target
+            const x1 = sourceInfo.x + sourceInfo.width / 2;
+            const y1 = sourceInfo.y + sourceInfo.height;
+            const x2 = targetInfo.x + targetInfo.width / 2;
+            const y2 = targetInfo.y;
+
+            line.setAttribute('x1', x1);
+            line.setAttribute('y1', y1);
+            line.setAttribute('x2', x2);
+            line.setAttribute('y2', y2);
         });
     }
 
+
+    function updateTaskgroupBounds(taskgroupId) {
+        // Update dims of containing taskgroup shape
+        // when included nodes are dragged within
+        const tgEl = document.getElementById(taskgroupId);
+        if (!tgEl) return;
+        const nodes = tgEl.dataset.nodes.split(',');
+        let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+        nodes.forEach(nodeId => {
+            const nodeEl = document.getElementById(`node-${nodeId}`);
+            if (!nodeEl) return;
+            const match = nodeEl.getAttribute('transform')?.match(/translate\(([-\d.]+),\s*([-\d.]+)\)/);
+            if (!match) return;
+            const x = parseFloat(match[1]);
+            const y = parseFloat(match[2]);
+            minX = Math.min(minX, x);
+            maxX = Math.max(maxX, x + nodeWidth);
+            minY = Math.min(minY, y);
+            maxY = Math.max(maxY, y + nodeHeight);
+        });
+        const rect = tgEl.querySelector('rect');
+        const label = tgEl.querySelector('text');
+        rect.setAttribute('x', minX - 15);
+        rect.setAttribute('y', minY - 25);
+        rect.setAttribute('width', maxX - minX + 30);
+        rect.setAttribute('height', maxY - minY + 40);
+        label.setAttribute('x', minX + (maxX - minX) / 2);
+        label.setAttribute('y', minY - 10);
+    }
+
+
+    // Dragging logic
     svg.querySelectorAll('.node').forEach(node => {
         node.addEventListener('mousedown', (e) => {
             selected = node;
@@ -271,50 +496,94 @@
             };
             selected.style.cursor = 'grabbing';
             e.preventDefault();
+            e.stopPropagation();
+        });
+    });
+
+    svg.querySelectorAll('.taskgroup-container').forEach(container => {
+        container.addEventListener('mousedown', (e) => {
+            selectedTaskgroup = container.closest('.taskgroup');
+            startMouse = getMouseSVGCoords(e);
+            taskgroupStartPositions = { nodes: {} };
+            const rect = selectedTaskgroup.querySelector('rect');
+            const label = selectedTaskgroup.querySelector('text');
+            taskgroupStartPositions.rect = { x: parseFloat(rect.getAttribute('x')), y: parseFloat(rect.getAttribute('y')) };
+            taskgroupStartPositions.label = { x: parseFloat(label.getAttribute('x')), y: parseFloat(label.getAttribute('y')) };
+            selectedTaskgroup.dataset.nodes.split(',').forEach(nodeId => {
+                const nodeEl = document.getElementById(`node-${nodeId}`);
+                if (!nodeEl) return;
+                const match = nodeEl.getAttribute('transform').match(/translate\(([-\d.]+),\s*([-\d.]+)\)/);
+                taskgroupStartPositions.nodes[nodeId] = { x: parseFloat(match[1]), y: parseFloat(match[2]) };
+            });
+            selectedTaskgroup.style.cursor = 'grabbing';
+            e.preventDefault();
+            e.stopPropagation();
         });
     });
 
     window.addEventListener('mousemove', (e) => {
-        if (!selected) return;
-        const coords = getMouseSVGCoords(e);
-        const dx = coords.x - startMouse.x;
-        const dy = coords.y - startMouse.y;
-        const newX = startPos.x + dx;
-        const newY = startPos.y + dy;
-
-        selected.setAttribute('transform', `translate(${newX},${newY})`);
-        const nodeId = selected.id.replace('node-', '');
-        updateLines(nodeId, newX, newY);
-    });
-
-    window.addEventListener('mouseup', () => {
         if (selected) {
-            selected.style.cursor = 'grab';
+            const coords = getMouseSVGCoords(e);
+            const dx = coords.x - startMouse.x;
+            const dy = coords.y - startMouse.y;
+            const newX = startPos.x + dx;
+            const newY = startPos.y + dy;
+            selected.setAttribute('transform', `translate(${newX},${newY})`);
+            const elementId = selected.id.replace(/^node-/, '');
+            updateLines(elementId, newX, newY);
+            const tgId = selected.dataset.taskgroup;
+            if (tgId) {
+                // if selected node belongs to a taskgroup
+                const node_taskgroup = document.getElementById('taskgroup-' + tgId);
+                updateTaskgroupBounds('taskgroup-' + tgId);
+                const rect = node_taskgroup.querySelector('rect');
+                updateLines(tgId, rect.getAttribute('x'), rect.getAttribute('y')
+                );
+            }
+        } else if (selectedTaskgroup) {
+            const coords = getMouseSVGCoords(e);
+            const dx = coords.x - startMouse.x;
+            const dy = coords.y - startMouse.y;
+            const rect = selectedTaskgroup.querySelector('rect');
+            const label = selectedTaskgroup.querySelector('text');
+            rect.setAttribute('x', taskgroupStartPositions.rect.x + dx);
+            rect.setAttribute('y', taskgroupStartPositions.rect.y + dy);
+            label.setAttribute('x', taskgroupStartPositions.label.x + dx);
+            label.setAttribute('y', taskgroupStartPositions.label.y + dy);
+            selectedTaskgroup.dataset.nodes.split(',').forEach(nodeId => {
+                const start = taskgroupStartPositions.nodes[nodeId];
+                const nodeEl = document.getElementById(`node-${nodeId}`);
+                nodeEl.setAttribute('transform', `translate(${start.x + dx},${start.y + dy})`);
+            });
+            updateTaskgroupBounds(selectedTaskgroup.Id);
+            updateLines(selectedTaskgroup.id.replace(/^taskgroup-/, ''),
+                        rect.getAttribute('x'), rect.getAttribute('y')
+            );
         }
+    });
+    window.addEventListener('mouseup', (e) => {
+        if (selected) selected.style.cursor = 'grab';
+        if (selectedTaskgroup) selectedTaskgroup.style.cursor = 'grab';
         selected = null;
+        selectedTaskgroup = null;
         startMouse = null;
         startPos = null;
+        taskgroupStartPositions = null;
     });
     /* ************ */
-
 
     /* ***************************
     * DAG-centering at load time *
     *************************** */
     function adjustSVGHeight() {
         const nodes = svg.querySelectorAll('.node');
-        if (nodes.length === 0) return;
-
+        if (!nodes.length) return;
         let minY = Infinity, maxY = -Infinity;
-
         nodes.forEach(node => {
-            const transform = node.getAttribute('transform');
-            const match = transform.match(/translate\(([-\d.]+),\s*([-\d.]+)\)/);
-            if (match) {
-                const y = parseFloat(match[2]);
-                minY = Math.min(minY, y);
-                maxY = Math.max(maxY, y + nodeHeight);
-            }
+            const match = node.getAttribute('transform').match(/translate\(([-\d.]+),\s*([-\d.]+)\)/);
+            const y = parseFloat(match[2]);
+            minY = Math.min(minY, y);
+            maxY = Math.max(maxY, y + nodeHeight);
         });
 
         // Calculate dagHeight and add top/bottom margin
@@ -416,6 +685,7 @@
         canvasDrag = false;
         canvasStartMouse = null;
     });
+    /* ************ */
 
     /* ***************
     * Canvas-zooming *
@@ -451,5 +721,4 @@
     });
     /* ************ */
 </script>
-
 

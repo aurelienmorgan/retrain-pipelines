@@ -51,7 +51,10 @@ def register(app, rt, prefix=""):
         env = Environment(loader=FileSystemLoader(template_dir))
         env.globals['get_text_pixel_width'] = get_text_pixel_width
         template = env.get_template("svg_template.html")
-        rendering_content = template.render(nodes=tasktypes_list)
+        rendering_content = template.render(
+            nodes=tasktypes_list,
+            taskgroups=taskgroups_list or []
+        )
 
         return rendering_content
 

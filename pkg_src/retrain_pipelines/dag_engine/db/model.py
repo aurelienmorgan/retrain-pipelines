@@ -211,7 +211,7 @@ class TaskType(Base):
 
     is_parallel = Column(Boolean, nullable=False)
     merge_func = Column(JSON, nullable=True)
-    task_group = Column(String, nullable=True)
+    taskgroup_uuid = Column(Uuid, nullable=True)
     children = Column(JSON, nullable=False)  # ARRAY(str(Uuid))
 
 

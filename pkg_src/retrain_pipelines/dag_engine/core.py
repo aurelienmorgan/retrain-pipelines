@@ -524,14 +524,17 @@ class DAG(BaseModel):
                             if task.merge_func is not None
                             else None
                         ),
-                        "task_group": task.task_group.name if task.task_group else None,
+                        "taskgroup_uuid": (
+                            str(task.task_group.uuid) if serializable
+                            else task.task_group.uuid
+                        ) if task.task_group else None,
                         "children": [str(c.tasktype_uuid) for c in task.children]
                     }
                 )
 
                 if task.task_group and task.task_group.uuid not in taskgroups_dict:
                     taskgroups_dict[task.task_group.uuid] = {
-                        "uuid": task.task_group.uuid,
+                        "uuid": str(task.task_group.uuid) if serializable else task.task_group.uuid,
                         "name": task.task_group.name,
                         "docstring": task.task_group.docstring,
                         "elements": [
