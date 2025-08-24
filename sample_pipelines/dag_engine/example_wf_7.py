@@ -15,7 +15,7 @@ from retrain_pipelines.dag_engine.renderer import \
 # ---- Example: TaskGroup in Parallelism and Merging ----
 
 
-@task
+@task(ui_css=UiCss(background="#ff7b00", color="#ff7b00", border="#ff7b00"))
 def start():
     """Root task: produces a list of numbers."""
 
@@ -30,7 +30,7 @@ def start():
     return [1, 2, 3, 4]
 
 
-@parallel_task
+@parallel_task(ui_css=UiCss(background="#00ff37"))
 def parallel(payload: TaskPayload):
     """For each input of the incoming iterator,
 
@@ -59,7 +59,7 @@ def snake_head_A1(payload: TaskPayload) -> List[int]:
     return result
 
 
-@task
+@task(ui_css=UiCss(background="#ffee00"))
 def snake_head_A2(payload: TaskPayload) -> List[int]:
     # Receives a 1D list.
 
@@ -73,7 +73,7 @@ def snake_head_A2(payload: TaskPayload) -> List[int]:
     return result
 
 
-@taskgroup
+@taskgroup(ui_css=UiCss(background="#000000", color="#e00000", border="#00fff7"))
 def snake_heads_A():
     """Group of tasks with different processing logics
     that are to be run independently,
@@ -83,7 +83,7 @@ def snake_heads_A():
     return snake_head_A1, snake_head_A2
 
 
-@task
+@task(ui_css=UiCss(background="#752500", border="#964a29"))
 def join_snake_heads(
     snake_heads_A_results: TaskPayload
 ) -> List[int]:
@@ -112,7 +112,8 @@ def matrix_sum_cols(matrix: List[List[Union[int, float]]]):
     returning a 1D list of numerics."""
     return [sum(col) for col in zip(*matrix)]
 
-@task(merge_func=matrix_sum_cols)
+@task(merge_func=matrix_sum_cols,
+      ui_css=UiCss(background="#ff0000"))
 def merge(payload: TaskPayload) -> List[int]:
     """Input is the merged results of
     parallel prior tasks from taskgroup."""
@@ -128,7 +129,7 @@ def merge(payload: TaskPayload) -> List[int]:
     return result
 
 
-@task
+@task(ui_css=UiCss(background="#ff00f7"))
 def end(payload: TaskPayload):
     # Since the herein task only has 1 direct parent =>
     assert payload["merge"] == payload.get("merge") == payload
@@ -139,6 +140,7 @@ def end(payload: TaskPayload):
 
 @dag(ui_css=UiCss(background="#ff7b00"))
 def retrain_pipeline():
+    """TaskGroup in parallel line."""
     # Compose the DAG using operator overloading (>>)
     return start >> parallel >> snake_heads_A >> join_snake_heads >> merge >> end
 

@@ -1,38 +1,146 @@
 
+
 {# Trapezoid and rect macros #}
-{% macro trapezoid_entry(node_width, node_height, top_margin=5, r=6, fill="#add8e6", stroke="#333") -%}
-    <path class="box" d="
-        M{{ top_margin + r }},0
-        L{{ node_width - top_margin - r }},0
-        A{{ r }},{{ r }} 0 0 1 {{ node_width - top_margin }},{{ r }}
-        L{{ node_width }},{{ node_height - r }}
-        A{{ r }},{{ r }} 0 0 1 {{ node_width - r }},{{ node_height }}
-        L{{ r }},{{ node_height }}
-        A{{ r }},{{ r }} 0 0 1 0,{{ node_height - r }}
-        L{{ top_margin }},{{ r }}
-        A{{ r }},{{ r }} 0 0 1 {{ top_margin + r }},0
-        Z"
-    fill="{{ fill }}" stroke="{{ stroke }}" />
+{% macro trapezoid_entry(node_width, node_height, top_margin=5, r=6,
+                         fill=None, stroke=None) -%}
+    {% if fill and fill|trim != '' -%}
+        {%- set gradient_id = "glassGradient_" ~ fill|replace("#", "") -%}
+        <defs>
+            <linearGradient id="{{ gradient_id }}" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stop-color="white" stop-opacity="0.6" />
+                <stop offset="30%" stop-color="{{ fill }}" stop-opacity="0.3" />
+                <stop offset="50%" stop-color="{{ fill }}" stop-opacity="0.5" />
+                <stop offset="100%" stop-color="{{ fill }}" stop-opacity="0.4" />
+            </linearGradient>
+        </defs>
+        <path class="box" d="
+            M{{ top_margin + r }},0
+            L{{ node_width - top_margin - r }},0
+            A{{ r }},{{ r }} 0 0 1 {{ node_width - top_margin }},{{ r }}
+            L{{ node_width }},{{ node_height - r }}
+            A{{ r }},{{ r }} 0 0 1 {{ node_width - r }},{{ node_height }}
+            L{{ r }},{{ node_height }}
+            A{{ r }},{{ r }} 0 0 1 0,{{ node_height - r }}
+            L{{ top_margin }},{{ r }}
+            A{{ r }},{{ r }} 0 0 1 {{ top_margin + r }},0
+            Z"
+            style="fill: url(#{{ gradient_id }});
+                   {% if stroke and stroke|trim != '' %}stroke: {{ stroke }};{%- endif %}"
+        />
+    {%- else -%}
+        <path class="box" d="
+            M{{ top_margin + r }},0
+            L{{ node_width - top_margin - r }},0
+            A{{ r }},{{ r }} 0 0 1 {{ node_width - top_margin }},{{ r }}
+            L{{ node_width }},{{ node_height - r }}
+            A{{ r }},{{ r }} 0 0 1 {{ node_width - r }},{{ node_height }}
+            L{{ r }},{{ node_height }}
+            A{{ r }},{{ r }} 0 0 1 0,{{ node_height - r }}
+            L{{ top_margin }},{{ r }}
+            A{{ r }},{{ r }} 0 0 1 {{ top_margin + r }},0
+            Z"
+            style="{% if stroke and stroke|trim != '' %}stroke: {{ stroke }};{%- endif %}"
+        />
+    {%- endif -%}
 {%- endmacro %}
 
-{% macro trapezoid_exit(node_width, node_height, bottom_margin=5, r=6, fill="#add8e6", stroke="#333") -%}
-    <path class="box" d="
-        M{{ r }},0
-        L{{ node_width - r }},0
-        A{{ r }},{{ r }} 0 0 1 {{ node_width }},{{ r }}
-        L{{ node_width - bottom_margin }},{{ node_height - r }}
-        A{{ r }},{{ r }} 0 0 1 {{ node_width - bottom_margin - r }},{{ node_height }}
-        L{{ bottom_margin + r }},{{ node_height }}
-        A{{ r }},{{ r }} 0 0 1 {{ bottom_margin }},{{ node_height - r }}
-        L0,{{ r }}
-        A{{ r }},{{ r }} 0 0 1 {{ r }},0
-        Z"
-    fill="{{ fill }}" stroke="{{ stroke }}" />
+{% macro trapezoid_exit(node_width, node_height, bottom_margin=5, r=6,
+                        fill=None, stroke=None) -%}
+    {% if fill and fill|trim != '' -%}
+        {%- set gradient_id = "glassGradient_" ~ fill|replace("#", "") -%}
+        <defs>
+            <linearGradient id="{{ gradient_id }}" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stop-color="white" stop-opacity="0.6" />
+                <stop offset="30%" stop-color="{{ fill }}" stop-opacity="0.3" />
+                <stop offset="50%" stop-color="{{ fill }}" stop-opacity="0.5" />
+                <stop offset="100%" stop-color="{{ fill }}" stop-opacity="0.4" />
+            </linearGradient>
+        </defs>
+        <path class="box" d="
+            M{{ r }},0
+            L{{ node_width - r }},0
+            A{{ r }},{{ r }} 0 0 1 {{ node_width }},{{ r }}
+            L{{ node_width - bottom_margin }},{{ node_height - r }}
+            A{{ r }},{{ r }} 0 0 1 {{ node_width - bottom_margin - r }},{{ node_height }}
+            L{{ bottom_margin + r }},{{ node_height }}
+            A{{ r }},{{ r }} 0 0 1 {{ bottom_margin }},{{ node_height - r }}
+            L0,{{ r }}
+            A{{ r }},{{ r }} 0 0 1 {{ r }},0
+            Z"
+            style="fill: url(#{{ gradient_id }});
+                   {% if stroke and stroke|trim != '' %}stroke: {{ stroke }};{%- endif %}"
+        />
+    {%- else -%}
+        <path class="box" d="
+            M{{ r }},0
+            L{{ node_width - r }},0
+            A{{ r }},{{ r }} 0 0 1 {{ node_width }},{{ r }}
+            L{{ node_width - bottom_margin }},{{ node_height - r }}
+            A{{ r }},{{ r }} 0 0 1 {{ node_width - bottom_margin - r }},{{ node_height }}
+            L{{ bottom_margin + r }},{{ node_height }}
+            A{{ r }},{{ r }} 0 0 1 {{ bottom_margin }},{{ node_height - r }}
+            L0,{{ r }}
+            A{{ r }},{{ r }} 0 0 1 {{ r }},0
+            Z"
+            style="{% if stroke and stroke|trim != '' %}stroke: {{ stroke }};{%- endif %}"
+        />
+    {%- endif -%}
 {%- endmacro %}
 
-{% macro rect_box(node_width, node_height, rx=6, ry=6, fill="#add8e6", stroke="#333") -%}
-    <rect class="box" width="{{ node_width }}" height="{{ node_height }}"
-          rx="{{ rx }}" ry="{{ ry }}" fill="{{ fill }}" stroke="{{ stroke }}" />
+{% macro node_rect_box(node_width, node_height, rx=6, ry=6,
+                       fill=None, stroke=None) -%}
+<!-- DEBUG fill {{ fill }}, stroke {{ stroke }} -->
+    {% if fill and fill|trim != '' -%}
+        {%- set gradient_id = "glassGradient_" ~ fill|replace("#", "") -%}
+        <defs>
+            <linearGradient id="{{ gradient_id }}" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stop-color="white" stop-opacity="0.6" />
+                <stop offset="30%" stop-color="{{ fill }}" stop-opacity="0.3" />
+                <stop offset="50%" stop-color="{{ fill }}" stop-opacity="0.5" />
+                <stop offset="100%" stop-color="{{ fill }}" stop-opacity="0.4" />
+            </linearGradient>
+        </defs>
+        <rect class="box" width="{{ node_width }}" height="{{ node_height }}"
+              rx="{{ rx }}" ry="{{ ry }}"
+              style="fill: url(#{{ gradient_id }});
+                     {% if stroke and stroke|trim != '' %}stroke: {{ stroke }};{%- endif %}"
+        />
+    {%- else -%}
+        <rect class="box" width="{{ node_width }}" height="{{ node_height }}"
+              rx="{{ rx }}" ry="{{ ry }}"
+              style="{% if stroke and stroke|trim != '' %}stroke: {{ stroke }};{%- endif %}"
+        />
+    {%- endif -%}
+{%- endmacro %}
+
+{% macro taskgroup_rect_box(x, y, width, height, cls="", rx=6, ry=6,
+                            fill=None, stroke=None,
+                            stroke_width=1.5, dash="4,4", opacity=1) -%}
+    {% if fill and fill|trim != '' -%}
+        {%- set gradient_id = "glassGradient_" ~ fill|replace("#", "") -%}
+        <defs>
+            <linearGradient id="{{ gradient_id }}" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stop-color="white" stop-opacity="0.6" />
+                <stop offset="30%" stop-color="{{ fill }}" stop-opacity="0.3" />
+                <stop offset="50%" stop-color="{{ fill }}" stop-opacity="0.5" />
+                <stop offset="100%" stop-color="{{ fill }}" stop-opacity="0.4" />
+            </linearGradient>
+        </defs>
+        <rect class="box{% if cls %} {{ cls }}{% endif %}"
+              x="{{ x }}" y="{{ y }}" width="{{ width }}" height="{{ height }}"
+              rx="{{ rx }}" ry="{{ ry }}"
+              style="fill: url(#{{ gradient_id }});
+                     {% if stroke and stroke|trim != '' %}stroke: {{ stroke }};{%- endif %}"
+              stroke-width="{{ stroke_width }}"
+              {% if dash %}stroke-dasharray="{{ dash }}"{% endif %} opacity="{{ opacity }}" />
+    {%- else -%}
+        <rect class="box{% if cls %} {{ cls }}{% endif %}"
+              x="{{ x }}" y="{{ y }}" width="{{ width }}" height="{{ height }}"
+              rx="{{ rx }}" ry="{{ ry }}"
+              style="{% if stroke and stroke|trim != '' %}stroke: {{ stroke }};{%- endif %}"
+              stroke-width="{{ stroke_width }}"
+              {% if dash %}stroke-dasharray="{{ dash }}"{% endif %} opacity="{{ opacity }}" />
+    {%- endif -%}
 {%- endmacro %}
 
 <svg id="dag" width="100%">
@@ -43,8 +151,10 @@
         </marker>
         <linearGradient id="glassGradient" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stop-color="white" stop-opacity="0.6" />
-            <stop offset="50%" stop-color="#4a90e2" stop-opacity="0.3" />
-            <stop offset="100%" stop-color="#1a3d7c" stop-opacity="0.2" />
+            <stop offset="50%" stop-opacity="0.3"
+                  style="stop-color: var(--glass-color, #4a90e2);" />
+            <stop offset="100%" stop-opacity="0.2"
+                  style="stop-color: var(--glass-color, #4a90e2);" />
         </linearGradient>
     </defs>
 
@@ -149,6 +259,24 @@
             {%- endif %}
         {%- endfor %}
 
+        {# --- NEW PREPASS: compute parallel_depth at render time for each node --- #}
+        {%- set parallel_depths = {} %}
+        {%- macro compute_pd(node_id, depth=0) -%}
+            {%- set node = id_to_node[node_id] %}
+            {# Apply the same "increase-before-render" and "decrease-before-render" rules you used at render time #}
+            {%- if node.is_parallel %}
+                {%- set depth = depth + 1 %}
+            {%- endif %}
+            {%- if node.merge_func is not none and not node.is_parallel %}
+                {%- set depth = depth - 1 %}
+            {%- endif %}
+            {%- set _ = parallel_depths.update({node_id: depth}) %}
+            {%- for child in node.children %}
+                {{- compute_pd(child, depth) -}}
+            {%- endfor %}
+        {%- endmacro %}
+        {{- compute_pd(nodes[0].uuid) }}
+
         {# Draw arrows #}
         {# --- ARROW LOGIC FOR TASKGROUPS --- #}
         {# To ensure only one outgoing (and one incoming) arrow per taskgroup: #}
@@ -228,24 +356,74 @@
                 marker-end="url(#arrow)" />
         {%- endfor %}
 
-        {# Draw taskgroups containers and tags #}
+        {# Draw taskgroups containers, per-group parallel-level underlays, and tags #}
         {%- for tg in taskgroups %}
+            <!-- DEBUG '{{ tg.name }}', tg.ui_css: {{ tg.ui_css }} -->
             {%- set tg_coords = taskgroup_bounds.get(tg.uuid) %}
             {%- if tg_coords %}
                 <g class="taskgroup" id="taskgroup-{{ tg.uuid }}" style="cursor: grab;" 
                    data-name="{{ tg.name }}"
                    data-nodes="{{ taskgroup_nodes[tg.uuid]|join(',') }}">
-                    <rect class="taskgroup-container"
-                          x="{{ tg_coords.min_x - 15 }}" y="{{ tg_coords.min_y - 25 }}"
-                          width="{{ tg_coords.max_x - tg_coords.min_x + 30 }}"
-                          height="{{ tg_coords.max_y - tg_coords.min_y + 40 }}"
-                          rx="8" ry="8" fill="rgba(220,220,220,0.4)" 
-                          stroke="#888" stroke-width="1.5" stroke-dasharray="4,4"/>
+
+                    {# If this taskgroup contains nodes that have parallel layers, draw
+                       one SHIFTED underlay per parallel level for the entire taskgroup.
+                       This replaces per-node underlays for nodes that belong to taskgroups. #}
+                    {%- set tg_node_list = taskgroup_nodes.get(tg.uuid, []) %}
+                    <!-- DEBIG taskgroup {{ tg.uuid }}, tg_node_list: {{ tg_node_list }} -->
+                    {# Compute max parallel depth for this taskgroup using a dict accumulator #}
+                    {%- set max_pd = {'value': 0} %}
+                    {%- for n_uuid in tg_node_list %}
+                        {%- set pd = parallel_depths.get(n_uuid, 0) %}
+                        <!-- DEBUG taskgroup {{ tg.uuid }}, node {{ n_uuid }}, pd: {{ pd }} -->
+                        {%- if pd > max_pd.value %}
+                            {%- set _ = max_pd.update({'value': pd}) %}
+                        {%- endif %}
+                    {%- endfor %}
+
+                    {%- if max_pd.value > 0 %}
+                        {# draw layers from outermost to innermost (higher level first) #}
+                        {%- for level in range(max_pd.value, 0, -1) %}
+                            {%- set offset = 3.5 * level %}
+                            <g transform="translate({{ offset }}, {{ offset }})">
+                                {{ taskgroup_rect_box(
+                                    tg_coords.min_x - 15,
+                                    tg_coords.min_y - 25,
+                                    tg_coords.max_x - tg_coords.min_x + 30,
+                                    tg_coords.max_y - tg_coords.min_y + 40,
+                                    fill=(
+                                        tg.ui_css.background if tg.ui_css and tg.ui_css.background
+                                        else None
+                                    ),
+                                    stroke=tg.ui_css.border if tg.ui_css and tg.ui_css.border else None
+                                ) }}
+                            </g>
+                        {%- endfor %}
+                    {%- endif %}
+
+                    {# Draw the base container last using the same macro #}
+                    {{ taskgroup_rect_box(
+                        tg_coords.min_x - 15,
+                        tg_coords.min_y - 25,
+                        tg_coords.max_x - tg_coords.min_x + 30,
+                        tg_coords.max_y - tg_coords.min_y + 40,
+                        "taskgroup-container",
+                        fill=(
+                            tg.ui_css.background if tg.ui_css and tg.ui_css.background
+                            else None
+                        ),
+                        stroke=tg.ui_css.border if tg.ui_css and tg.ui_css.border else None
+                    ) }}
                     <text class="taskgroup-label" 
                           x="{{ tg_coords.min_x + (tg_coords.max_x - tg_coords.min_x)/2 }}"
                           y="{{ tg_coords.min_y - 10 }}" 
                           text-anchor="middle" font-family="sans-serif" font-size="11" 
-                          font-weight="bold" fill="#555">{{ tg.name }}</text>
+                          font-weight="bold"
+                          {%- if tg.ui_css and tg.ui_css.color and tg.ui_css.color|trim != '' %}
+                            style="fill: {{ tg.ui_css.color }};"
+                          {%- endif %}
+                    >
+                        {{ tg.name }}
+                    </text>
                 </g>
             {%- endif %}
         {%- endfor %}
@@ -253,6 +431,7 @@
         {# Draw nodes #}
         {%- set state = {'parallel_depth': 0} %}
         {%- for node in nodes %}
+            <!-- DEBUG '{{ node.name }}', node.ui_css: {{ node.ui_css }} -->
             {%- set pos = id_to_pos[node.uuid] %}
 
             {# Increase parallel depth BEFORE rendering node if parallel #}
@@ -267,20 +446,36 @@
             {%- endif %}
 
             <!-- DEBUG: node {{ node.uuid }} parallel_depth={{ state.parallel_depth }} is_parallel={{ node.is_parallel }} merge_func={{ node.merge_func is not none }} -->
-            {# Render one full shifted underlay per nesting level for all nodes except merges #}
+            {# Render per-node underlays only for nodes NOT part of a taskgroup.
+               If node is in a taskgroup, the underlays were already rendered at the taskgroup level. #}
             <g class="node" id="node-{{ node.uuid }}" transform="translate({{ pos.x }}, {{ pos.y }})" 
                style="cursor: grab;" data-taskgroup="{{ node.taskgroup_uuid or '' }}">
-                {%- if state.parallel_depth > 0 %}
+                {%- if state.parallel_depth > 0 and not node.taskgroup_uuid %}
                     {%- for level in range(state.parallel_depth, 0, -1) %}
                         <!-- DEBUG: level {{ level }} {{ node.name }} -->
                         {%- set offset = 3 * level %}
                         <g transform="translate({{ offset }}, {{ offset }})">
                             {%- if node.is_parallel %}
-                                {{ trapezoid_entry(node_width, node_height) }}
+                                {{ trapezoid_entry(
+                                    node_width,
+                                    node_height,
+                                    fill=node.ui_css.background if node.ui_css and node.ui_css.background else None,
+                                    stroke=node.ui_css.border if node.ui_css and node.ui_css.border else None
+                                ) }}
                             {%- elif node.merge_func is not none %}
-                                {{ trapezoid_exit(node_width, node_height) }}
+                                {{ trapezoid_exit(
+                                    node_width,
+                                    node_height,
+                                    fill=node.ui_css.background if node.ui_css and node.ui_css.background else None,
+                                    stroke=node.ui_css.border if node.ui_css and node.ui_css.border else None
+                                ) }}
                             {%- else %}
-                                {{ rect_box(node_width, node_height, fill="pink", stroke="pink") }}
+                                {{ node_rect_box(
+                                    node_width,
+                                    node_height,
+                                    fill=node.ui_css.background if node.ui_css and node.ui_css.background else None,
+                                    stroke=node.ui_css.border if node.ui_css and node.ui_css.border else None
+                                ) }}
                             {%- endif %}
                         </g>
                     {%- endfor %}
@@ -288,9 +483,19 @@
 
                 {# Render main node shape on top #}
                 {%- if node.is_parallel %}
-                    {{ trapezoid_entry(node_width, node_height) }}
+                    {{ trapezoid_entry(
+                        node_width,
+                        node_height,
+                        fill=node.ui_css.background if node.ui_css and node.ui_css.background else None,
+                        stroke=node.ui_css.border if node.ui_css and node.ui_css.border else None
+                    ) }}
                 {%- elif node.merge_func is not none %}
-                    {{ trapezoid_exit(node_width, node_height) }}
+                    {{ trapezoid_exit(
+                        node_width,
+                        node_height,
+                        fill=node.ui_css.background if node.ui_css and node.ui_css.background else None,
+                        stroke=node.ui_css.border if node.ui_css and node.ui_css.border else None
+                    ) }}
                     <rect x="-8" y="-3" width="80" height="10" fill="url(#glassGradient)"
                           rx="3" ry="3" stroke="#ffd700" stroke-width="0.5" opacity="0.9" />
                     <text class="label" x="-6" y="5" text-anchor="left"
@@ -299,16 +504,27 @@
                        {{ node.merge_func.name }}
                     </text>
                 {%- else %}
-                    {{ rect_box(node_width, node_height) }}
+                    {{ node_rect_box(
+                        node_width,
+                        node_height,
+                        fill=node.ui_css.background if node.ui_css and node.ui_css.background else None,
+                        stroke=node.ui_css.border if node.ui_css and node.ui_css.border else None
+                    ) }}
                 {%- endif %}
                 <text class="label" x="{{ node_width/2 }}" y="{{ node_height/2 + 3 }}"
-                      text-anchor="middle" font-family="sans-serif" font-size="11">
+                      text-anchor="middle" font-family="sans-serif" font-size="11"
+                      {%- if node.ui_css and node.ui_css.color and node.ui_css.color|trim != '' %}
+                        style="fill: {{ node.ui_css.color }};"
+                      {%- endif %}
+                >
                     {{ node.name }}
                 </text>
             </g>
         {%- endfor %}
     </g>
 </svg>
+
+
 
 <script>
     /* ***************
@@ -452,18 +668,17 @@
         });
     }
 
-
     function updateTaskgroupBounds(taskgroupId) {
-        // Update dims of containing taskgroup shape
-        // when included nodes are dragged within
         const tgEl = document.getElementById(taskgroupId);
         if (!tgEl) return;
         const nodes = tgEl.dataset.nodes.split(',');
         let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+
         nodes.forEach(nodeId => {
             const nodeEl = document.getElementById(`node-${nodeId}`);
             if (!nodeEl) return;
-            const match = nodeEl.getAttribute('transform')?.match(/translate\(([-\d.]+),\s*([-\d.]+)\)/);
+            const match = nodeEl.getAttribute('transform')
+                ?.match(/translate\(([-\d.]+),\s*([-\d.]+)\)/);
             if (!match) return;
             const x = parseFloat(match[1]);
             const y = parseFloat(match[2]);
@@ -472,16 +687,26 @@
             minY = Math.min(minY, y);
             maxY = Math.max(maxY, y + nodeHeight);
         });
-        const rect = tgEl.querySelector('rect');
-        const label = tgEl.querySelector('text');
-        rect.setAttribute('x', minX - 15);
-        rect.setAttribute('y', minY - 25);
-        rect.setAttribute('width', maxX - minX + 30);
-        rect.setAttribute('height', maxY - minY + 40);
-        label.setAttribute('x', minX + (maxX - minX) / 2);
-        label.setAttribute('y', minY - 10);
-    }
 
+        const offsetX = minX - 15;
+        const offsetY = minY - 25;
+        const width = maxX - minX + 30;
+        const height = maxY - minY + 40;
+
+        // Update all rects (underlays + container)
+        tgEl.querySelectorAll('rect').forEach(r => {
+            r.setAttribute('x', offsetX);
+            r.setAttribute('y', offsetY);
+            r.setAttribute('width', width);
+            r.setAttribute('height', height);
+        });
+
+        // Update all labels
+        tgEl.querySelectorAll('text').forEach(t => {
+            t.setAttribute('x', minX + (maxX - minX) / 2);
+            t.setAttribute('y', minY - 10);
+        });
+    }
 
     // Dragging logic
     svg.querySelectorAll('.node').forEach(node => {
@@ -504,17 +729,30 @@
         container.addEventListener('mousedown', (e) => {
             selectedTaskgroup = container.closest('.taskgroup');
             startMouse = getMouseSVGCoords(e);
-            taskgroupStartPositions = { nodes: {} };
-            const rect = selectedTaskgroup.querySelector('rect');
-            const label = selectedTaskgroup.querySelector('text');
-            taskgroupStartPositions.rect = { x: parseFloat(rect.getAttribute('x')), y: parseFloat(rect.getAttribute('y')) };
-            taskgroupStartPositions.label = { x: parseFloat(label.getAttribute('x')), y: parseFloat(label.getAttribute('y')) };
+            taskgroupStartPositions = { rects: [], labels: [], underlays: [], nodes: {} };
+
+            selectedTaskgroup.querySelectorAll('rect').forEach(r => {
+                taskgroupStartPositions.rects.push({
+                    el: r,
+                    x: parseFloat(r.getAttribute('x')),
+                    y: parseFloat(r.getAttribute('y'))
+                });
+            });
+            selectedTaskgroup.querySelectorAll('text').forEach(t => {
+                taskgroupStartPositions.labels.push({
+                    el: t,
+                    x: parseFloat(t.getAttribute('x')),
+                    y: parseFloat(t.getAttribute('y'))
+                });
+            });
+
             selectedTaskgroup.dataset.nodes.split(',').forEach(nodeId => {
                 const nodeEl = document.getElementById(`node-${nodeId}`);
                 if (!nodeEl) return;
                 const match = nodeEl.getAttribute('transform').match(/translate\(([-\d.]+),\s*([-\d.]+)\)/);
                 taskgroupStartPositions.nodes[nodeId] = { x: parseFloat(match[1]), y: parseFloat(match[2]) };
             });
+
             selectedTaskgroup.style.cursor = 'grabbing';
             e.preventDefault();
             e.stopPropagation();
@@ -529,39 +767,40 @@
             const newX = startPos.x + dx;
             const newY = startPos.y + dy;
             selected.setAttribute('transform', `translate(${newX},${newY})`);
-            const elementId = selected.id.replace(/^node-/, '');
-            updateLines(elementId, newX, newY);
-            const tgId = selected.dataset.taskgroup;
-            if (tgId) {
-                // if selected node belongs to a taskgroup
-                const node_taskgroup = document.getElementById('taskgroup-' + tgId);
-                updateTaskgroupBounds('taskgroup-' + tgId);
-                const rect = node_taskgroup.querySelector('rect');
-                updateLines(tgId, rect.getAttribute('x'), rect.getAttribute('y')
-                );
-            }
+            updateLines(selected.id.replace(/^node-/, ''), newX, newY);
+                const tgId = selected.dataset.taskgroup;
+                if (tgId) {
+                    // if selected node belongs to a taskgroup
+                    const node_taskgroup = document.getElementById('taskgroup-' + tgId);
+                    updateTaskgroupBounds('taskgroup-' + tgId);
+                    const rect = node_taskgroup.querySelector('rect');
+                    updateLines(tgId, rect.getAttribute('x'), rect.getAttribute('y')
+                    );
+                }
         } else if (selectedTaskgroup) {
             const coords = getMouseSVGCoords(e);
             const dx = coords.x - startMouse.x;
             const dy = coords.y - startMouse.y;
-            const rect = selectedTaskgroup.querySelector('rect');
-            const label = selectedTaskgroup.querySelector('text');
-            rect.setAttribute('x', taskgroupStartPositions.rect.x + dx);
-            rect.setAttribute('y', taskgroupStartPositions.rect.y + dy);
-            label.setAttribute('x', taskgroupStartPositions.label.x + dx);
-            label.setAttribute('y', taskgroupStartPositions.label.y + dy);
-            selectedTaskgroup.dataset.nodes.split(',').forEach(nodeId => {
-                const start = taskgroupStartPositions.nodes[nodeId];
+
+            taskgroupStartPositions.rects.forEach(r => {
+                r.el.setAttribute('x', r.x + dx);
+                r.el.setAttribute('y', r.y + dy);
+            });
+            taskgroupStartPositions.labels.forEach(t => {
+                t.el.setAttribute('x', t.x + dx);
+                t.el.setAttribute('y', t.y + dy);
+            });
+            Object.entries(taskgroupStartPositions.nodes).forEach(([nodeId, start]) => {
                 const nodeEl = document.getElementById(`node-${nodeId}`);
                 nodeEl.setAttribute('transform', `translate(${start.x + dx},${start.y + dy})`);
             });
-            updateTaskgroupBounds(selectedTaskgroup.Id);
-            updateLines(selectedTaskgroup.id.replace(/^taskgroup-/, ''),
-                        rect.getAttribute('x'), rect.getAttribute('y')
-            );
+
+            updateTaskgroupBounds(selectedTaskgroup.id);
+            updateLines(selectedTaskgroup.id.replace(/^taskgroup-/, ''), null, null);
         }
     });
-    window.addEventListener('mouseup', (e) => {
+
+    window.addEventListener('mouseup', () => {
         if (selected) selected.style.cursor = 'grab';
         if (selectedTaskgroup) selectedTaskgroup.style.cursor = 'grab';
         selected = null;

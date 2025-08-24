@@ -518,9 +518,11 @@ class DAG(BaseModel):
                         "uuid": str(task.tasktype_uuid) if serializable else task.tasktype_uuid,
                         "name": task.name,
                         "docstring": task.func.__doc__,
+                        "ui_css": task.ui_css.to_dict() if task.ui_css else None,
                         "is_parallel": task.is_parallel,
                         "merge_func": (
-                            {"name": task.merge_func.__name__, "docstring": task.merge_func.__doc__}
+                            {"name": task.merge_func.__name__,
+                             "docstring": task.merge_func.__doc__}
                             if task.merge_func is not None
                             else None
                         ),
@@ -537,6 +539,7 @@ class DAG(BaseModel):
                         "uuid": str(task.task_group.uuid) if serializable else task.task_group.uuid,
                         "name": task.task_group.name,
                         "docstring": task.task_group.docstring,
+                        "ui_css": task.task_group.ui_css.to_dict() if task.task_group.ui_css else None,
                         "elements": [
                             str(e.tasktype_uuid) if isinstance(e, Task)
                             else str(e.uuid) # inner TaskGroup
@@ -829,4 +832,9 @@ class UiCss(BaseModel):
                 " must be a hex color code starting with #."
             )
         return v
+
+    def to_dict(self) -> dict:
+        # Filter out None values before serializing
+        data = {k: v for k, v in self.dict().items() if v is not None}
+        return data
 
