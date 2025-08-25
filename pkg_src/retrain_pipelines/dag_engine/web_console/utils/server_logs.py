@@ -169,8 +169,7 @@ class AccessLogEntry(BaseModel):
         timestamp_local = self.timestamp.replace(tzinfo=server_tz)
 
         div = Div(
-            Div(
-                # Glass shine overlay
+            Div(# Glass shine overlay
                 style=(
                     "position: absolute; top: 0; left: 0; right: 0; "
                     "height: 40%; "
@@ -223,29 +222,31 @@ class AccessLogEntry(BaseModel):
                         "padding-left: 10px; margin-right: 10px; "
                         "border-left: 3px solid #eee; "
                         "min-width: 120px; display: inline-block; "
-                        "text-align: center; vertical-align: middle;"
+                        "text-align: center;"
                     )
                 ),
                Span(self.message,
                     style=(
                         "padding-left: 10px; border-left: 3px solid #eee; "
-                        "display: inline-block; vertical-align: middle;"
+                        "display: inline-block;"
                     )
                ),
-               style="position: relative; z-index: 1;"
+               style="align-items: baseline; position: relative; z-index: 1;"
             ),
             style=(
                 f"--status-color-normal: {rgb_to_rgba(status_color, .45)}; "
                 f"--status-color-hover: {rgb_to_rgba(status_color, .65)}; "
+                f"--status-color-border-left: {rgb_to_rgba(status_color)}; "
                 f"background: var(--status-color-normal); "
-                "padding-top: 1px; padding-bottom: 1px; padding-left: 12px; "
-                "padding-right: 12px; margin-bottom: 4px; "
+                "line-height: 1em; margin-bottom: 4px; "
+                "padding-top: 5px; padding-bottom: 2px; "
+                "padding-left: 12px; padding-right: 12px; "
                 "border-radius: 6px; "
                 "box-shadow: 0 2px 4px rgba(0,0,0,0.1), "
                     "0 8px 16px rgba(0,0,0,0.05), "
                     "inset 0 1px 0 rgba(255,255,255,0.4), "
                     "inset 0 -1px 0 rgba(0,0,0,0.1); "
-                f"border-left: 4px solid {rgb_to_rgba(status_color)}; "
+                f"border-left: 4px solid var(--status-color-border-left); "
                 "display: flex; align-items: flex-start; "
                 "backdrop-filter: blur(10px); "
                 "-webkit-backdrop-filter: blur(10px); position: relative; "

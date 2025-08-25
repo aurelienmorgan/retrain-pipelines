@@ -64,7 +64,8 @@ def execution_to_html(execution_ext: Union[Execution, ExecutionExt]) -> Div:
             A(
                 f"[{execution_ext.id}]",
                 href=f"/execution?id={execution_ext.id}",
-                target="_self"
+                target="_self",
+                style="color: inherit; text-decoration: inherit;"
             ),
             Span(f" - {localized_start_timestamp_str}"),
             cls="execution-body"

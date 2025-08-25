@@ -395,7 +395,8 @@ def FilterElement(
                 label,
                 style=("""
                   position: absolute;
-                  top: -1em;
+                  line-height: 1em;
+                  top: -0.75em;
                   left: -0.2em;
                   pointer-events: none;
                   color: white;

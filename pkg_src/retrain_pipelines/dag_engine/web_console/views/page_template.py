@@ -8,17 +8,17 @@ from retrain_pipelines import __version__
 
 def header(current_page="/"):
     nav_items = [
-        ("Home", "/"),
-        ("Not-Found", "/not-exists"),
-        ("Error", "/a_page_in_error"),
-        ("Logs", "/web_server"),
-        ("SSE API", "/api/docs")
+        ("Home", "/", "#ffffff"),
+        # ("Not-Found", "/not-exists", "#ffffff"),
+        # ("Error", "/a_page_in_error", "#ffffff"),
+        ("Logs", "/web_server", "#ccc"),
+        ("SSE API", "/api/docs", "#ccc")
     ]
     nav_links = []
-    for title, path in nav_items:
+    for title, path, color in nav_items:
         is_current = current_page == path
         link_style = (
-            "color: white; margin-left: 16px; text-decoration: none;"
+            f"color: {color}; margin-left: 16px; text-decoration: none;"
             + (" font-weight: bold; text-decoration: underline;"
                if is_current
                else "")
@@ -231,7 +231,7 @@ def footer():
     """
     current_year = datetime.now().year
     return Footer(
-        Hr(),
+        Hr(style="border-top-width: 1px; border-style: solid; border-color: #ccc;"),
         P(
             Small(
                 Span(
@@ -543,21 +543,18 @@ def page_layout(title, content, current_page="/"):
                 rel="stylesheet",
                 href="/html_body.css"
             ),
-            Script(src="https://cdn.tailwindcss.com"),
             Script(src="https://unpkg.com/htmx.org@1.9.2"),
             page_template_css
         ),
         Body(
             header(current_page),
             Main(
-                Br(),
                 # Script("""//htmlx debugging
                     # htmx.logger = function (elt, event, data) {
                     # console.log("HTMX event:", event, data);
                     # }
                 # """),
-                Div(content, cls="container mx-auto px-4 py-8"),
-                cls="min-h-screen"
+                Div(content, cls="body-container"),
             ),
             footer()
         ),
