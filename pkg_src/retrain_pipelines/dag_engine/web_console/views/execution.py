@@ -5,18 +5,37 @@ import asyncio
 from typing import Optional, List
 from fasthtml.common import H1, H2, Div, P, \
     Link, Script, Style, \
-    Request, Response, JSONResponse
+    Request, Response, JSONResponse, \
+    StreamingResponse
 from jinja2 import Environment, FileSystemLoader
 
 from ...db.dao import AsyncDAO
+from ..utils import ClientInfo
 from .page_template import page_layout
 from ....utils import get_text_pixel_width
+from ..utils.execution.events import \
+    new_exec_subscribers, exec_end_subscribers, \
+    multiplexed_event_generator, execution_number
 
 
 async def get_execution_elements_lists(
     execution_id: int
 ) -> Optional[List[str]]:
-    """Can be None, e.g. if no execution with that id exists."""
+    """Tuple of topologically-sorted serializable lists
+
+    of constituting elements, respectively :
+        - all TaskTypes (exhaustively)
+        - and all TaskGroups.
+
+    Can be None, e.g. if no execution with that id exists.
+
+    Params:
+        - execution_id (int)
+
+    Results:
+        - (List[TaskTypes])
+        - (List[TaskGroups])
+    """
     dao = AsyncDAO(
         db_url=os.environ["RP_METADATASTORE_ASYNC_URL"]
     )
@@ -59,8 +78,8 @@ def register(app, rt, prefix=""):
         return rendering_content
 
 
-    @rt(f"{prefix}/execution_details", methods=["GET"])
-    async def execution_details(request: Request):
+    @rt(f"{prefix}/execution_info", methods=["GET"])
+    async def execution_info(request: Request):
         execution_id = request.query_params.get("id")
         try:
             execution_id = int(execution_id)
@@ -68,21 +87,33 @@ def register(app, rt, prefix=""):
             return Response(
                 f"Invalid execution ID {execution_id}", 500)
 
+        dao = AsyncDAO(
+            db_url=os.environ["RP_METADATASTORE_ASYNC_URL"]
+        )
+        execution_info = await dao.get_execution_info(execution_id)
 
-        return JSONResponse({})
+        return JSONResponse(execution_info)
 
 
     @rt(f"{prefix}/execution_number", methods=["GET"])
-    async def execution_number(request: Request):
+    async def get_execution_number(request: Request):
         execution_id = request.query_params.get("id")
-        try:
-            execution_id = int(execution_id)
-        except (TypeError, ValueError):
-            return Response(
-                f"Invalid execution ID {execution_id}", 500)
+        execution_number_response = await execution_number(execution_id)
+
+        return execution_number_response
 
 
-        return Response(str(0))
+    @rt(f"{prefix}/execution_events", methods=["GET"])
+    async def sse_execution_events(request: Request):
+        client_info = ClientInfo(
+            ip=request.client.host,
+            port=request.client.port,
+            url=request.url.path
+        )
+        return StreamingResponse(
+            multiplexed_event_generator(client_info=client_info),
+            media_type="text/event-stream"
+        )
 
 
     @rt(f"{prefix}/execution", methods=["GET"])
@@ -98,18 +129,22 @@ def register(app, rt, prefix=""):
 
         return page_layout(title="retrain-pipelines", \
             content=Div(# page content
-                H1(# title
-                    style="padding-left: 30px;",
+                H1(# execution-name
+                    style="padding-left: 30px; margin: 40px 0;",
                     cls="shiny-gold-text",
-                    id="title"
+                    id="execution-name"
                 ),
                 H2(# subtitle
                     Div(
-                        "flow run # ",
+                        "execution # ",
                         Div(
                             id="execution-number"
                         ),
-                        f", run_id: {execution_id} -\u00A0",
+                        "/",
+                        Div(
+                            id="executions-count"
+                        ),
+                        f", exec_id: {execution_id} -\u00A0",
                         Div(
                             id="utc-start-date-time-str"
                         ),
@@ -119,17 +154,60 @@ def register(app, rt, prefix=""):
                         )
                     ),
                     style=(
-                        "background-color: #FFFFCC40; padding-left: 3px; "
+                        "padding-left: 10px; margin: 20px 0; "
+                        "background-color: #FFFFCC40; "
                         "text-align: left; color: #FFEA66;"
                     ),
                     id="subtitle"
                 ),
-                ## TODO, add stuff here
-                Script(f"""// async get execution-details
+                Script(f"""// async get execution-info
+                    function updateExecutionNumber(executionNumberJson) {{
+                        // Update the executions counters (incl. tooltip)
+                        console.log("updateExecutionNumber ENTER", executionNumberJson);
+                        document.getElementById("execution-number").innerText = executionNumberJson.number;
+                        const executionsCount = document.getElementById("executions-count");
+                        executionsCount.innerText = executionNumberJson.count;
+                        executionsCount.title =
+                            `${{executionNumberJson.count - executionNumberJson.completed}} ongoing\n` +
+                            `${{executionNumberJson.failed}} failed`;
+                    }}
+
                     (function(){{
+                        function formatUtcTimestamp(isoString) {{
+                            // expected to receive UTC formatted date time string
+                            // includes year if different than current.
+                            if (!isoString) return null;
+                            if (!isoString.endsWith('Z')) {{
+                                isoString += 'Z';
+                            }}
+                            const date = new Date(isoString);
+                            const options = {{
+                                weekday: 'short',
+                                year: 'numeric',
+                                month: 'short',
+                                day: '2-digit',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                                second: '2-digit',
+                                hour12: true,
+                                timeZone: 'UTC'
+                            }};
+                            const parts = new Intl.DateTimeFormat('en-US', options).formatToParts(date);
+                            const partMap = {{}};
+                            parts.forEach(part => {{
+                                partMap[part.type] = part.value;
+                            }});
+                            const currentYear = new Date().getUTCFullYear();
+                            const formattedString = 
+                                `${{partMap.weekday}} ${{partMap.month}} ${{partMap.day}}` +
+                                (parseInt(partMap.year) !== currentYear ? ` ${{partMap.year}}` : '') +
+                                `, ${{partMap.hour}}:${{partMap.minute}}:${{partMap.second}} ${{partMap.dayPeriod}} UTC`;
+                            return formattedString
+                        }}
+
                         document.addEventListener("DOMContentLoaded", function() {{
-                            // title & start-date-time
-                            fetch("{prefix}/execution_details?id={execution_id}", {{
+                            // execution-name & username & start-date-time
+                            fetch("{prefix}/execution_info?id={execution_id}", {{
                                 method: 'GET',
                                 headers: {{ "HX-Request": "true" }}
                             }})
@@ -141,15 +219,17 @@ def register(app, rt, prefix=""):
                                 }}
                                 return resp.json();
                             }})
-                            .then(function(execution_details) {{
-                                // inform title & subtitle
-                                document.getElementById("title").innerText = execution_details.title;
+                            .then(function(execution_info) {{
+                                // inform execution-name & subtitle
+                                const executionName = document.getElementById("execution-name");
+                                executionName.innerText = execution_info.name;
+                                executionName.title = execution_info.username;
                                 // (flow run # 4, run_id: 101 - Friday Apr 11 2025 11:57:29 PM UTC)
                                 document.getElementById("utc-start-date-time-str").innerText =
-                                    execution_details.start_timestamp;
+                                    formatUtcTimestamp(execution_info.start_timestamp);
 
                             }}).catch(error => {{
-                                console.error("Error fetching {prefix}/execution_details:", error);
+                                console.error("Error fetching {prefix}/execution_info:", error);
                             }});
 
                             // execution-number
@@ -158,34 +238,161 @@ def register(app, rt, prefix=""):
                                 headers: {{ "HX-Request": "true" }}
                             }})
                             .then(function(resp) {{
-                                return resp.text();
+                                if (!resp.ok) {{
+                                  return resp.text().then(text => {{
+                                    throw new Error(text || resp.statusText || 'Unknown error');
+                                  }});
+                                }}
+                                return resp.json();
                             }})
-                            .then(function(executionNumber) {{
-                                document.getElementById("execution-number").innerText = executionNumber;
-
+                            .then(function(executionNumberJson) {{
+                                updateExecutionNumber(executionNumberJson);
                             }}).catch(error => {{
-                                console.error("Error fetching {prefix}/execution_details:", error);
+                                console.error("Error fetching {prefix}/execution_number:", error);
                             }});
 
                         }});
                     }})();
                 """),
-                Style("""
-.shiny-gold-text {
-    font-size: 3em;
-    font-weight: bold;
-    color: #FFD700; /* Base gold color */
-    text-shadow: 
-        0 0 5px rgba(255, 215, 0, 0.7),  /* Inner glow */
-        0 0 10px rgba(255, 215, 0, 0.5), /* Outer glow */
-        0 0 15px rgba(255, 215, 0, 0.3); /* Soft outer glow */
-    background: linear-gradient(45deg, #FFD700, #FFEA66);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-}
+                Script(f"""// SSE events : retraining-pipeline execution events
+                    let executionEventSource;
+                    function registerExecEventSrc() {{
+                        executionEventSource = new EventSource(
+                            `{prefix}/execution_events`
+                        );
+
+                        executionEventSource.onerror = (err) => {{
+                            console.error('SSE error:', err);
+                        }};
+                        // Force close EventSource when leaving the page
+                        window.addEventListener('pagehide', () => {{
+                            executionEventSource.close();
+                        }});
+
+                        /* ************************
+                        * "new execution started" *
+                        ************************ */
+                        // update executions count label
+                        executionEventSource.addEventListener('newExecution', (event) => {{
+                            let payload;
+                            try {{
+                                // Parse the server data, assuming it's JSON
+                                payload = JSON.parse(event.data);
+                            }} catch (e) {{
+                                console.error('Error parsing SSE message data:', event.data);
+                                console.error(e);
+                                return;
+                            }}
+                            console.log("executionEventSource 'newExecution'", payload);
+                            if (payload.name === document.getElementById("execution-name").innerText) {{
+                                executionNumberJson = payload;
+                                executionNumberJson.number = document.getElementById("execution-number").innerText;
+                                updateExecutionNumber(executionNumberJson);
+                            }}
+                        }});
+
+                        /* *********************
+                        * "an execution ended" *
+                        ********************** */
+                        // update executions count label and tooltip
+                        executionEventSource.addEventListener('executionEnded', (event) => {{
+                            let payload;
+                            try {{
+                                // Parse the server data, assuming it's JSON
+                                payload = JSON.parse(event.data);
+                            }} catch (e) {{
+                                console.error('Error parsing SSE message data:', event.data);
+                                console.error(e);
+                                return;
+                            }}
+                            console.log("executionEventSource 'executionEnded'", payload);
+                            if (payload.name === document.getElementById("execution-name").innerText) {{
+                                executionNumberJson = payload;
+                                executionNumberJson.number = document.getElementById("execution-number").innerText;
+                                updateExecutionNumber(executionNumberJson);
+                            }}
+                        }});
+
+                    }}
+                    registerExecEventSrc();
                 """),
+                Script("""// re-register SSE source on window history.back()
+                    window.addEventListener('pageshow', function(event) {
+                        if (event.persisted) {
+                            registerExecEventSrc();
+                        }
+                    });
+                """),
+                Script("""// handling & recovering from server-loss
+                    const statusCircle = document.getElementById('status-circle');
+                    let previousClasses =
+                        Array.from(statusCircle.classList); // remember initial classes
+                    function onClassChange(mutationsList) {
+                        for (let mutation of mutationsList) {
+                            if (
+                                mutation.type === 'attributes' &&
+                                mutation.attributeName === 'class'
+                            ) {
+                                const newClasses = Array.from(statusCircle.classList);
+
+                                if (
+                                    newClasses.includes('disconnected') &&
+                                    !previousClasses.includes('disconnected')
+                                ) {
+                                    console.log("disconnected");
+                                    executionEventSource.close();
+                                } else if (
+                                    newClasses.includes('connected') &&
+                                    !previousClasses.includes('connected')
+                                ) {
+                                    console.log("reconnected");
+                                    registerExecEventSrc();
+                                    document.dispatchEvent(
+                                        new Event("DOMContentLoaded", { bubbles: true, cancelable: true }));
+                                }
+
+                                // Update previousClasses for next mutation check
+                                previousClasses = newClasses;
+                            }
+                        }
+                    }
+
+                    const observer = new MutationObserver(onClassChange);
+                    observer.observe(statusCircle, { attributes: true });
+                """),
+                Style("""
+                    .shiny-gold-text {
+                        font-size: 3em; font-weight: bold; min-height: 50.5px;
+                        color: #FFD700; /* Base gold color */
+                        text-shadow: 
+                            0 0 5px rgba(255, 215, 0, 0.7),  /* Inner glow */
+                            0 0 10px rgba(255, 215, 0, 0.5), /* Outer glow */
+                            0 0 15px rgba(255, 215, 0, 0.3); /* Soft outer glow */
+                        background: linear-gradient(45deg, #FFD700, #FFEA66);
+                        -webkit-background-clip: text;
+                        -webkit-text-fill-color: transparent;
+                    }
+
+                    .body-execution {
+                        padding-top: 3.5rem;
+                    }
+                """),
+
+                ## TODO, add stuff here (live-streamed Grantt diagram of tasks, etc.)
+
+                H1(
+                    "Execution DAG",
+                    style="""
+                        color: #6082B6;
+                        padding: 2rem 0 3rem;
+                        margin-bottom: 0;
+                        background-color: rgba(0, 0, 0, 0.03);
+                        border-bottom: 1px solid rgba(0, 0, 0, 0.125);
+                        text-align: center;
+                    """
+                ),
                 Div(# DAG renderer
-                    P("Loading DAG..."),
+                    P("\u00A0 Loading DAG...", style="color: white;"),
                     hx_get=f"{prefix}/dag_rendering?id={execution_id}",
                     hx_trigger="load",
                     hx_swap="outerHTML"
@@ -194,6 +401,7 @@ def register(app, rt, prefix=""):
                     rel="stylesheet",
                     href=f"{prefix}/svg_dag.css"
                 )
-            )
+            ),
+            body_cls=["body-execution"]
         )
 

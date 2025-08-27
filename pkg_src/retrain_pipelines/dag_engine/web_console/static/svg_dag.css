@@ -2,6 +2,10 @@
 svg {
     border: 1px solid #ccc;
     user-select: none;
+    min-width: 90vw;
+    display: block;
+    margin-left: auto;
+    margin-right: auto;
 }
 
 .node {

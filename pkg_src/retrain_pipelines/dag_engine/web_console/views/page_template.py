@@ -1,7 +1,10 @@
 
 from datetime import datetime
+from typing import Optional, List
 
-from fasthtml.common import *
+from fasthtml.common import Html, Head, Title, Meta, Link, \
+    Body, Main, Div, Style, Script, A, Hr, Br, Span, P, \
+    Code, Img, Small, Footer
 
 from retrain_pipelines import __version__
 
@@ -519,7 +522,12 @@ input.gcheckbox:checked::before {
 """)
 
 
-def page_layout(title, content, current_page="/"):
+def page_layout(
+    title: str,
+    content: str,
+    current_page: Optional[str] = "/",
+    body_cls: Optional[List[str]] = ["body-container"]
+) -> Html:
     return Html(
         Head(
             Title(title or "retrain-pipelines"),
@@ -543,6 +551,7 @@ def page_layout(title, content, current_page="/"):
                 rel="stylesheet",
                 href="/html_body.css"
             ),
+            Script(src="/http_1_1_max_sse_conn.js"),
             Script(src="https://unpkg.com/htmx.org@1.9.2"),
             page_template_css
         ),
@@ -554,7 +563,7 @@ def page_layout(title, content, current_page="/"):
                     # console.log("HTMX event:", event, data);
                     # }
                 # """),
-                Div(content, cls="body-container"),
+                Div(content, cls=body_cls),
             ),
             footer()
         ),

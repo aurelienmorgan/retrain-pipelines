@@ -1,3 +1,4 @@
+
 import os
 import time
 import json
@@ -15,7 +16,8 @@ from starlette.routing import WebSocketRoute
 from ...utils.rich_logging import framed_rich_log_str
 from .utils.server_logs import get_log_config, \
     get_log_websocket_endpoint
-from .views import home, server, api, execution
+from . import api
+from .views import home, server, execution
 from . import APP_STATIC_DIR
 
 
@@ -40,7 +42,7 @@ def start_server_once():
     app = FastHTML(exts="ws")
     rt = app.route
 
-    for view in [home, server, api, execution]:
+    for view in [api, home, server, execution]:
         view.register(app, rt)
 
     # Add the server-logs WebSocket route.
@@ -91,6 +93,7 @@ def start_server_once():
         app, host="0.0.0.0", port=5001,
         log_level="info", access_log=True,
         proxy_headers=True, forwarded_allow_ips="*",
+        reload=True,
         log_config=get_log_config()
     )
     _server = uvicorn.Server(config)

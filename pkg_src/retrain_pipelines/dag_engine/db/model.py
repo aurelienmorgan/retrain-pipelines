@@ -59,7 +59,9 @@ class Execution(Base):
             kwargs = {**data, **kwargs}
             kwargs["id"] = int(kwargs["id"])
             kwargs["name"] = str(kwargs["name"])
-            kwargs["docstring"] = str(kwargs["docstring"])
+            kwargs["docstring"] = \
+                str(kwargs["docstring"]) if "docstring" in kwargs \
+                else None
             kwargs["username"] = str(kwargs["username"])
             kwargs["_start_timestamp"] = \
                 parse_datetime(kwargs["start_timestamp"])

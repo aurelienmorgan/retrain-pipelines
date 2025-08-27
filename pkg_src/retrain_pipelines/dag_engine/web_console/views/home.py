@@ -17,12 +17,9 @@ from .page_template import page_layout
 from ..utils.executions import get_users, \
     get_pipeline_names, get_executions_ext
 from ..utils.executions.events import \
-    ClientInfo, \
-    new_exec_subscribers, new_exec_event_generator, \
-    exec_end_subscribers, exec_end_event_generator
-from ...db.model import Execution, ExecutionExt
-from ....utils import hex_to_rgba
-from ..views.api import rt_api
+    new_exec_subscribers, exec_end_subscribers, \
+    multiplexed_event_generator
+from ..utils import ClientInfo
 
 
 def AutoCompleteSelect(
@@ -636,138 +633,17 @@ def register(app, rt, prefix=""):
         return JSONResponse(users)
 
 
-    @rt_api(
-        rt, url= f"{prefix}/api/v1/new_execution_event",
-        methods=["POST"],
-        schema={
-            "requestBody": {
-                "content": {
-                    "application/json": {
-                        "schema": {
-                            "type": "object",
-                            "properties": {
-                                "id": {"type": "integer"},
-                                "name": {"type": "string"},
-                                "username": {"type": "string"},
-                                "start_timestamp": {
-                                    "type": "string",
-                                    "format": "date-time"
-                                }
-                            },
-                            "required": ["id", "name", "username",
-                                         "start_timestamp"]
-                        }
-                    }
-                }
-            },
-            "responses": {
-                "200": {"description": "OK"},
-                "422": {"description": "Invalid input"}
-            }
-        },
-        category="Executions"
-    )
-    async def post_new_execution_event(
-        request: Request
-    ):
-        """DAG-engine notifies of a new pipeline execution."""
-        data = await request.json()
-
-        # validate posted data
-        try:
-            execution = Execution(data)
-        except (KeyError, ValueError, TypeError) as e:
-            logging.getLogger().warn(e)
-            return Response(status_code=422,
-                            content=f"Invalid input: {str(e)}")
-
-        # dispatch 'new Execution' event
-        for q, _ in new_exec_subscribers:
-            await q.put(data)
-
-        return Response(status_code=200)
-
-
-    @rt(f"{prefix}/new_pipeline_exec_event", methods=["GET"])
-    async def get_new_pipeline_exec_event(request: Request):
+    @rt(f"{prefix}/executions_events", methods=["GET"])
+    async def sse_executions_events(request: Request):
         client_info = ClientInfo(
             ip=request.client.host,
             port=request.client.port,
             url=request.url.path
         )
         return StreamingResponse(
-            new_exec_event_generator(client_info=client_info),
-            media_type="text/event-stream")
-
-
-    @rt_api(
-        rt, url= f"{prefix}/api/v1/execution_end_event",
-        methods=["POST"],
-        schema={
-            "requestBody": {
-                "content": {
-                    "application/json": {
-                        "schema": {
-                            "type": "object",
-                            "properties": {
-                                "id": {"type": "integer"},
-                                "name": {"type": "string"},
-                                "username": {"type": "string"},
-                                "start_timestamp": {
-                                    "type": "string",
-                                    "format": "date-time"
-                                },
-                                "end_timestamp": {
-                                    "type": "string",
-                                    "format": "date-time"
-                                },
-                                "success": {"type": "boolean"}
-                            },
-                            "required": ["id", "name", "username",
-                                         "start_timestamp",
-                                         "end_timestamp", "success"]
-                        }
-                    }
-                }
-            },
-            "responses": {
-                "200": {"description": "OK"},
-                "422": {"description": "Invalid input"}
-            }
-        },
-        category="Executions"
-    )
-    async def post_execution_ended_event(
-        request: Request
-    ):
-        """DAG-engine notifies of a pipeline execution end."""
-        data = await request.json()
-
-        # validate posted data
-        try:
-            execution_ext = ExecutionExt(**data)
-        except (KeyError, ValueError, TypeError) as e:
-            logging.getLogger().warn(e)
-            return Response(status_code=422,
-                            content=f"Invalid input: {str(e)}")
-
-        # dispatch 'new Execution' event
-        for q, _ in exec_end_subscribers:
-            await q.put(data)
-
-        return Response(status_code=200)
-
-
-    @rt(f"{prefix}/pipeline_exec_end_event", methods=["GET"])
-    async def get_pipeline_exec_end_event(request: Request):
-        client_info = ClientInfo(
-            ip=request.client.host,
-            port=request.client.port,
-            url=request.url.path
+            multiplexed_event_generator(client_info=client_info),
+            media_type="text/event-stream"
         )
-        return StreamingResponse(
-            exec_end_event_generator(client_info=client_info),
-            media_type="text/event-stream")
 
 
     @rt(f"{prefix}/load_executions", methods=["POST"])
@@ -1104,23 +980,23 @@ def register(app, rt, prefix=""):
                                     /* ************************************* */
                                 });
                             """),
-                            Script(f"""// SSE events : new retraining-pipeline execution
-                                let newExecEventSource;
-                                function registerNewExecEvent() {{
-                                    newExecEventSource = new EventSource(
-                                        `{prefix}/new_pipeline_exec_event`
+                            Script(f"""// SSE multiplexed events : new retraining-pipeline execution
+                                let executionEventSource;
+                                function registerExecEventSrc() {{
+                                    executionEventSource = new EventSource(
+                                        `{prefix}/executions_events`
                                     );
 
-                                    newExecEventSource.onerror = (err) => {{
+                                    executionEventSource.onerror = (err) => {{
                                         console.error('SSE error:', err);
                                     }};
                                     // Force close EventSource when leaving the page
                                     window.addEventListener('pagehide', () => {{
-                                        newExecEventSource.close();
+                                        executionEventSource.close();
                                     }});
 
-                                    // Listen for incoming messages from the server
-                                    newExecEventSource.onmessage = (event) => {{
+                                    // Listen for incoming "new execution started" messages from the server
+                                    executionEventSource.addEventListener('newExecution', (event) => {{
                                         let payload;
                                         try {{
                                             // Parse the server data, assuming it's JSON
@@ -1129,7 +1005,7 @@ def register(app, rt, prefix=""):
                                             console.error('Error parsing SSE message data:', e);
                                             return;
                                         }}
-                                        //console.log("newExecEventSource.onmessage", payload);
+                                        //console.log("executionEventSource 'newExecution'", payload);
 
                                         /* ***********************************************
                                         * Keep autocomplete comboboxes dropdowns in sync *
@@ -1246,24 +1122,8 @@ def register(app, rt, prefix=""):
                                             execContainer.appendChild(newExecutionElement);
                                         }}
                                         /* ************************************************* */
-                                    }};
-                                }}
-                                registerNewExecEvent();
-                            """),
-                            Script(f"""// SSE events : retraining-pipeline execution ended
-                                let execEndEventSource;
-                                function registerEndExecEvent() {{
-                                    execEndEventSource = new EventSource(
-                                        `{prefix}/pipeline_exec_end_event`
-                                    );
-
-                                    execEndEventSource.onerror = (err) => {{
-                                        console.error('SSE error:', err);
-                                    }};
-                                    // Force close EventSource when leaving the page
-                                    window.addEventListener('pagehide', () => {{
-                                        execEndEventSource.close();
                                     }});
+
 
                                     function formatTimeDelta(start, end) {{
                                         const startDate = new Date(start);
@@ -1283,8 +1143,8 @@ def register(app, rt, prefix=""):
                                         return `${{hours}}:${{String(minutes).padStart(2, '0')}}:${{String(seconds).padStart(2, '0')}}.${{String(milliseconds).padStart(6, '0')}}`;
                                     }}
 
-                                    // Listen for incoming messages from the server
-                                    execEndEventSource.onmessage = (event) => {{
+                                    // Listen for incoming "an execution ended" messages from the server
+                                    executionEventSource.addEventListener('executionEnded', (event) => {{
                                         let payload;
                                         try {{
                                             // Parse the server data, assuming it's JSON
@@ -1293,8 +1153,8 @@ def register(app, rt, prefix=""):
                                             console.error('Error parsing SSE message data:', e);
                                             return;
                                         }}
+                                        //console.log("executionEventSource 'executionEnded'", payload);
 
-                                        //console.log("execEndEventSource - payload:", payload);
                                         const executionElement = document.getElementById("_"+payload.id);
                                         if (executionElement) {{
                                             const endTimestampElement =
@@ -1308,18 +1168,19 @@ def register(app, rt, prefix=""):
                                         }} else {{
                                             // execution not found in container,
                                             // dispatching to newExecEventSource
-                                            newExecEventSource.onmessage(event);
+                                            const simulatedEvent = new MessageEvent(
+                                                'newExecution', {{data: event.data}});
+                                            executionEventSource.dispatchEvent(simulatedEvent);
                                         }}
-                                    }}
+                                    }});
                                 }}
-                                registerEndExecEvent();
+                                registerExecEventSrc();
                             """),
                             Script("""// executions list reload on window history.back()
                                 window.addEventListener('pageshow', function(event) {
                                     if (event.persisted) {
                                         loadExecs();
-                                        registerNewExecEvent();
-                                        registerEndExecEvent();
+                                        registerExecEventSrc();
                                     }
                                 });
                             """),
@@ -1340,16 +1201,14 @@ def register(app, rt, prefix=""):
                                                 !previousClasses.includes('disconnected')
                                             ) {
                                                 console.log("disconnected");
-                                                newExecEventSource.close();
-                                                execEndEventSource.close();
+                                                executionEventSource.close();
                                             } else if (
                                                 newClasses.includes('connected') &&
                                                 !previousClasses.includes('connected')
                                             ) {
                                                 console.log("reconnected");
                                                 loadExecs();
-                                                registerNewExecEvent();
-                                                registerEndExecEvent();
+                                                registerExecEventSrc();
                                             }
 
                                             // Update previousClasses for next mutation check

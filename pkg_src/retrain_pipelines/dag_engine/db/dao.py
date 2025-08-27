@@ -5,12 +5,14 @@ import asyncio
 import requests
 
 from uuid import UUID
+from functools import lru_cache
 from typing import List, Optional
 from datetime import datetime, date
 
 from sqlalchemy import create_engine, Uuid, \
     select, and_, desc, case, func, event
-from sqlalchemy.orm import scoped_session, sessionmaker
+from sqlalchemy.orm import scoped_session, \
+    sessionmaker, aliased
 from sqlalchemy.ext.asyncio import create_async_engine, \
     AsyncSession
 
@@ -323,6 +325,7 @@ class AsyncDAO(DAOBase):
 
             return executions_ext
 
+    @lru_cache
     async def get_execution_tasktypes_list(
         self, execution_id: int,
         serializable: bool = False
@@ -364,6 +367,7 @@ class AsyncDAO(DAOBase):
 
             return out_list
 
+    @lru_cache
     async def get_execution_taskgroups_list(
         self, execution_id: int,
         serializable: bool = False
@@ -404,6 +408,118 @@ class AsyncDAO(DAOBase):
                 out_list.append(row_dict)
 
             return out_list
+
+    @lru_cache
+    async def get_execution_info(
+        self, execution_id: int
+    ) -> Optional[dict]:
+        """
+        Return basic info (name and _start_timestamp) for an Execution.
+
+        Params:
+            - execution_id (int):
+                the Execution.id to query.
+
+        Returns:
+            dict with keys 'name' and '_start_timestamp' if found,
+            else None
+        """
+        statement = (
+            select(Execution.name, Execution.username,
+                   Execution._start_timestamp)
+            .where(Execution.id == execution_id)
+        )
+        async with self._get_session() as session:
+            result = await session.execute(statement)
+            row = result.first()
+            if row is None:
+                return None
+            name, username, _start_timestamp = row
+            return {
+                "name": name,
+                "username": username,
+                "start_timestamp": _start_timestamp.isoformat()
+            }
+
+    async def get_execution_number(
+        self, execution_id: int
+    ) -> Optional[dict]:
+        """
+        Return occurrences info for an given Execution name.
+
+        Note: no cache, executions count is a living var.
+
+        Params:
+            - execution_id (int):
+                the Execution.id to query for a name.
+
+        Returns:
+            dict if execution found else None.
+            Includes:
+              - execution name
+              - total executions with the same name
+              - number: count of executions with
+                start_ts <= that execution's start_ts
+              - completed: count executions with
+                non-null _end_timestamp
+              - failed: count of completed executions that
+                have at least one failed Task
+        """
+        async with self._get_session() as session:
+            exec_subq = (
+                select(
+                    Execution.name.label("name"), 
+                    Execution._start_timestamp.label("start_ts")
+                )
+                .where(Execution.id == execution_id)
+                .subquery()
+            )
+
+            task_alias = aliased(Task)
+            # Subquery condition: completed executions have a task failed
+            failed_exists = (
+                select(1)
+                .where(task_alias.exec_id == Execution.id)
+                .where(task_alias.failed == True)
+                .limit(1)
+                .exists()
+            )
+
+            main_stmt = (
+                select(
+                    Execution.name,
+                    func.count(Execution.id).label("total_count"),
+                    func.count(
+                        func.nullif(
+                            Execution._start_timestamp > exec_subq.c.start_ts, True
+                        )
+                    ).label("number"),
+                    func.count(
+                        func.nullif(Execution._end_timestamp == None, True)
+                    ).label("completed"),
+                    func.count(
+                        func.nullif(
+                            (Execution._end_timestamp != None) & failed_exists,
+                            False
+                        )
+                    ).label("failed"),
+                )
+                .where(Execution.name == exec_subq.c.name)
+                .group_by(Execution.name)
+            )
+
+            result = await session.execute(main_stmt)
+            row = result.first()
+            if row is None or row.total_count == 0:
+                return None
+
+            return {
+                "name": row.name,
+                "number": row.number,
+                "count": row.total_count,
+                "completed": row.completed,
+                "failed": row.failed,
+            }
 
 
 #////////////////////////////////////////////////////////////////////////////

@@ -183,14 +183,14 @@ class AccessLogEntry(BaseModel):
             ),
 
             Div(
-                Span(
+                Span(# Icon
                     method_icon,
                     style=(
                         "min-width: 22px; display: inline-block; "
                         "text-align: center;"
                     )
                 ),
-                Span(
+                Span(# Method
                     f"\u00A0{self.method}",
                     style=(
                         f"color: {rgb_to_rgba(status_color)}; "
@@ -200,7 +200,7 @@ class AccessLogEntry(BaseModel):
                         "text-shadow: 0 0 12px #FFD700, 0 0 2px #FFD700;"
                     )
                 ),
-                Span(
+                Span(# Timestamp
                     (
                         timestamp_local.strftime('%Y-%m-%d %H:%M:%S') +
                         " " + timestamp_local.strftime('%Z')
@@ -216,7 +216,7 @@ class AccessLogEntry(BaseModel):
                 )
             ),
             Div(
-                Span(
+                Span(# Client IP
                     self.client_addr,
                     style=(
                         "padding-left: 10px; margin-right: 10px; "
@@ -225,7 +225,8 @@ class AccessLogEntry(BaseModel):
                         "text-align: center;"
                     )
                 ),
-               Span(self.message,
+                Span(# Message
+                    self.message,
                     style=(
                         "padding-left: 10px; border-left: 3px solid #eee; "
                         "display: inline-block;"
@@ -239,7 +240,7 @@ class AccessLogEntry(BaseModel):
                 f"--status-color-border-left: {rgb_to_rgba(status_color)}; "
                 f"background: var(--status-color-normal); "
                 "line-height: 1em; margin-bottom: 4px; "
-                "padding-top: 5px; padding-bottom: 2px; "
+                "padding-top: 3px; padding-bottom: 4px; "
                 "padding-left: 12px; padding-right: 12px; "
                 "border-radius: 6px; "
                 "box-shadow: 0 2px 4px rgba(0,0,0,0.1), "

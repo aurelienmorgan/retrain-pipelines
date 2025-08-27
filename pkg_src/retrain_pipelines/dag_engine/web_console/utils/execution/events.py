@@ -1,15 +1,15 @@
 
+import os
 import json
-import copy
 import asyncio
 import logging
-import tzlocal
 
-from datetime import datetime
+from typing import Union
+from fasthtml.common import Response, JSONResponse
 
 from ....db.model import Execution, ExecutionExt
+from ....db.dao import AsyncDAO
 from .. import ClientInfo
-from .executions import execution_to_html
 
 
 # Global lists of subscriber queues
@@ -17,6 +17,27 @@ new_exec_subscribers = []
 exec_end_subscribers = []
 
 uvicorn_logger = logging.getLogger("uvicorn.access")
+
+
+async def execution_number(
+    execution_id: int
+) -> Union[Response, JSONResponse]:
+    try:
+        execution_id = int(execution_id)
+    except (TypeError, ValueError):
+        return Response(
+            f"Invalid execution ID {execution_id}", 500)
+
+    dao = AsyncDAO(
+        db_url=os.environ["RP_METADATASTORE_ASYNC_URL"]
+    )
+    execution_number_dict = await dao.get_execution_number(execution_id)
+    if execution_number_dict is None:
+        return Response(
+            f"Invalid execution ID {execution_id}", 500)
+    print(f"execution_number_dict : {execution_number_dict}")
+
+    return JSONResponse(execution_number_dict)
 
 
 async def multiplexed_event_generator(client_info: ClientInfo):
@@ -27,7 +48,7 @@ async def multiplexed_event_generator(client_info: ClientInfo):
 
     new_exec_subscribers.append((queues["newExecution"], client_info))
     exec_end_subscribers.append((queues["executionEnded"], client_info))
-    print(f"executions subscribers [{len(new_exec_subscribers)}] : {new_exec_subscribers}")
+    print(f"execution subscribers [{len(new_exec_subscribers)}] : {new_exec_subscribers}")
 
     try:
         # Initial get asyncio tasks
@@ -42,16 +63,11 @@ async def multiplexed_event_generator(client_info: ClientInfo):
             for finished in done:
                 # Identify which queue/task finished
                 key = next(k for k, v in get_tasks.items() if v == finished)
-                data = copy.copy(finished.result())
-                if key == "newExecution":
-                    event_type = "newExecution"
-                    execution = Execution(data)
-                    data["html"] = execution_to_html(execution)
-                else:
-                    event_type = "executionEnded"
-                    execution_ext = ExecutionExt(**data)
-                    data = execution_ext.to_dict()
-                    data["html"] = execution_to_html(execution_ext)
+                execution_id = finished.result()['id']
+                if key in ["newExecution", "executionEnded"]:
+                    execution_number_response = await execution_number(execution_id)
+                    data = execution_number_response.body.decode("utf-8")
+                    event_type = key
 
                 # Replace only the finished task
                 get_tasks[key] = asyncio.create_task(queues[key].get())
@@ -63,7 +79,7 @@ async def multiplexed_event_generator(client_info: ClientInfo):
                 )
                 yield (
                     f"event: {event_type}\n"
-                    f"data: {json.dumps(data)}\n\n"
+                    f"data: {data}\n\n"
                 )
     except asyncio.CancelledError:
         for task in get_tasks.values():
@@ -75,5 +91,5 @@ async def multiplexed_event_generator(client_info: ClientInfo):
     finally:
         new_exec_subscribers.remove((queues["newExecution"], client_info))
         exec_end_subscribers.remove((queues["executionEnded"], client_info))
-        print(f"executions subscribers [{len(new_exec_subscribers)}] : {new_exec_subscribers}")
+        print(f"execution subscribers [{len(new_exec_subscribers)}] : {new_exec_subscribers}")
 
