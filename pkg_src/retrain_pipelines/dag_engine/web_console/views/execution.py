@@ -134,6 +134,17 @@ def register(app, rt, prefix=""):
                     cls="shiny-gold-text",
                     id="execution-name"
                 ),
+                Div(# DAG docstring
+                    "",
+                    Div(
+                        cls="content"
+                    ),
+                    Div(
+                        "Show more",
+                        id="dag-docstring-show-more"
+                    ),
+                    id="dag-docstring"
+                ),
                 H2(# subtitle
                     Div(
                         "execution # ",
@@ -163,7 +174,7 @@ def register(app, rt, prefix=""):
                 Script(f"""// async get execution-info
                     function updateExecutionNumber(executionNumberJson) {{
                         // Update the executions counters (incl. tooltip)
-                        console.log("updateExecutionNumber ENTER", executionNumberJson);
+                        //console.log("updateExecutionNumber ENTER", executionNumberJson);
                         document.getElementById("execution-number").innerText = executionNumberJson.number;
                         const executionsCount = document.getElementById("executions-count");
                         executionsCount.innerText = executionNumberJson.count;
@@ -224,6 +235,13 @@ def register(app, rt, prefix=""):
                                 const executionName = document.getElementById("execution-name");
                                 executionName.innerText = execution_info.name;
                                 executionName.title = execution_info.username;
+                                if (execution_info.docstring) {{
+                                    const dagDocstring = document.getElementById("dag-docstring");
+                                    const dagDocstringContentDiv = document.querySelector("#dag-docstring .content");
+                                    dagDocstringContentDiv.innerText = execution_info.docstring;
+                                    dagDocstring.classList.add('showing');
+                                    checkDocstringOverflow();
+                                }}
                                 // (flow run # 4, run_id: 101 - Friday Apr 11 2025 11:57:29 PM UTC)
                                 document.getElementById("utc-start-date-time-str").innerText =
                                     formatUtcTimestamp(execution_info.start_timestamp);
@@ -254,6 +272,46 @@ def register(app, rt, prefix=""):
                         }});
                     }})();
                 """),
+                Script("""// DAG docstring 'show-more'
+                    function checkDocstringOverflow() {
+                        const dagDocstring = document.getElementById('dag-docstring');
+                        const dagDocstringContentDiv = document.querySelector("#dag-docstring .content");
+                        const showMore = document.getElementById('dag-docstring-show-more');
+
+                        // Calculating two lines of text height (safer: use computed styles)
+                        const lineHeight = parseFloat(getComputedStyle(dagDocstringContentDiv).lineHeight);
+                        const maxTwoLinesHeight = lineHeight * 2;
+                        //console.log("checkDocstringOverflow", lineHeight, maxTwoLinesHeight, dagDocstringContentDiv.scrollHeight);
+
+                        if (dagDocstringContentDiv.scrollHeight > maxTwoLinesHeight + 2) {
+                            showMore.style.display = 'block';
+                            dagDocstring.classList.add('collapsed');
+                        } else {
+                            showMore.style.display = 'none';
+                        }
+                    }
+
+                    window.addEventListener('resize', checkDocstringOverflow);
+                    checkDocstringOverflow();
+
+                    const dagDocstring = document.getElementById('dag-docstring');
+                    const showMoreDagDocstringBtn = document.getElementById('dag-docstring-show-more');
+
+                    showMoreDagDocstringBtn.addEventListener('click', () => {
+                        if (dagDocstring.classList.contains('collapsed')) {
+                            // Expand
+                            dagDocstring.classList.remove('collapsed');
+                            dagDocstring.classList.add('expanded');
+                            showMoreDagDocstringBtn.innerText = 'Show less';
+                        } else {
+                            // Collapse
+                            dagDocstring.scrollTop = 0;
+                            dagDocstring.classList.remove('expanded');
+                            dagDocstring.classList.add('collapsed');
+                            showMoreDagDocstringBtn.innerText = 'Show more';
+                        }
+                    });
+                """),
                 Script(f"""// SSE events : retraining-pipeline execution events
                     let executionEventSource;
                     function registerExecEventSrc() {{
@@ -283,7 +341,7 @@ def register(app, rt, prefix=""):
                                 console.error(e);
                                 return;
                             }}
-                            console.log("executionEventSource 'newExecution'", payload);
+                            //console.log("executionEventSource 'newExecution'", payload);
                             if (payload.name === document.getElementById("execution-name").innerText) {{
                                 executionNumberJson = payload;
                                 executionNumberJson.number = document.getElementById("execution-number").innerText;
@@ -305,7 +363,7 @@ def register(app, rt, prefix=""):
                                 console.error(e);
                                 return;
                             }}
-                            console.log("executionEventSource 'executionEnded'", payload);
+                            //console.log("executionEventSource 'executionEnded'", payload);
                             if (payload.name === document.getElementById("execution-name").innerText) {{
                                 executionNumberJson = payload;
                                 executionNumberJson.number = document.getElementById("execution-number").innerText;
@@ -375,6 +433,54 @@ def register(app, rt, prefix=""):
 
                     .body-execution {
                         padding-top: 3.5rem;
+                    }
+
+                    #dag-docstring {
+                        margin: 0 20px;
+                        padding: 12px 12px 12px 16px;
+                        min-height: 56px;
+                        position: relative;
+                        display: flex;
+                        flex-direction: column;
+                        align-items: flex-end;
+                    }
+                    #dag-docstring.showing {
+                        background: linear-gradient(135deg, rgba(255, 255, 255, 0.1) 0%, rgba(248, 249, 250, 0.1) 100%);
+                        border: 1px solid rgba(222, 226, 230, 0.5);
+                        border-radius: 10px;
+                        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.8);
+                        color: white;
+                    }
+                    #dag-docstring.collapsed {
+                        height: 56px; /* min-height*/
+                        overflow: hidden;
+                    }
+                    #dag-docstring.expanded {
+                        height: 150px;
+                        overflow-y: auto;
+                    }
+
+                    #dag-docstring .content {
+                        flex: 1 1 auto;
+                        min-width: 0;
+                        width: 100%;
+                        text-align: justify;
+                    }
+
+                    #dag-docstring-show-more {
+                        position: sticky;
+                        bottom: 0;
+                        transform: translateY(10px);
+                        background: rgba(0, 0, 0, 0.5);
+                        color: white;
+                        padding: 2px 8px;
+                        border-radius: 5px;
+                        cursor: pointer;
+                        font-size: 13px;
+                        white-space: nowrap; /* prevents wrapping */
+                        width: auto;
+                        max-width: fit-content;
+                        z-index: 10;
                     }
                 """),
 

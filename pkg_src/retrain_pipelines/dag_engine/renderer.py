@@ -23,8 +23,8 @@ def render_svg(dag: DAG, filename="dag.html"):
 
     tasktypes_list, taskgroups_list = \
         dag.to_elements_lists(serializable=True)
-    print(f"execution_tasktypes_list : {tasktypes_list}")
-    print(f"execution_taskgroups_list : {taskgroups_list}")
+    # print(f"execution_tasktypes_list : {tasktypes_list}")
+    # print(f"execution_taskgroups_list : {taskgroups_list}")
 
     rendering_content = template.render(
         nodes=tasktypes_list,

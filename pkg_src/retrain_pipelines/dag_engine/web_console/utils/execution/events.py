@@ -35,7 +35,7 @@ async def execution_number(
     if execution_number_dict is None:
         return Response(
             f"Invalid execution ID {execution_id}", 500)
-    print(f"execution_number_dict : {execution_number_dict}")
+    # print(f"execution_number_dict : {execution_number_dict}")
 
     return JSONResponse(execution_number_dict)
 

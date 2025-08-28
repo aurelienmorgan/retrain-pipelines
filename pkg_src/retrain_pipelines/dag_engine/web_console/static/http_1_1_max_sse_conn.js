@@ -101,21 +101,21 @@ channel.onmessage = function(event) {
         case 'register':
             allTabs.add(event.data.tabId);
             channel.postMessage({type: 'response', tabId: tabId});
-            console.log(`Tabs open: ${allTabs.size}`);
+            //console.log(`Tabs open: ${allTabs.size}`);
             saveTabCount();
             if (!document.hidden) checkTabLimit();
             break;
             
         case 'response':
             allTabs.add(event.data.tabId);
-            console.log(`Tabs open: ${allTabs.size}`);
+            //console.log(`Tabs open: ${allTabs.size}`);
             saveTabCount();
             if (!document.hidden) checkTabLimit();
             break;
             
         case 'unload':
             allTabs.delete(event.data.tabId);
-            console.log(`Tabs open: ${allTabs.size}`);
+            //console.log(`Tabs open: ${allTabs.size}`);
             saveTabCount();
             checkTabLimit();
             break;
@@ -140,7 +140,7 @@ setInterval(() => {
 // Initial count request
 setTimeout(() => {
     cleanupDeadTabs();
-    console.log(`Initial tabs open: ${allTabs.size}`);
+    //console.log(`Initial tabs open: ${allTabs.size}`);
     if (!document.hidden) checkTabLimit();
 }, 500);
 

@@ -465,11 +465,14 @@
 
             {# Decrease parallel depth BEFORE rendering node if merge #}
             {%- if node.merge_func is not none and not node.is_parallel %}
-                <!-- DEBUG: decrease parallel depth - node {{ node.uuid }} parallel_depth={{ state.parallel_depth }} is_parallel={{ node.is_parallel }} merge_func={{ node.merge_func is not none }} -->
+                <!-- DEBUG: decrease parallel depth - node {{ node.uuid }}
+                            parallel_depth={{ state.parallel_depth }} is_parallel={{ node.is_parallel }}
+                            merge_func={{ node.merge_func is not none }} -->
                 {%- set _ = state.update({'parallel_depth': state.parallel_depth - 1}) %}
             {%- endif %}
 
-            <!-- DEBUG: node {{ node.uuid }} parallel_depth={{ state.parallel_depth }} is_parallel={{ node.is_parallel }} merge_func={{ node.merge_func is not none }} -->
+            <!-- DEBUG: node {{ node.uuid }} parallel_depth={{ state.parallel_depth }}
+                        is_parallel={{ node.is_parallel }} merge_func={{ node.merge_func is not none }} -->
             {# Render per-node underlays only for nodes NOT part of a taskgroup.
                If node is in a taskgroup, the underlays were already rendered at the taskgroup level. #}
             <g class="node" id="node-{{ node.uuid }}" transform="translate({{ pos.x }}, {{ pos.y }})" 
@@ -545,9 +548,99 @@
                 </text>
             </g>
         {%- endfor %}
+
+        {# Draw all tooltips last in a separate group #}
+        <g id="tooltips-group" pointer-events="none">
+            {# Node tooltips #}
+            {%- for node in nodes %}
+            {%- if node.docstring %}
+            <foreignObject id="tooltip-node-{{ node.uuid }}"
+                           x="{{ id_to_pos[node.uuid].x }}"
+                           y="{{ id_to_pos[node.uuid].y - 80 }}"
+                           width="200"
+                           height="70"
+                           style="visibility:hidden; overflow: visible;">
+                <div xmlns="http://www.w3.org/1999/xhtml"
+                     style="box-sizing: border-box; padding: 8px; background: #333;
+                            color: white; border: 1px solid #666; border-radius: 5px;
+                            font-size: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.3);"
+                >
+                    <strong>{{ node.name }}</strong><br/>
+                    <em>{{ node.docstring }}</em>
+                </div>
+            </foreignObject>
+            {%- endif %}
+            {%- endfor %}
+            {# Taskgroup tooltips #}
+            {%- for tg in taskgroups %}
+            {%- if tg.docstring %}
+            {%- set tg_coords = taskgroup_bounds.get(tg.uuid) %}
+            <foreignObject id="tooltip-taskgroup-{{ tg.uuid }}"
+                           x="{{ tg_coords.min_x if tg_coords else 0 }}"
+                           y="{{ (tg_coords.min_y - (tg_label_height + tg_label_margin_top) - 80)
+                                 if tg_coords else 0 }}" 
+                           width="{{ (tg_coords.max_x - tg_coords.min_x)
+                                     if (tg_coords and (tg_coords.max_x -  tg_coords.min_x) > 200)
+                                     else 200 }}"
+                           height="70"
+                           style="visibility:hidden; overflow: visible;">
+                <div xmlns="http://www.w3.org/1999/xhtml"
+                     style="box-sizing: border-box; padding: 8px; background: #333;
+                            color: white; border: 1px solid #666; border-radius: 5px;
+                            font-size: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.3);"
+                >
+                    <strong>{{ tg.name }}</strong><br/>
+                    <em>{{ tg.docstring }}</em>
+                </div>
+            </foreignObject>
+            {%- endif %}
+            {%- endfor %}
+        </g>
     </g>
 </svg>
 
+
+<script>
+    // Node tooltips
+    {%- for node in nodes %}
+        {%- if node.docstring %}
+        (function() {
+            const nodeGroup = document.getElementById('node-{{ node.uuid }}');
+            const tooltip = document.getElementById('tooltip-node-{{ node.uuid }}');
+
+            if (nodeGroup && tooltip) {
+                nodeGroup.addEventListener('mouseover', () => {
+                    tooltip.style.visibility = 'visible';
+                });
+
+                nodeGroup.addEventListener('mouseout', () => {
+                    tooltip.style.visibility = 'hidden';
+                });
+            }
+        })();
+        {%- endif %}
+    {%- endfor %}
+
+    // Taskgroup tooltips
+    {%- for tg in taskgroups %}
+        {%- if tg.docstring %}
+        (function() {
+            const taskgroupElement = document.getElementById('taskgroup-{{ tg.uuid }}');
+            const tooltip = document.getElementById('tooltip-taskgroup-{{ tg.uuid }}');
+
+            if (taskgroupElement && tooltip) {
+                taskgroupElement.addEventListener('mouseover', () => {
+                    tooltip.style.visibility = 'visible';
+                });
+
+                taskgroupElement.addEventListener('mouseout', () => {
+                    tooltip.style.visibility = 'hidden';
+                });
+            }
+        })();
+        {%- endif %}
+    {%- endfor %}
+</script>
 
 
 <script>

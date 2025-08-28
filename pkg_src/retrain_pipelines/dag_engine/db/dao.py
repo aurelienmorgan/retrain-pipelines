@@ -426,7 +426,8 @@ class AsyncDAO(DAOBase):
         """
         statement = (
             select(Execution.name, Execution.username,
-                   Execution._start_timestamp)
+                   Execution._start_timestamp,
+                   Execution.docstring)
             .where(Execution.id == execution_id)
         )
         async with self._get_session() as session:
@@ -434,11 +435,12 @@ class AsyncDAO(DAOBase):
             row = result.first()
             if row is None:
                 return None
-            name, username, _start_timestamp = row
+            name, username, _start_timestamp, docstring = row
             return {
                 "name": name,
                 "username": username,
-                "start_timestamp": _start_timestamp.isoformat()
+                "start_timestamp": _start_timestamp.isoformat(),
+                "docstring": docstring
             }
 
     async def get_execution_number(
@@ -583,7 +585,7 @@ def after_end_timestamp_change(target, newValue, oldvalue, initiator):
                 data_snapshot[col.name] = value
         data_snapshot["end_timestamp"] = newValue.isoformat()
         data_snapshot["success"] = not failure_exists
-        print(f"ExecutionExt - data_snapshot: {data_snapshot}")
+        # print(f"ExecutionExt - data_snapshot: {data_snapshot}")
 
         try:
             requests.post(connection_ended_api_endpoint, json=data_snapshot)
