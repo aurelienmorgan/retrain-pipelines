@@ -219,7 +219,7 @@
             {%- for id in ids %}
                 {%- set i = loop.index0 %}
                 {%- set x = level_start_x + i * spacing_x %}
-                {%- set y = node_height + depth * spacing_y %} {# DAG top margin = 1*node_height #}
+                {%- set y = -tooltip_y_offset + depth * spacing_y %} {# DAG top margin = 1*-tooltip_y_offset #}
                 {%- set _ = id_to_pos.update({id: {'x': x, 'y': y} }) %}
             {%- endfor %}
         {%- endfor %}
@@ -485,22 +485,19 @@
                         <g transform="translate({{ offset }}, {{ offset }})">
                             {%- if node.is_parallel %}
                                 {{ trapezoid_entry(
-                                    node_width,
-                                    node_height,
+                                    node_width, node_height,
                                     fill=node.ui_css.background if node.ui_css and node.ui_css.background else None,
                                     stroke=node.ui_css.border if node.ui_css and node.ui_css.border else None
                                 ) }}
                             {%- elif node.merge_func is not none %}
                                 {{ trapezoid_exit(
-                                    node_width,
-                                    node_height,
+                                    node_width, node_height,
                                     fill=node.ui_css.background if node.ui_css and node.ui_css.background else None,
                                     stroke=node.ui_css.border if node.ui_css and node.ui_css.border else None
                                 ) }}
                             {%- else %}
                                 {{ node_rect_box(
-                                    node_width,
-                                    node_height,
+                                    node_width, node_height,
                                     fill=node.ui_css.background if node.ui_css and node.ui_css.background else None,
                                     stroke=node.ui_css.border if node.ui_css and node.ui_css.border else None
                                 ) }}
@@ -512,15 +509,13 @@
                 {# Render main node shape on top #}
                 {%- if node.is_parallel %}
                     {{ trapezoid_entry(
-                        node_width,
-                        node_height,
+                        node_width, node_height,
                         fill=node.ui_css.background if node.ui_css and node.ui_css.background else None,
                         stroke=node.ui_css.border if node.ui_css and node.ui_css.border else None
                     ) }}
                 {%- elif node.merge_func is not none %}
                     {{ trapezoid_exit(
-                        node_width,
-                        node_height,
+                        node_width, node_height,
                         fill=node.ui_css.background if node.ui_css and node.ui_css.background else None,
                         stroke=node.ui_css.border if node.ui_css and node.ui_css.border else None
                     ) }}
@@ -533,8 +528,7 @@
                     </text>
                 {%- else %}
                     {{ node_rect_box(
-                        node_width,
-                        node_height,
+                        node_width, node_height,
                         fill=node.ui_css.background if node.ui_css and node.ui_css.background else None,
                         stroke=node.ui_css.border if node.ui_css and node.ui_css.border else None
                     ) }}
@@ -1025,7 +1019,7 @@
 
         // Calculate dagHeight and add top/bottom margin
         const dagHeight = maxY - minY;
-        const newHeight = dagHeight + 2 * {{ node_height }};
+        const newHeight = dagHeight + 2 * {{ -tooltip_y_offset}}; // top & bottom margin
 
         // Set new SVG height (in pixels)
         svg.setAttribute('height', newHeight);
@@ -1060,7 +1054,7 @@
         // Horizontal centering
         currentTransform.x = viewportCenterX - contentCenterX * currentTransform.scale;
         // Vertical top alignment (e.g. top of DAG starts at, from top of viewport)
-        const desiredTopOffset = {{ node_height }};
+        const desiredTopOffset = {{ -tooltip_y_offset }};
         currentTransform.y = desiredTopOffset - minY * currentTransform.scale;
 
         updateTransform();

@@ -460,8 +460,8 @@ def MultiStatesToggler(
                 overflow: hidden;
                 padding: 0 10px;
                 background: rgba(255, 255, 255, 0.15);
-                backdrop-filter: blur(8px);
                 -webkit-backdrop-filter: blur(8px);
+                backdrop-filter: blur(8px);
                 border: 1px solid rgba(255, 255, 255, 0.3);
                 border-radius: 10px;
                 box-shadow: 0 4px 10px rgba(255, 255, 255, 0.2);
@@ -1263,6 +1263,7 @@ def register(app, rt, prefix=""):
                                   font-size: 11px;
                                   font-family: system-ui, -apple-system, sans-serif;
                                   font-weight: 500;
+                                  -webkit-backdrop-filter: blur(10px);
                                   backdrop-filter: blur(10px);
                                 }
 
@@ -1302,44 +1303,42 @@ def register(app, rt, prefix=""):
                     ),
                     Style(f""" /* execution-item (loaded at runtime) */
                         .execution {{
-                            display: flex;
-                            justify-content: space-between;
-                            width: 100%;
-                            line-height: 1em;
-                            position: relative;
-                            border-radius: 3px;
+                            display: flex; align-items: flex-start;
+
+                            background: var(--background-normal);
+                            color: var(--color-normal);
+
+                            line-height: 1em; margin-bottom: 4px;
+                            border-radius: 6px;
                             box-shadow: 0 2px 4px rgba(0,0,0,0.1),
                                 0 8px 16px rgba(0,0,0,0.05),
                                 inset 0 1px 0 rgba(255,255,255,0.4),
                                 inset 0 -1px 0 rgba(0,0,0,0.1);
-                            backdrop-filter: blur(10px);
+                            position: relative;
                             -webkit-backdrop-filter: blur(10px);
-                            overflow: hidden;
-                            transition: all 0.3s ease;
+                            backdrop-filter: blur(10px);
+                            transition: transform 0.2s ease, margin 0.2s ease;
                             transform-origin: center center;
                         }}
 
-                        .execution:hover {{
-                            transform: translateY(-1px);
-                        }}
-
                         .execution-body {{
-                            background: var(--exec_background-normal);
-                            color: var(--exec_color-normal);
-                            border-radius: 3px 0 0 3px;
                             width: 100%;
                             display: flex;
                             align-items: center;
-                            min-height: 1.265em;
+
+                            line-height: 1em;
+                            padding-top: 3px; padding-bottom: 4px;
+                            padding-left: 12px;
+                            border-radius: 6px 0 0 6px;
                         }}
 
                         .end_timestamp {{
-                            width: 170px;
+                            min-width: 130px;
                             text-align: right;
-                            padding: 2px 2px 2px 6px;
-                            border-radius: 0 3px 3px 0;
-                            min-height: 1.265em;
-                            background: var(--exec_background-normal);
+
+                            padding-top: 3px; padding-bottom: 4px;
+                            padding-right: 6px;
+                            border-radius: 0 6px 6px 0;
                         }}
 
                         .end_timestamp.success {{
@@ -1347,13 +1346,8 @@ def register(app, rt, prefix=""):
                             background: 
                                 linear-gradient(90deg,
                                     transparent 0%,
-                                    rgba(from var(--status-color) r g b / 0.3) 50%,
+                                    rgba(from var(--status-color) r g b / 0.3) 30%,
                                     rgba(from var(--status-color) r g b / 0.6) 100%
-                                ),
-                                linear-gradient(90deg,
-                                    var(--exec_background-normal) 0%,
-                                    transparent 50%,
-                                    transparent 100%
                                 );
                         }}
 
@@ -1365,31 +1359,15 @@ def register(app, rt, prefix=""):
                                     transparent 20%,
                                     rgba(from var(--status-color) r g b / 0.3) 40%,
                                     rgba(from var(--status-color) r g b / 0.6) 100%
-                                ),
-                                linear-gradient(90deg,
-                                    var(--exec_background-normal) 0%,
-                                    transparent 50%,
-                                    transparent 100%
                                 );
-                        }}
-
-                        .execution:hover .execution-body,
-                        .execution:hover .end_timestamp {{
-                            background: var(--exec_background-hover);
-                            color: var(--exec_color-hover);
                         }}
 
                         .execution:hover .success {{
                             background:
                                 linear-gradient(90deg,
                                     transparent 0%,
-                                    rgba(from var(--status-color) r g b / 0.4) 50%,
+                                    rgba(from var(--status-color) r g b / 0.4) 30%,
                                     rgba(from var(--status-color) r g b / 1) 100%
-                                ),
-                                linear-gradient(90deg,
-                                    var(--exec_background-hover) 0%,
-                                    transparent 50%,
-                                    transparent 100%
                                 );
                         }}
                         .execution:hover .failure {{
@@ -1399,15 +1377,11 @@ def register(app, rt, prefix=""):
                                     transparent 20%,
                                     rgba(from var(--status-color) r g b / 0.4) 40%,
                                     rgba(from var(--status-color) r g b / 1) 100%
-                                ),
-                                linear-gradient(90deg,
-                                    var(--exec_background-hover) 0%,
-                                    transparent 50%,
-                                    transparent 100%
                                 );
                         }}
                     """),
                     id="executions-container",
+                    cls="wavy-items-list", # for anim script selector
                     style=(
                         "height: calc(100vh - 200px); " # window height minus header & footer
                         "overflow-y: auto; padding: 8px 16px 4px 16px; "
@@ -1420,6 +1394,36 @@ def register(app, rt, prefix=""):
                             "0 1px 3px rgba(0,0,0,0.1); "
                     )
                 ),
+                Script(src="/wavy_list_items.js"),
+                Script("""// Mouseover wavy effect on execution-entries
+                    const observeContainer = () => {
+                        const container = document.getElementById('executions-container');
+                        if (!container) {
+                            requestAnimationFrame(observeContainer);
+                            return;
+                        }
+
+                        container.querySelectorAll('.wavy-list-item').forEach(enhanceEntry);
+
+                        const observer = new MutationObserver(mutations => {
+                            mutations.forEach(mutation => {
+                                mutation.addedNodes.forEach(node => {
+                                    if (!(node instanceof HTMLElement)) return;
+
+                                    if (node.classList.contains('wavy-list-item')) {
+                                        enhanceEntry(node);
+                                    }
+
+                                    node.querySelectorAll?.('.wavy-list-item').forEach(enhanceEntry);
+                                });
+                            });
+                        });
+
+                        observer.observe(container, { childList: true, subtree: true });
+                    };
+                    observeContainer();
+
+                """),
                 Script("""// Cold start of executions list at page load time
                     const execContainer = document.getElementById("executions-container");
                     const loader = document.getElementById("loader");
@@ -1501,7 +1505,7 @@ def register(app, rt, prefix=""):
                             formData.append('before_datetime', new Date(before_datetime_str));
                         if (execsStatus != "")
                             formData.append('execs_status', execsStatus);
-                        const batchExecutionsCount = 50;
+                        const batchExecutionsCount = 25;
                         formData.append('n', batchExecutionsCount);
 
                         fetch('/{prefix}load_executions', {

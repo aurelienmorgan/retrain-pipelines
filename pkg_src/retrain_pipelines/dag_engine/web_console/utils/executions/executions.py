@@ -5,7 +5,7 @@ import tzlocal
 from datetime import datetime
 from typing import List, Optional, Union
 
-from fasthtml.common import Div, A, Span, \
+from fasthtml.common import Div, A, Span, B, \
     Style
 
 from ....core import UiCss
@@ -43,61 +43,59 @@ def execution_to_html(execution_ext: Union[Execution, ExecutionExt]) -> Div:
     exec_background = ui_css.background or "#4d0066"
     exec_color = ui_css.color or "#fff"
 
-    return Div(
-
+    return \
         Div(
-            # Glass shine overlay
-            style=(
-                "position: absolute; top: 0; left: 0; right: 0; "
-                "height: 40%; "
-                "background: linear-gradient(135deg, "
-                    "rgba(255,255,255,0.3) 0%, "
-                    "rgba(255,255,255,0.1) 50%, transparent 100%); "
-                "pointer-events: none; border-radius: 2px 2px 0 0; "
-                "transition: opacity 0.2s ease;"
-            ),
-            id="glass-overlay"
-        ),
-
-        Div(
-            Span(f"{execution_ext.name} "),
             A(
-                f"[{execution_ext.id}]",
+                Div(
+                    # Glass shine overlay
+                    style=(
+                        "position: absolute; top: 0; left: 0; right: 0; "
+                        "height: 40%; "
+                        "background: linear-gradient(135deg, "
+                        "rgba(255,255,255,0.3) 0%, "
+                        "rgba(255,255,255,0.1) 50%, transparent 100%); "
+                        "pointer-events: none; border-radius: 6px 6px 0 0; "
+                        "transition: opacity 0.2s ease;"
+                    ),
+                    id="glass-overlay"
+                ),
+                Div(
+                    B(Span(f"{execution_ext.name} ")),
+                    Span(f"\u00A0- {localized_start_timestamp_str}"),
+                    cls=["execution-body"]
+                ),
+                Div(
+                    (execution_ext.end_timestamp - execution_ext.start_timestamp) 
+                        if execution_ext.end_timestamp else "",
+                    cls="end_timestamp" + ((
+                        " success" if execution_ext.success else " failure"
+                    ) if execution_ext.end_timestamp else "")
+                ),
                 href=f"/execution?id={execution_ext.id}",
                 target="_self",
-                style="color: inherit; text-decoration: inherit;"
+                style="color: inherit; text-decoration: none; display: flex; width: 100%;"
             ),
-            Span(f" - {localized_start_timestamp_str}"),
-            cls="execution-body"
-        ),
-        Div(
-            (execution_ext.end_timestamp - execution_ext.start_timestamp) \
-                if execution_ext.end_timestamp else "",
-            cls="end_timestamp" + ((
-                    " success" if execution_ext.success else " failure"
-                ) if execution_ext.end_timestamp else "")
-        ),
-        Style(f"""
-            #_{execution_ext.id}.execution {{
-                --exec_background-normal: {hex_to_rgba(exec_background, .45)};
-                --exec_background-hover: {hex_to_rgba(exec_background, .65)};
-                --exec_color-normal: {hex_to_rgba(exec_color, .45)};
-                --exec_color-hover: {hex_to_rgba(exec_color, .65)};
-            }}
-        """),
+            Style(f"""
+                #_{execution_ext.id}.execution {{
+                    --background-normal: {hex_to_rgba(exec_background, .25)};
+                    --background-hover: {hex_to_rgba(exec_background, .65)};
+                    --color-normal: {hex_to_rgba(exec_color, .45)};
+                    --color-hover: {hex_to_rgba(exec_color, .65)};
+                }}
+            """),
+            **{
+                'data-pipeline-name': execution_ext.name,
+                'data-username': execution_ext.username,
+                'data-start-timestamp': execution_ext.start_timestamp,
+                'data-success': (
+                    str(execution_ext.success)
+                    if hasattr(execution_ext, "success") else ""
+                )
+            },
+            cls=["execution", "wavy-list-item", "wavy-list-item-body"],
+            id=f"_{execution_ext.id}",
+        ).__html__()
 
-        **{
-            'data-pipeline-name': execution_ext.name,
-            'data-username': execution_ext.username,
-            'data-start-timestamp': execution_ext.start_timestamp,
-            'data-success': (
-                str(execution_ext.success)
-                if hasattr(execution_ext, "success") else ""
-            )
-        },
-        cls="execution",
-        id=f"_{execution_ext.id}",
-    ).__html__()
 
 
 async def get_executions_ext(

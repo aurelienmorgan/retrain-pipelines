@@ -12,6 +12,7 @@ from retrain_pipelines import __version__
 def header(current_page="/"):
     nav_items = [
         ("Home", "/", "#ffffff"),
+        ("Teams", "/teams", "#ffffff"),
         # ("Not-Found", "/not-exists", "#ffffff"),
         # ("Error", "/a_page_in_error", "#ffffff"),
         ("Logs", "/web_server", "#ccc"),
