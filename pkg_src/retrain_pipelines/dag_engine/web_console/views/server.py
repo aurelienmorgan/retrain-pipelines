@@ -620,6 +620,7 @@ def register(app, rt, prefix=""):
                 ),
                 Div(# Actual list
                     id="log-container",
+                    cls="wavy-items-list", # for anim script selector
                     style=(
                         "height: calc(100vh - 200px); " # window height minus header & footer
                         "overflow-y: auto; padding: 8px 16px 4px 16px; "
@@ -666,199 +667,35 @@ def register(app, rt, prefix=""):
                         observer.observe(container, { childList: true });
                     })();
                 """),
+                Script(src="/wavy_list_items.js"),
                 Script("""// Mouseover wavy effect on log-entries
-                    (function() {
-                        const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
+                    const observeContainer = () => {
+                        const container = document.getElementById('log-container');
+                        if (!container) {
+                            requestAnimationFrame(observeContainer);
+                            return;
+                        }
 
-                        const resetStyles = (entries) => {
-                            entries.forEach(e => {
-                                // Reset only transform, margin, zIndex — keep padding & background & overlay untouched
-                                e.style.transform = '';
-                                e.style.margin = '';
-                                e.style.zIndex = '1';
+                        container.querySelectorAll('.wavy-list-item').forEach(enhanceEntry);
 
-                                // Restore glass overlay opacity
-                                const overlay = e.querySelector('#glass-overlay');
-                                if (overlay) overlay.style.opacity = '1';
+                        const observer = new MutationObserver(mutations => {
+                            mutations.forEach(mutation => {
+                                mutation.addedNodes.forEach(node => {
+                                    if (!(node instanceof HTMLElement)) return;
 
-                                // Restore background color to normal state
-                                e.style.background = e.style.getPropertyValue('--status-color-normal');
-                            });
-                        };
-
-                        const applyWaveEffect = (entry, entries, i) => {
-                            const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
-                            const rect = entry.getBoundingClientRect();
-
-                            const scaleFocusedBase = 1.05;
-                            const scaleNeighborMaxBase = 1.03;
-                            const marginTopMax = 3;
-
-                            // Get container width and clamp scales
-                            // so scaled width does not exceed container width
-                            const container = document.getElementById('log-container');
-                            if (!container) return;
-
-                            const containerWidth = container.clientWidth;
-                            const entryWidth = entry.offsetWidth;
-
-                            // Clamp scales to prevent overflow:
-                            const scaleFocused = Math.min(scaleFocusedBase, containerWidth / entryWidth);
-                            const scaleNeighborMax = Math.min(scaleNeighborMaxBase, containerWidth / entryWidth);
-
-                            // Store original margin-bottom on all entries if not stored yet
-                            entries.forEach(e => {
-                                if (e._originalMarginBottom === undefined) {
-                                    const style = window.getComputedStyle(e);
-                                    e._originalMarginBottom = style.marginBottom;
-                                }
-                            });
-
-                            // Focused entry styles
-                            entry.style.transition = 'transform 0.2s ease, margin-top 0.2s ease, background 0.3s ease';
-                            entry.style.transform = `scale(${scaleFocused})`;
-                            entry.style.marginTop = '4px';
-                            entry.style.marginBottom = entry._originalMarginBottom; // restore original margin-bottom
-                            entry.style.zIndex = '10';
-
-                            const overlay = entry.querySelector('#glass-overlay');
-                            if (overlay) {
-                                overlay.style.transition = 'opacity 0.3s ease';
-                                overlay.style.opacity = '0';
-                            }
-                            entry.style.background = entry.style.getPropertyValue('--status-color-hover');
-
-                            const mouseMoveHandler = (ev) => {
-                                const y = ev.clientY;
-                                const relativeY = (y - rect.top) / rect.height;
-
-                                const before = entries[i - 1];
-                                const after = entries[i + 1];
-
-                                if (before && relativeY <= 0.66) {
-                                    const intensity = 1 - clamp(relativeY / 0.66, 0, 1);
-                                    before.style.transition = 'transform 0.2s ease, margin-top 0.2s ease, background 0.3s ease';
-
-                                    // Clamp neighbor scale as well:
-                                    const neighborScale = 1 + (scaleNeighborMax - 1) * intensity;
-                                    before.style.transform = `scale(${neighborScale})`;
-                                    before.style.marginTop = `${marginTopMax * intensity}px`;
-                                    before.style.marginBottom = before._originalMarginBottom; // original margin-bottom restored
-                                    before.style.zIndex = '5';
-
-                                    const beforeOverlay = before.querySelector('#glass-overlay');
-                                    if (beforeOverlay) {
-                                        beforeOverlay.style.transition = 'opacity 0.3s ease';
-                                        beforeOverlay.style.opacity = `${1 - intensity}`;
+                                    if (node.classList.contains('wavy-list-item')) {
+                                        enhanceEntry(node);
                                     }
 
-                                    before.style.background = before.style.getPropertyValue('--status-color-hover');
-                                } else if (before) {
-                                    before.style.transform = '';
-                                    before.style.marginTop = '';
-                                    before.style.marginBottom = before._originalMarginBottom;
-                                    before.style.zIndex = '1';
-
-                                    const beforeOverlay = before.querySelector('#glass-overlay');
-                                    if (beforeOverlay) beforeOverlay.style.opacity = '1';
-
-                                    before.style.background = before.style.getPropertyValue('--status-color-normal');
-                                }
-
-                                if (after && relativeY >= 0.33) {
-                                    const intensity = clamp((relativeY - 0.33) / 0.66, 0, 1);
-                                    after.style.transition = 'transform 0.2s ease, margin-top 0.2s ease, background 0.3s ease';
-
-                                    // Clamp neighbor scale as well:
-                                    const neighborScale = 1 + (scaleNeighborMax - 1) * intensity;
-                                    after.style.transform = `scale(${neighborScale})`;
-                                    after.style.marginTop = `${marginTopMax * intensity}px`;
-                                    after.style.marginBottom = after._originalMarginBottom; // original margin-bottom restored
-                                    after.style.zIndex = '5';
-
-                                    const afterOverlay = after.querySelector('#glass-overlay');
-                                    if (afterOverlay) {
-                                        afterOverlay.style.transition = 'opacity 0.3s ease';
-                                        afterOverlay.style.opacity = `${1 - intensity}`;
-                                    }
-
-                                    after.style.background = after.style.getPropertyValue('--status-color-hover');
-                                } else if (after) {
-                                    after.style.transform = '';
-                                    after.style.marginTop = '';
-                                    after.style.marginBottom = after._originalMarginBottom;
-                                    after.style.zIndex = '1';
-
-                                    const afterOverlay = after.querySelector('#glass-overlay');
-                                    if (afterOverlay) afterOverlay.style.opacity = '1';
-
-                                    after.style.background = after.style.getPropertyValue('--status-color-normal');
-                                }
-                            };
-
-                            const cleanup = () => {
-                                entries.forEach(e => {
-                                    e.style.transform = '';
-                                    e.style.marginTop = '';
-                                    e.style.marginBottom = e._originalMarginBottom;
-                                    e.style.zIndex = '1';
-
-                                    const overlay = e.querySelector('#glass-overlay');
-                                    if (overlay) overlay.style.opacity = '1';
-
-                                    e.style.background = e.style.getPropertyValue('--status-color-normal');
-                                });
-                                document.removeEventListener('mousemove', mouseMoveHandler);
-
-                                if (overlay) overlay.style.opacity = '1';
-                                entry.style.background = entry.style.getPropertyValue('--status-color-normal');
-                            };
-
-                            document.addEventListener('mousemove', mouseMoveHandler);
-                            entry.addEventListener('mouseleave', cleanup, { once: true });
-                        };
-
-                        const enhanceEntry = (entry) => {
-                            if (entry.dataset.enhanced === "1") return;
-                            entry.dataset.enhanced = "1";
-
-                            entry.addEventListener('mouseenter', () => {
-                                const entries = Array.from(document.querySelectorAll('.log-entry'));
-                                const i = entries.indexOf(entry);
-                                if (i !== -1) {
-                                    applyWaveEffect(entry, entries, i);
-                                }
-                            });
-                        };
-
-                        const observeContainer = () => {
-                            const container = document.getElementById('log-container');
-                            if (!container) {
-                                requestAnimationFrame(observeContainer);
-                                return;
-                            }
-
-                            container.querySelectorAll('.log-entry').forEach(enhanceEntry);
-
-                            const observer = new MutationObserver(mutations => {
-                                mutations.forEach(mutation => {
-                                    mutation.addedNodes.forEach(node => {
-                                        if (!(node instanceof HTMLElement)) return;
-
-                                        if (node.classList.contains('log-entry')) {
-                                            enhanceEntry(node);
-                                        }
-
-                                        node.querySelectorAll?.('.log-entry').forEach(enhanceEntry);
-                                    });
+                                    node.querySelectorAll?.('.wavy-list-item').forEach(enhanceEntry);
                                 });
                             });
+                        });
 
-                            observer.observe(container, { childList: true, subtree: true });
-                        };
+                        observer.observe(container, { childList: true, subtree: true });
+                    };
 
-                        observeContainer();
-                    })();
+                    observeContainer();
                 """),
                 Script("""// Append log item on WebSocket message receive
                     const logContainer = document.getElementById("log-container");
@@ -947,8 +784,7 @@ def register(app, rt, prefix=""):
                     //        }
                     //    }
                     // });
-                """.replace("{prefix}", prefix+"/" if prefix > "" else "")
-                ),
+                """.replace("{prefix}", prefix+"/" if prefix > "" else "")),
                 Script("""// Cold start of logs list at page load time
                     function loadLogs() {
                         const server_status_circle = document.getElementById('status-circle');
@@ -1010,8 +846,7 @@ def register(app, rt, prefix=""):
                             });
                         }
                     });
-                """.replace("{prefix}", prefix+"/" if prefix > "" else "")
-                ),
+                """.replace("{prefix}", prefix+"/" if prefix > "" else "")),
                 style=(
                     "background: rgba(248, 249, 250, 0.3); padding: 8px 16px 4px 16px; "
                     "border-radius: 12px; "

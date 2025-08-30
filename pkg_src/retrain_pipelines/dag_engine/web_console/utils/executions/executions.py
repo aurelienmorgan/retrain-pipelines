@@ -44,16 +44,14 @@ def execution_to_html(execution_ext: Union[Execution, ExecutionExt]) -> Div:
     exec_color = ui_css.color or "#fff"
 
     return Div(
-
-        Div(
-            # Glass shine overlay
+        Div(# Glass shine overlay
             style=(
                 "position: absolute; top: 0; left: 0; right: 0; "
                 "height: 40%; "
                 "background: linear-gradient(135deg, "
                     "rgba(255,255,255,0.3) 0%, "
                     "rgba(255,255,255,0.1) 50%, transparent 100%); "
-                "pointer-events: none; border-radius: 2px 2px 0 0; "
+                "pointer-events: none; border-radius: 6px 6px 0 0; "
                 "transition: opacity 0.2s ease;"
             ),
             id="glass-overlay"
@@ -68,7 +66,7 @@ def execution_to_html(execution_ext: Union[Execution, ExecutionExt]) -> Div:
                 style="color: inherit; text-decoration: inherit;"
             ),
             Span(f" - {localized_start_timestamp_str}"),
-            cls="execution-body"
+            cls=["execution-body", "wavy-list-item-body"]
         ),
         Div(
             (execution_ext.end_timestamp - execution_ext.start_timestamp) \
@@ -79,10 +77,10 @@ def execution_to_html(execution_ext: Union[Execution, ExecutionExt]) -> Div:
         ),
         Style(f"""
             #_{execution_ext.id}.execution {{
-                --exec_background-normal: {hex_to_rgba(exec_background, .45)};
-                --exec_background-hover: {hex_to_rgba(exec_background, .65)};
-                --exec_color-normal: {hex_to_rgba(exec_color, .45)};
-                --exec_color-hover: {hex_to_rgba(exec_color, .65)};
+                --background-normal: {hex_to_rgba(exec_background, .25)};
+                --background-hover: {hex_to_rgba(exec_background, .65)};
+                --color-normal: {hex_to_rgba(exec_color, .45)};
+                --color-hover: {hex_to_rgba(exec_color, .65)};
             }}
         """),
 
@@ -95,7 +93,7 @@ def execution_to_html(execution_ext: Union[Execution, ExecutionExt]) -> Div:
                 if hasattr(execution_ext, "success") else ""
             )
         },
-        cls="execution",
+        cls=["execution", "wavy-list-item"],
         id=f"_{execution_ext.id}",
     ).__html__()
 

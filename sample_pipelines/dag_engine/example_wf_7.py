@@ -1,3 +1,4 @@
+
 import os
 import logging
 
@@ -35,7 +36,7 @@ def parallel(payload: TaskPayload):
     """For each input of the incoming iterator,
 
     produce a collection of task instances
-    for upcoming task."""
+    for following task."""
     # Since the herein task only has 1 direct parent =>
     assert payload["start"] == payload.get("start") == payload
 
