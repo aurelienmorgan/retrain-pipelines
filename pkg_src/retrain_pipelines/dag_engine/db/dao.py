@@ -527,7 +527,7 @@ class AsyncDAO(DAOBase):
 #////////////////////////////////////////////////////////////////////////////
 
 
-new_connection_api_endpoint = \
+new_execution_api_endpoint = \
     f"{os.environ['RP_WEB_SERVER_URL']}/api/v1/new_execution_event"
 
 @event.listens_for(Execution, "after_insert")
@@ -548,7 +548,7 @@ def after_insert_listener(mapper, connection, target):
             data_snapshot[col.name] = value
 
     try:
-        requests.post(new_connection_api_endpoint, json=data_snapshot)
+        requests.post(new_execution_api_endpoint, json=data_snapshot)
     except requests.exceptions.ConnectionError as ce:
         logger.info(
             "WebConsole apparently not running " +
@@ -558,7 +558,7 @@ def after_insert_listener(mapper, connection, target):
         logger.warn(ex)
 
 
-connection_ended_api_endpoint = \
+execution_ended_api_endpoint = \
     f"{os.environ['RP_WEB_SERVER_URL']}/api/v1/execution_end_event"
 
 
@@ -588,7 +588,7 @@ def after_end_timestamp_change(target, newValue, oldvalue, initiator):
         # print(f"ExecutionExt - data_snapshot: {data_snapshot}")
 
         try:
-            requests.post(connection_ended_api_endpoint, json=data_snapshot)
+            requests.post(execution_ended_api_endpoint, json=data_snapshot)
         except requests.exceptions.ConnectionError as ce:
             logger.info(
                 "WebConsole apparently not running " +
