@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, \
     AsyncSession
 
 from .model import Base, Execution, ExecutionExt, \
-    TaskType, Task, TaskGroup
+    TaskType, Task, TaskExt, TaskGroup
 
 logger = logging.getLogger()
 
@@ -325,21 +325,77 @@ class AsyncDAO(DAOBase):
 
             return executions_ext
 
-    @lru_cache
-    async def get_execution_tasktypes_list(
-        self, execution_id: int,
-        serializable: bool = False
-    ) -> Optional[List[dict]]:
+    async def get_execution_tasks_list(
+        self, execution_id: int
+    ) -> Optional[List[TaskExt]]:
         """
-        Return all TaskType rows for the given execution_id
-        as list of dicts.
+        Return all Task records for the given execution_id
+        as list.
+
+        Note: no cache, tasks are living vars.
 
         Params:
             - execution_id (int):
                 The Execution.id to filter TaskType items on.
-            - serializable (bool):
-                If True, UUIDs are converted to strings
-                for JSON-safe output.
+
+        Results:
+            list of tasks if found, else None
+        """
+        tasktype_subq = (
+            select(
+                TaskType.uuid,
+                TaskType.order,
+                TaskType.name,
+                TaskType.ui_css,
+                TaskType.taskgroup_uuid
+            )
+            .where(TaskType.exec_id == execution_id)
+            .subquery()
+        )
+
+        main_stmt = (
+            select(
+                tasktype_subq.c.name,
+                tasktype_subq.c.ui_css,
+                tasktype_subq.c.taskgroup_uuid,
+
+                Task
+            )
+            .where(Task.tasktype_uuid == tasktype_subq.c.uuid)
+            .order_by(tasktype_subq.c.order, Task._start_timestamp)
+        )
+
+        async with self._get_session() as session:
+            result = await session.execute(main_stmt)
+            rows = result.all()
+
+            if not rows:
+                return None
+
+            # Convert ORM objects to model objects
+            out_list = []
+            for name, ui_css, taskgroup_uuid, task_orm_obj in rows:
+                task_ext = TaskExt(**{**task_orm_obj.__dict__,
+                                      "name": name, "ui_css": ui_css,
+                                      "taskgroup_uuid": taskgroup_uuid})
+                out_list.append(task_ext)
+
+            return out_list
+
+    @lru_cache
+    async def get_execution_tasktypes_list(
+        self, execution_id: int
+    ) -> Optional[List[TaskType]]:
+        """
+        Return all TaskType rows for the given execution_id
+        as list.
+
+        Params:
+            - execution_id (int):
+                The Execution.id to filter TaskType items on.
+
+        Results:
+            list of tasktypes if found, else None
         """
         statement = (
             select(TaskType)
@@ -354,34 +410,27 @@ class AsyncDAO(DAOBase):
             if not rows:
                 return None
 
-            # Convert ORM objects to pure dictionaries
+            # Convert ORM objects to model object
             out_list = []
-            for row in rows:
-                row_dict = {}
-                for col in TaskType.__table__.columns:
-                    val = getattr(row, col.name)
-                    if serializable and isinstance(val, UUID):
-                        val = str(val)
-                    row_dict[col.name] = val
-                out_list.append(row_dict)
+            for tasktype_orm_obj in rows:
+                out_list.append(TaskType(**tasktype_orm_obj.__dict__))
 
             return out_list
 
     @lru_cache
     async def get_execution_taskgroups_list(
-        self, execution_id: int,
-        serializable: bool = False
-    ) -> Optional[List[dict]]:
+        self, execution_id: int
+    ) -> Optional[List[TaskGroup]]:
         """
-        Return all TaskGroup rows for the given execution_id
-        as list of dicts.
+        Return all TaskGroup records for the given execution_id
+        as list.
 
         Params:
             - execution_id (int):
                 The Execution.id to filter TaskGroup items on.
-            - serializable (bool):
-                If True, UUIDs are converted to strings
-                for JSON-safe output.
+
+        Results:
+            list of taskgroups if found, else None
         """
         statement = (
             select(TaskGroup)
@@ -396,16 +445,10 @@ class AsyncDAO(DAOBase):
             if not rows:
                 return None
 
-            # Convert ORM objects to pure dictionaries
+            # Convert ORM objects to model object
             out_list = []
-            for row in rows:
-                row_dict = {}
-                for col in TaskGroup.__table__.columns:
-                    val = getattr(row, col.name)
-                    if serializable and isinstance(val, UUID):
-                        val = str(val)
-                    row_dict[col.name] = val
-                out_list.append(row_dict)
+            for taskgroup_orm_obj in rows:
+                out_list.append(TaskGroup(**taskgroup_orm_obj.__dict__))
 
             return out_list
 
@@ -420,7 +463,7 @@ class AsyncDAO(DAOBase):
             - execution_id (int):
                 the Execution.id to query.
 
-        Returns:
+        Results:
             dict with keys 'name' and '_start_timestamp' if found,
             else None
         """
@@ -467,49 +510,49 @@ class AsyncDAO(DAOBase):
               - failed: count of completed executions that
                 have at least one failed Task
         """
+        exec_subq = (
+            select(
+                Execution.name,
+                Execution._start_timestamp.label("start_ts")
+            )
+            .where(Execution.id == execution_id)
+            .subquery()
+        )
+
+        task_alias = aliased(Task)
+        # Subquery condition: completed executions have a task failed
+        failed_exists = (
+            select(1)
+            .where(task_alias.exec_id == Execution.id)
+            .where(task_alias.failed == True)
+            .limit(1)
+            .exists()
+        )
+
+        main_stmt = (
+            select(
+                Execution.name,
+                func.count(Execution.id).label("total_count"),
+                func.count(
+                    func.nullif(
+                        Execution._start_timestamp > exec_subq.c.start_ts, True
+                    )
+                ).label("number"),
+                func.count(
+                    func.nullif(Execution._end_timestamp == None, True)
+                ).label("completed"),
+                func.count(
+                    func.nullif(
+                        (Execution._end_timestamp != None) & failed_exists,
+                        False
+                    )
+                ).label("failed"),
+            )
+            .where(Execution.name == exec_subq.c.name)
+            .group_by(Execution.name)
+        )
+
         async with self._get_session() as session:
-            exec_subq = (
-                select(
-                    Execution.name.label("name"), 
-                    Execution._start_timestamp.label("start_ts")
-                )
-                .where(Execution.id == execution_id)
-                .subquery()
-            )
-
-            task_alias = aliased(Task)
-            # Subquery condition: completed executions have a task failed
-            failed_exists = (
-                select(1)
-                .where(task_alias.exec_id == Execution.id)
-                .where(task_alias.failed == True)
-                .limit(1)
-                .exists()
-            )
-
-            main_stmt = (
-                select(
-                    Execution.name,
-                    func.count(Execution.id).label("total_count"),
-                    func.count(
-                        func.nullif(
-                            Execution._start_timestamp > exec_subq.c.start_ts, True
-                        )
-                    ).label("number"),
-                    func.count(
-                        func.nullif(Execution._end_timestamp == None, True)
-                    ).label("completed"),
-                    func.count(
-                        func.nullif(
-                            (Execution._end_timestamp != None) & failed_exists,
-                            False
-                        )
-                    ).label("failed"),
-                )
-                .where(Execution.name == exec_subq.c.name)
-                .group_by(Execution.name)
-            )
-
             result = await session.execute(main_stmt)
             row = result.first()
             if row is None or row.total_count == 0:

@@ -2,25 +2,30 @@
 import os
 import asyncio
 
-from typing import Optional, List
+from typing import List, Tuple
 from fasthtml.common import H1, H2, Div, P, \
     Link, Script, Style, \
     Request, Response, JSONResponse, \
     StreamingResponse
 from jinja2 import Environment, FileSystemLoader
 
+
 from ...db.dao import AsyncDAO
+from ...db.model import TaskExt, TaskGroup
+
 from ..utils import ClientInfo
-from .page_template import page_layout
-from ....utils import get_text_pixel_width
 from ..utils.execution.events import \
     new_exec_subscribers, exec_end_subscribers, \
     multiplexed_event_generator, execution_number
+from ..utils.execution.gantt_chart import draw_chart
+
+from .page_template import page_layout
+from ....utils import get_text_pixel_width
 
 
-async def get_execution_elements_lists(
+async def get_execution_dag_elements_lists(
     execution_id: int
-) -> Optional[List[str]]:
+) -> Tuple[List[dict], List[dict]]:
     """Tuple of topologically-sorted serializable lists
 
     of constituting elements, respectively :
@@ -41,13 +46,62 @@ async def get_execution_elements_lists(
     )
 
     execution_tasktypes_list, execution_taskgroups_list = await asyncio.gather(
-        dao.get_execution_tasktypes_list(execution_id, serializable=True),
-        dao.get_execution_taskgroups_list(execution_id, serializable=True)
+        dao.get_execution_tasktypes_list(execution_id),
+        dao.get_execution_taskgroups_list(execution_id)
     )
     # print(f"execution_tasktypes_list : {execution_tasktypes_list}")
     # print(f"execution_taskgroups_list : {execution_taskgroups_list}")
+    if not execution_tasktypes_list:
+        return None, None
+
+
+    # turn into serializables
+    execution_tasktypes_list = \
+        [tasktypes.__dict__ for tasktypes in execution_tasktypes_list]
+    for tasktype_dict in execution_tasktypes_list:
+        tasktype_dict["uuid"] = str(tasktype_dict["uuid"])
+        tasktype_dict["taskgroup_uuid"] = str(tasktype_dict["taskgroup_uuid"]) \
+                                          if tasktype_dict["taskgroup_uuid"] else ""
+
+    execution_taskgroups_list = \
+        [taskgroup.__dict__ for taskgroup in execution_taskgroups_list] \
+        if execution_taskgroups_list else []
+    for taskgroup_dict in execution_taskgroups_list:
+        taskgroup_dict["uuid"] = str(taskgroup_dict["uuid"])
 
     return execution_tasktypes_list, execution_taskgroups_list
+
+
+async def get_execution_elements_lists(
+    execution_id: int
+) -> Tuple[List[TaskExt], List[TaskGroup]]:
+    """Tuple of topologically-sorted lists of model objects.
+
+    of constituting elements, respectively :
+        - all Tasks (exhaustively)
+        - and all TaskGroups.
+
+    Can be None, e.g. if no execution with that id exists.
+
+    Params:
+        - execution_id (int)
+
+    Results:
+        - (List[TaskExt])
+        - (List[TaskGroup])
+    """
+    dao = AsyncDAO(
+        db_url=os.environ["RP_METADATASTORE_ASYNC_URL"]
+    )
+
+    execution_tasks_list, execution_taskgroups_list = await asyncio.gather(
+        dao.get_execution_tasks_list(execution_id),
+        dao.get_execution_taskgroups_list(execution_id)
+    )
+    # print(f"execution_tasks_list : {execution_tasks_list}")
+    # print(f"execution_taskgroups_list : {execution_taskgroups_list}")
+
+    return execution_tasks_list, execution_taskgroups_list
 
 
 def register(app, rt, prefix=""):
@@ -60,7 +114,7 @@ def register(app, rt, prefix=""):
             return Div(P(f"Invalid execution ID {execution_id}"))
 
         tasktypes_list, taskgroups_list = \
-            await get_execution_elements_lists(execution_id)
+            await get_execution_dag_elements_lists(execution_id)
         if tasktypes_list is None:
             return Div(P(f"Invalid execution ID {execution_id}"))
 
@@ -76,6 +130,26 @@ def register(app, rt, prefix=""):
         )
 
         return rendering_content
+
+    @rt(f"{prefix}/exec_current_progress", methods=["GET"])
+    async def exec_current_progress(request: Request):
+        """Progress of the execution.
+
+        May be the final one if the execution is
+        already completed.
+        """
+        execution_id = request.query_params.get("id")
+        try:
+            execution_id = int(execution_id)
+        except (TypeError, ValueError):
+            return Div(P(f"Invalid execution ID {execution_id}"))
+
+        tasks_list, taskgroups_list = \
+            await get_execution_elements_lists(execution_id)
+        if tasks_list is None:
+            return Div(P(f"Invalid execution ID {execution_id}"))
+
+        return draw_chart(tasks_list, taskgroups_list)
 
 
     @rt(f"{prefix}/execution_info", methods=["GET"])
@@ -171,7 +245,7 @@ def register(app, rt, prefix=""):
                     ),
                     id="subtitle"
                 ),
-                Script(f"""// async get execution-info
+                Script(f"""// async get execution-info (name, etc.)
                     function updateExecutionNumber(executionNumberJson) {{
                         // Update the executions counters (incl. tooltip)
                         //console.log("updateExecutionNumber ENTER", executionNumberJson);
@@ -485,7 +559,13 @@ def register(app, rt, prefix=""):
                     }
                 """),
 
-                ## TODO, add stuff here (live-streamed Grantt diagram of tasks, etc.)
+                ## TODO, add stuff here (live-streamed Gantt diagram of tasks, etc.)
+                Div(# Gantt diagram
+                    P("\u00A0 Loading Gantt diagram...", style="color: white;"),
+                    hx_get=f"{prefix}/exec_current_progress?id={execution_id}",
+                    hx_trigger="load",
+                    hx_swap="outerHTML"
+                ),
 
                 H1(
                     "Execution DAG",

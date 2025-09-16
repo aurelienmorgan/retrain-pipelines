@@ -104,13 +104,11 @@ class ExecutionExt(Execution):
     """Execution class plus failure (computed) attribute."""
     """ NOT AN SQLALCHEMY CLASS """
     __mapper_args__ = {
-        'polymorphic_identity': 'execution_ext'
+        "polymorphic_identity": "task_ext"
     }
 
     def __init__(self, **kwargs):
-        success = kwargs.pop('success', None)
-        # Remove SQLAlchemy internal attributes
-        kwargs.pop('_sa_instance_state', None)
+        success = kwargs.pop("success", None)
 
         # Add underscore prefix for attributes with names
         # that are properties (getters) in parent class
@@ -131,6 +129,9 @@ class ExecutionExt(Execution):
                         ):
                             value = parse_datetime(value)
                 kwargs[f'_{attr_name}'] = value
+
+        # Remove SQLAlchemy internal attributes
+        kwargs.pop('_sa_instance_state', None)
 
         super().__init__(**kwargs)
         self.success = success
@@ -216,6 +217,29 @@ class TaskType(Base):
     taskgroup_uuid = Column(Uuid, nullable=True)
     children = Column(JSON, nullable=False)  # ARRAY(str(Uuid))
 
+    def __init__(self, *args, **kwargs):
+        # Support dict as the ONLY positional argument
+        data = None
+        if len(args) == 1 and isinstance(args[0], dict):
+            data = args[0]
+        elif len(args) > 0:
+            raise TypeError(
+                "TaskType accepts a dict or keyword arguments")
+
+        if data:
+            kwargs = {**data, **kwargs}
+            kwargs["exec_id"] = int(kwargs["exec_id"])
+            kwargs["order"] = int(kwargs["order"])
+            kwargs["docstring"] = \
+                str(kwargs["docstring"]) if "docstring" in kwargs \
+                else None
+            kwargs["is_parallel"] = bool(kwargs["is_parallel"])
+
+        # Remove SQLAlchemy internal attributes
+        kwargs.pop('_sa_instance_state', None)
+
+        super().__init__(**kwargs)
+
 
 class Task(Base):
     """Individual instances of tasktypes,
@@ -272,6 +296,37 @@ class Task(Base):
         ),
     )
 
+    def __init__(self, *args, **kwargs):
+        # Support dict as the ONLY positional argument
+        data = None
+        if len(args) == 1 and isinstance(args[0], dict):
+            data = args[0]
+        elif len(args) > 0:
+            raise TypeError(
+                "Task accepts a dict or keyword arguments")
+
+        if data:
+            kwargs = {**data, **kwargs}
+            kwargs["id"] = int(kwargs["id"])
+            kwargs["docstring"] = \
+                str(kwargs["docstring"]) if "docstring" in kwargs \
+                else None
+            kwargs["_start_timestamp"] = \
+                parse_datetime(kwargs["start_timestamp"])
+            kwargs["_end_timestamp"] = (
+                parse_datetime(kwargs.get("end_timestamp"))
+                if (
+                    "end_timestamp" in kwargs and
+                    kwargs.get("end_timestamp") is not None
+                ) else None
+            )
+            kwargs["failed"] = bool(kwargs["failed"])
+
+        # Remove SQLAlchemy internal attributes
+        kwargs.pop('_sa_instance_state', None)
+
+        super().__init__(**kwargs)
+
     @property
     def start_timestamp(self) -> datetime:
         if self._start_timestamp is None:
@@ -295,6 +350,29 @@ class Task(Base):
     @end_timestamp.setter
     def end_timestamp(self, value: datetime):
         self._end_timestamp = value
+
+
+class TaskExt(Task):
+    """Task class plus attributes from tasktype
+
+    name, taskgroup_uuid and ui_csss.
+    """
+    """ NOT AN SQLALCHEMY CLASS """
+    __mapper_args__ = {
+        "polymorphic_identity": "task_ext"
+    }
+
+    def __init__(self, **kwargs):
+        name = kwargs.pop("name", None)
+        ui_css = kwargs.pop("ui_css", None)
+        taskgroup_uuid = kwargs.pop("taskgroup_uuid", None)
+        # Remove SQLAlchemy internal attributes
+        kwargs.pop('_sa_instance_state', None)
+
+        super().__init__(**kwargs)
+        self.name = name
+        self.ui_css = ui_css
+        self.taskgroup_uuid = taskgroup_uuid
 
 
 class TaskGroup(Base):
@@ -323,4 +401,26 @@ class TaskGroup(Base):
     ui_css = Column(JSON, nullable=True)
 
     elements = Column(JSON, nullable=False)  # ARRAY(str(Uuid))
+
+    def __init__(self, *args, **kwargs):
+        # Support dict as the ONLY positional argument
+        data = None
+        if len(args) == 1 and isinstance(args[0], dict):
+            data = args[0]
+        elif len(args) > 0:
+            raise TypeError(
+                "TaskGroup accepts a dict or keyword arguments")
+
+        if data:
+            kwargs = {**data, **kwargs}
+            kwargs["exec_id"] = int(kwargs["exec_id"])
+            kwargs["order"] = int(kwargs["order"])
+            kwargs["docstring"] = \
+                str(kwargs["docstring"]) if "docstring" in kwargs \
+                else None
+
+        # Remove SQLAlchemy internal attributes
+        kwargs.pop('_sa_instance_state', None)
+
+        super().__init__(**kwargs)
 
