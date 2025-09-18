@@ -1,3 +1,4 @@
+
 import os
 import logging
 
@@ -54,7 +55,7 @@ def snake_head_AAA2(_):
 def snake_heads_AAA():
     """Group of tasks with different processing logics
     that are to be run independently,
-    in parrallel, on the same set of inputs.
+    in parallel, on the same set of inputs.
     Note that the downward task(s) will have to
     await for all of those to complete before they can start."""
     return snake_head_AAA1, snake_head_AAA2
@@ -88,7 +89,7 @@ def snake_head_AA4(_):
 def snake_heads_AA():
     """Group of tasks with different processing logics
     that are to be run independently,
-    in parrallel, on the same set of inputs.
+    in parallel, on the same set of inputs.
     Note that the downward task(s) will have to
     await for all of those to complete before they can start."""
     return snake_heads_AAA, snake_head_AA1, snake_head_AA2, \
@@ -102,7 +103,7 @@ def snake_heads_AA():
 def snake_heads_A():
     """Group of tasks with different processing logics
     that are to be run independently,
-    in parrallel, on the same set of inputs.
+    in parallel, on the same set of inputs.
     Note that the downward task(s) will have to
     await for all of those to complete before they can start."""
     return snake_heads_AA, snake_head_A

@@ -1,3 +1,4 @@
+
 import os
 
 from retrain_pipelines.dag_engine.core import \
@@ -35,7 +36,7 @@ def snake_head_A2(_):
 def snake_heads_A():
     """Group of tasks with different processing logics
     that are to be run independently,
-    in parrallel, on the same set of inputs.
+    in parallel, on the same set of inputs.
     Note that the downward task(s) will have to
     await for all of those to complete before they can start."""
     return snake_head_A1, snake_head_A2
@@ -64,7 +65,7 @@ def snake_head_B2(snake_heads_A_results: TaskPayload):
 def snake_heads_B():
     """Group of tasks with different processing logics
     that are to be run independently,
-    in parrallel, on the same set of inputs.
+    in parallel, on the same set of inputs.
     Note that the downward task(s) will have to
     await for all of those to complete before they can start."""
     return snake_head_B1, snake_head_B2
@@ -93,7 +94,7 @@ def snake_head_C2(snake_heads_B_results: TaskPayload):
 def snake_heads_C():
     """Group of tasks with different processing logics
     that are to be run independently,
-    in parrallel, on the same set of inputs.
+    in parallel, on the same set of inputs.
     Note that the downward task(s) will have to
     await for all of those to complete before they can start."""
     return snake_head_C1, snake_head_C2

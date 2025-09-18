@@ -1,3 +1,4 @@
+
 import os
 
 from retrain_pipelines.dag_engine.core import \
@@ -47,7 +48,7 @@ def snake_head_3(payload: TaskPayload):
 def snake_heads():
     """Group of tasks with different processing logics
     that are to be run independently,
-    in parrallel, on the same set of inputs.
+    in parallel, on the same set of inputs.
     Note that the downward task(s) will have to
     await for all of those to complete before they can start."""
     return snake_head_2, snake_head_1, snake_head_3

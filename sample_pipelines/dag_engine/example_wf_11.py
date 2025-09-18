@@ -1,3 +1,4 @@
+
 import os
 
 from typing import List, Union
@@ -46,7 +47,7 @@ def outer_parallel(payload: TaskPayload):
 
 @task
 def inline1(payload: TaskPayload):
-    """A simple task, gets executed inline in parrallel branches."""
+    """A simple task, gets executed inline in parallel branches."""
     input = payload["outer_parallel"]
 
     # Do whatever you want
@@ -72,7 +73,7 @@ def inner_parallel(payload: TaskPayload):
 
 @task
 def inline2(payload: TaskPayload):
-    """A simple task, gets executed inline in parrallel branches."""
+    """A simple task, gets executed inline in parallel branches."""
     input = payload["inner_parallel"]
 
     # Do whatever you want
@@ -94,7 +95,7 @@ def merge_inner(payload: TaskPayload):
 
 @task
 def inline3(payload: TaskPayload):
-    """A simple task, gets executed inline in parrallel branches."""
+    """A simple task, gets executed inline in parallel branches."""
     input = payload["merge_inner"]
 
     # Do whatever you want
