@@ -358,7 +358,7 @@ class Task(Base):
 class TaskExt(Task):
     """Task class plus attributes from tasktype
 
-    name, taskgroup_uuid and ui_csss.
+    name, ui_csss, is_parallel merge_func and taskgroup_uuid.
     """
     """ NOT AN SQLALCHEMY CLASS """
     __mapper_args__ = {
@@ -368,6 +368,8 @@ class TaskExt(Task):
     def __init__(self, **kwargs):
         name = kwargs.pop("name", None)
         ui_css = kwargs.pop("ui_css", None)
+        is_parallel = kwargs.pop("is_parallel", None)
+        merge_func = kwargs.pop("merge_func", None)
         taskgroup_uuid = kwargs.pop("taskgroup_uuid", None)
         # Remove SQLAlchemy internal attributes
         kwargs.pop('_sa_instance_state', None)
@@ -375,6 +377,8 @@ class TaskExt(Task):
         super().__init__(**kwargs)
         self.name = name
         self.ui_css = ui_css
+        self.is_parallel = is_parallel
+        self.merge_func = merge_func
         self.taskgroup_uuid = taskgroup_uuid
 
 

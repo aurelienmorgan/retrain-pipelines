@@ -1,9 +1,24 @@
 
-from typing import List, Tuple, Union
+from collections import defaultdict
+from typing import List, Tuple, Union, Optional
 
 from fasthtml.common import Table, Tr, Td
 
 from ....db.model import TaskExt, TaskGroup
+
+
+class ParallelLines:
+    rank: Optional[List[int]]
+    lines: dict
+    merging_task: Optional[TaskExt]
+
+    def __init__(self, rank, lines, merging_task=None):
+        self.rank = rank
+        self.lines = lines
+        self.merging_task = merging_task
+
+    def __repr__(self):
+        return "PP"+str([self.lines] + ([self.merging_task] if self.merging_task else []))
 
 
 def _organize_tasks(
@@ -12,7 +27,7 @@ def _organize_tasks(
 ) -> List[Union[TaskExt, Tuple]]:
     """Returns a topologically-organized structure
 
-    e.g., with nested taskgroups:
+    e.g.:
     ```python
     tasks_list = [
         Task("task1", ""),
@@ -95,28 +110,45 @@ def _organize_tasks(
                     children.append(emit_taskgroup(element))
         return (taskgroup_by_uuid[tg_uuid], children)
 
-    parallel_lines = defaultdict(list)
+    top_parallel_branching_number = 0 # counter on occurence, in case several are chained in series
+                                      # (open-and-close, then again open-and-close)
+    parallel_lines = {}               # we identify sub-DAGs with "top/number-depth/rank"
+
     for task_ext in tasks_list:
+        print(f"{task_ext.id}-{task_ext.tasktype_uuid}, {task_ext.rank}")
+
         if task_ext.taskgroup_uuid is None or task_ext.taskgroup_uuid == "":
             if task_ext.is_parallel:
-                parallel_lines[tuple(task_ext.rank)].append(task_ext)
-            elif task_ext.rank is not None and task_ext.merge_func is None:
-                # standard task inside a parallel line
-                parallel_lines[tuple(task_ext.rank)].append(task_ext)
-            elif task_ext.merge_func is not None:
-                merged_parallel_lines = []
-                for line_rank in list(parallel_lines.keys()):
-                    if (
-                        (task_ext.rank is None and len(line_rank) == 1) or
-                        line_rank[:-1] == tuple(task_ext.rank)
-                    ):
-                        merged_parallel_lines.append(parallel_lines[line_rank])
-                        parallel_lines.pop(line_rank)
-                merged_parallel_lines.append(task_ext)
-                if task_ext.rank is None:
-                    result.append(merged_parallel_lines)
+                if f"{top_parallel_branching_number}-{task_ext.rank[:-1]}" not in parallel_lines:
+                    # first branch on newly encountered parallel sub-DAG
+                    # create and object that will keep on being constructed
+                    # as we further loop over tasks_list
+                    # top-level branching
+                    parallel_lines[f"{top_parallel_branching_number}-{task_ext.rank[:-1]}"] = \
+                        ParallelLines(task_ext.rank[:-1], {tuple(task_ext.rank): [task_ext]})
+                    if len(task_ext.rank) == 1:
+                        # top-level new sub-DAG
+                        result.append(parallel_lines[f"{top_parallel_branching_number}-{task_ext.rank[:-1]}"])
+                    else:
+                        # nested branching
+                        parallel_lines[f"{top_parallel_branching_number}-{task_ext.rank[:-2]}"].lines[tuple(task_ext.rank[:-1])].append(
+                            parallel_lines[f"{top_parallel_branching_number}-{task_ext.rank[:-1]}"]
+                        )
                 else:
-                    parallel_lines[tuple(task_ext.rank)].append(merged_parallel_lines)
+                    # new branch opens on existing parallel sub-DAG (any depth)
+                    parallel_lines[f"{top_parallel_branching_number}-{task_ext.rank[:-1]}"].lines[tuple(task_ext.rank)] = [task_ext]
+
+            elif task_ext.rank is not None and task_ext.merge_func is None:
+                # standard task inside a parallel line (any depth)
+                parallel_lines[f"{top_parallel_branching_number}-{task_ext.rank[:-1]}"].lines[tuple(task_ext.rank)].append(task_ext)
+
+            elif task_ext.merge_func is not None:
+                parallel_lines[f"{top_parallel_branching_number}-{task_ext.rank if task_ext.rank is not None else []}"].merging_task = task_ext
+                if task_ext.rank is None:
+                    top_parallel_branching_number +=1
+
+
+
             else:
                 result.append(task_ext)
             emitted.add(task_ext.id)
@@ -162,8 +194,13 @@ def draw_chart(
     rows = []
     for element in current_organize_tasks:
         if isinstance(element, Tuple):
+            # taskgroup
             rows.append(taskgroup_table(element))
+        elif isinstance(element, ParallelLines):
+            # parallel line
+            rows.append(parallel_table(element))
         else:
+            # standalone inline task
             rows.append(task_row(element))
 
     return Table(*rows)
@@ -179,6 +216,15 @@ def task_row(task_ext: TaskExt) -> Tr:
 
     return result
 
+
+def parallel_table(
+    elements_list    #  TODO type casting
+) -> Table:
+    print(f"elements_list : {elements_list}")
+    return Tr(Td(Table(
+            elements_list,
+            id=elements_list.rank
+        )))
 
 def taskgroup_table(
     taskgroup_tuple: Tuple[TaskGroup, List[Union[TaskExt, Tuple]]]

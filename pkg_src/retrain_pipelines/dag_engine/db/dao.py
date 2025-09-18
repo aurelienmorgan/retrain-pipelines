@@ -347,6 +347,8 @@ class AsyncDAO(DAOBase):
                 TaskType.order,
                 TaskType.name,
                 TaskType.ui_css,
+                TaskType.is_parallel,
+                TaskType.merge_func,
                 TaskType.taskgroup_uuid
             )
             .where(TaskType.exec_id == execution_id)
@@ -357,6 +359,8 @@ class AsyncDAO(DAOBase):
             select(
                 tasktype_subq.c.name,
                 tasktype_subq.c.ui_css,
+                tasktype_subq.c.is_parallel,
+                tasktype_subq.c.merge_func,
                 tasktype_subq.c.taskgroup_uuid,
 
                 Task
@@ -374,9 +378,15 @@ class AsyncDAO(DAOBase):
 
             # Convert ORM objects to model objects
             out_list = []
-            for name, ui_css, taskgroup_uuid, task_orm_obj in rows:
+            for (
+                name, ui_css, is_parallel, merge_func, taskgroup_uuid,
+                task_orm_obj
+            ) in rows:
                 task_ext = TaskExt(**{**task_orm_obj.__dict__,
                                       "name": name, "ui_css": ui_css,
+                                      "is_parallel": is_parallel,
+                                      "merge_func": merge_func["name"] \
+                                                    if merge_func else None,
                                       "taskgroup_uuid": taskgroup_uuid})
                 out_list.append(task_ext)
 
