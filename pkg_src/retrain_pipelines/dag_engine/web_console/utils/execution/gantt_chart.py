@@ -12,7 +12,7 @@ def _organize_tasks(
 ) -> List[Union[TaskExt, Tuple]]:
     """Returns a topologically-organized structure
 
-    e.g.:
+    e.g., with nested taskgroups:
     ```python
     tasks_list = [
         Task("task1", ""),
@@ -95,11 +95,30 @@ def _organize_tasks(
                     children.append(emit_taskgroup(element))
         return (taskgroup_by_uuid[tg_uuid], children)
 
+    parallel_lines = defaultdict(list)
     for task_ext in tasks_list:
-        if task_ext.id in emitted:
-            continue
         if task_ext.taskgroup_uuid is None or task_ext.taskgroup_uuid == "":
-            result.append(task_ext)
+            if task_ext.is_parallel:
+                parallel_lines[tuple(task_ext.rank)].append(task_ext)
+            elif task_ext.rank is not None and task_ext.merge_func is None:
+                # standard task inside a parallel line
+                parallel_lines[tuple(task_ext.rank)].append(task_ext)
+            elif task_ext.merge_func is not None:
+                merged_parallel_lines = []
+                for line_rank in list(parallel_lines.keys()):
+                    if (
+                        (task_ext.rank is None and len(line_rank) == 1) or
+                        line_rank[:-1] == tuple(task_ext.rank)
+                    ):
+                        merged_parallel_lines.append(parallel_lines[line_rank])
+                        parallel_lines.pop(line_rank)
+                merged_parallel_lines.append(task_ext)
+                if task_ext.rank is None:
+                    result.append(merged_parallel_lines)
+                else:
+                    parallel_lines[tuple(task_ext.rank)].append(merged_parallel_lines)
+            else:
+                result.append(task_ext)
             emitted.add(task_ext.id)
         else:
             tg_uuid = str(task_ext.taskgroup_uuid)

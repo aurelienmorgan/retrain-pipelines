@@ -351,6 +351,9 @@ class Task(Base):
     def end_timestamp(self, value: datetime):
         self._end_timestamp = value
 
+    def __repr__(self):
+        return f"{__class__.__name__}({self.id}-{self.tasktype_uuid})"
+
 
 class TaskExt(Task):
     """Task class plus attributes from tasktype
@@ -384,7 +387,8 @@ class TaskGroup(Base):
         nullable=False)
     # execution = relationship(
         # "Execution",
-        # back_populates="taskgroups"
+        # back_populates="taskgroups",
+        # viewonly=True
     # )
     order =  Column(Integer, nullable=False) # topological order
     __table_args__ = (
@@ -423,4 +427,7 @@ class TaskGroup(Base):
         kwargs.pop('_sa_instance_state', None)
 
         super().__init__(**kwargs)
+
+    def __repr__(self):
+        return f"{__class__.__name__}({self.name}, {self.elements})"
 
