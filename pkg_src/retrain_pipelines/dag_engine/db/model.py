@@ -381,6 +381,9 @@ class TaskExt(Task):
         self.merge_func = merge_func
         self.taskgroup_uuid = taskgroup_uuid
 
+    def __repr__(self):
+        return f"{__class__.__name__}({self.id}-{self.name})"
+
 
 class TaskGroup(Base):
     """Can hold TaskType and Taskgroup elements."""

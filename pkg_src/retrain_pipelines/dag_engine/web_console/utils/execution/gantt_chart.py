@@ -1,4 +1,6 @@
 
+import logging
+
 from collections import defaultdict
 from typing import List, Tuple, Union, Optional
 
@@ -110,42 +112,69 @@ def _organize_tasks(
                     children.append(emit_taskgroup(element))
         return (taskgroup_by_uuid[tg_uuid], children)
 
-    top_parallel_branching_number = 0 # counter on occurence, in case several are chained in series
-                                      # (open-and-close, then again open-and-close)
-    parallel_lines = {}               # we identify sub-DAGs with "top/number-depth/rank"
+    branching_number_in_series = {(): 0} # counter on occurence,
+                                         # in case several are chained in series
+                                         # (open-and-close, then again open-and-close)
+    parallel_lines = {}                  # we identify sub-DAGs with "top/number-depth/rank"
 
     for task_ext in tasks_list:
-        print(f"{task_ext.id}-{task_ext.tasktype_uuid}, {task_ext.rank}")
+        # print(f"{task_ext.id}-{task_ext.tasktype_uuid}, {task_ext.rank}, {branching_number_in_series}, {list(parallel_lines.keys())}")
 
         if task_ext.taskgroup_uuid is None or task_ext.taskgroup_uuid == "":
             if task_ext.is_parallel:
-                if f"{top_parallel_branching_number}-{task_ext.rank[:-1]}" not in parallel_lines:
+                if tuple(task_ext.rank[:-1]) not in branching_number_in_series:
+                    branching_number_in_series[tuple(task_ext.rank[:-1])] = 0
+
+                branching_number = branching_number_in_series[tuple(task_ext.rank[:-1])] \
+                                   if task_ext.rank is not None else None
+
+                if f"{branching_number}-{task_ext.rank[:-1]}" not in parallel_lines:
                     # first branch on newly encountered parallel sub-DAG
                     # create and object that will keep on being constructed
                     # as we further loop over tasks_list
-                    # top-level branching
-                    parallel_lines[f"{top_parallel_branching_number}-{task_ext.rank[:-1]}"] = \
+                    parallel_lines[f"{branching_number}-{task_ext.rank[:-1]}"] = \
                         ParallelLines(task_ext.rank[:-1], {tuple(task_ext.rank): [task_ext]})
                     if len(task_ext.rank) == 1:
                         # top-level new sub-DAG
-                        result.append(parallel_lines[f"{top_parallel_branching_number}-{task_ext.rank[:-1]}"])
+                        result.append(parallel_lines[f"{branching_number}-{task_ext.rank[:-1]}"])
                     else:
                         # nested branching
-                        parallel_lines[f"{top_parallel_branching_number}-{task_ext.rank[:-2]}"].lines[tuple(task_ext.rank[:-1])].append(
-                            parallel_lines[f"{top_parallel_branching_number}-{task_ext.rank[:-1]}"]
-                        )
+                        parallel_lines[
+                            f"""{
+                                    branching_number_in_series[tuple(task_ext.rank[:-2])]
+                                }-{
+                                    task_ext.rank[:-2]
+                                }"""] \
+                            .lines[tuple(task_ext.rank[:-1])].append(
+                                parallel_lines[f"{branching_number}-{task_ext.rank[:-1]}"]
+                            )
                 else:
                     # new branch opens on existing parallel sub-DAG (any depth)
-                    parallel_lines[f"{top_parallel_branching_number}-{task_ext.rank[:-1]}"].lines[tuple(task_ext.rank)] = [task_ext]
+                    parallel_lines[f"{branching_number}-{task_ext.rank[:-1]}"] \
+                        .lines[tuple(task_ext.rank)] = [task_ext]
 
             elif task_ext.rank is not None and task_ext.merge_func is None:
                 # standard task inside a parallel line (any depth)
-                parallel_lines[f"{top_parallel_branching_number}-{task_ext.rank[:-1]}"].lines[tuple(task_ext.rank)].append(task_ext)
+                parallel_lines[f"{branching_number}-{task_ext.rank[:-1]}"] \
+                    .lines[tuple(task_ext.rank)].append(task_ext)
 
             elif task_ext.merge_func is not None:
-                parallel_lines[f"{top_parallel_branching_number}-{task_ext.rank if task_ext.rank is not None else []}"].merging_task = task_ext
-                if task_ext.rank is None:
-                    top_parallel_branching_number +=1
+                try:
+                    parallel_lines[
+                            f"""{branching_number_in_series[
+                                    tuple(task_ext.rank) if task_ext.rank is not None else ()
+                              ]}-{task_ext.rank if task_ext.rank is not None else []}"""
+                        ].merging_task = task_ext
+                except Exception as ex:
+                    # TODO - bug in the DAG engine where merge tasks
+                    # sometimes (TBC, but probably a mishandeled async "future" issue)
+                    # get a wrong rank
+                    logging.getLogger().error(f"{task_ext} rank={task_ext.rank}?")
+                    logging.getLogger().error(ex)
+
+                branching_number_in_series[
+                        tuple(task_ext.rank) if task_ext.rank is not None else ()
+                    ] += 1
 
 
 
@@ -220,7 +249,7 @@ def task_row(task_ext: TaskExt) -> Tr:
 def parallel_table(
     elements_list    #  TODO type casting
 ) -> Table:
-    print(f"elements_list : {elements_list}")
+    print(f"parallel_table - elements_list : {elements_list}")
     return Tr(Td(Table(
             elements_list,
             id=elements_list.rank
