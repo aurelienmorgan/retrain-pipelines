@@ -4,7 +4,7 @@ import logging
 from collections import defaultdict
 from typing import List, Tuple, Union, Optional
 
-from fasthtml.common import Table, Tr, Td
+from fasthtml.common import Table, Tr, Td, B
 
 from ....db.model import TaskExt, TaskGroup
 
@@ -247,13 +247,36 @@ def task_row(task_ext: TaskExt) -> Tr:
 
 
 def parallel_table(
-    elements_list    #  TODO type casting
+    parallel_lines: ParallelLines
 ) -> Table:
-    print(f"parallel_table - elements_list : {elements_list}")
+    print(f"sub-DAG : {parallel_lines}")
+
+    rows = []
+    for parallel_line_rank, elements_list in parallel_lines.lines.items():
+        line_rows = []
+        for element in elements_list:
+            if isinstance(element, ParallelLines):
+                line_rows.append(parallel_table(element))
+            elif isinstance(element, Tuple):
+                line_rows.append(taskgroup_table(element))
+            else:
+                line_rows.append(task_row(element))
+        rows.append(
+            Tr(Td(Table(
+                *line_rows,
+                id=parallel_line_rank
+            )))
+        )
+
+    if parallel_lines.merging_task is not None:
+        rows.append(task_row(parallel_lines.merging_task))
+
     return Tr(Td(Table(
-            elements_list,
-            id=elements_list.rank
+            *rows,
+            style="border: 2px solid #333; border-collapse: collapse;",
+            id=parallel_lines.rank
         )))
+
 
 def taskgroup_table(
     taskgroup_tuple: Tuple[TaskGroup, List[Union[TaskExt, Tuple]]]
@@ -268,7 +291,8 @@ def taskgroup_table(
             rows.append(task_row(element))
 
     return Tr(Td(Table(
-            (taskgroup.name, *rows),
+            (Tr(Td(B(taskgroup.name))), *rows),
+            style="border: 2px solid #FFD700; border-collapse: collapse; ",
             id=taskgroup.uuid
         )))
 
