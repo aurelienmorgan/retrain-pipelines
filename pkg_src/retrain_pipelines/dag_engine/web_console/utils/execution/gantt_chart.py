@@ -29,6 +29,9 @@ def _organize_tasks(
 ) -> List[Union[TaskExt, Tuple]]:
     """Returns a topologically-organized structure
 
+    of executed task instances (incl. taskgroups
+    and parallel sub-DAG lines).
+
     e.g.:
     ```python
     tasks_list = [
@@ -99,18 +102,27 @@ def _organize_tasks(
     emitted = set()
     result = []
 
-    def emit_taskgroup(tg_uuid):
-        emitted.add(tg_uuid)
+    def emit_taskgroup(tg_uuid, rank: Optional[List[str]]):
+        takgroup_rank = None
+
         children = []
         for element in children_map[tg_uuid]:
             if element in task_by_id:
-                if element not in emitted:
+                if (
+                    element not in emitted and (
+                        rank is None or rank == task_by_id[element].rank
+                    )
+                ):
                     emitted.add(element)
                     children.append(task_by_id[element])
             elif element in taskgroup_by_uuid:
-                if element not in emitted:
-                    children.append(emit_taskgroup(element))
+                if f"{rank or []}-{element}" not in emitted:
+                    children.append(emit_taskgroup(element, rank))
+
+        emitted.add(f"{rank or []}-{tg_uuid}")
+
         return (taskgroup_by_uuid[tg_uuid], children)
+
 
     branching_number_in_series = {(): 0} # counter on occurence,
                                          # in case several are chained in series
@@ -176,8 +188,6 @@ def _organize_tasks(
                         tuple(task_ext.rank) if task_ext.rank is not None else ()
                     ] += 1
 
-
-
             else:
                 result.append(task_ext)
             emitted.add(task_ext.id)
@@ -187,12 +197,19 @@ def _organize_tasks(
             current = tg_uuid
             while current in parent_of_taskgroup:
                 parent_uuid = parent_of_taskgroup[current]
-                if parent_uuid in emitted:
+                if f"{task_ext.rank or []}-{parent_uuid}" in emitted:
                     break
                 current = parent_uuid
-            if current not in emitted:
-                tg_struct = emit_taskgroup(current)
-                result.append(tg_struct)
+
+            if f"{task_ext.rank or []}-{current}" not in emitted:
+                tg_struct = emit_taskgroup(current, rank=task_ext.rank)
+
+                if task_ext.rank is not None and task_ext.merge_func is None:
+                    # standard task inside a parallel line (any depth)
+                    parallel_lines[f"{branching_number}-{task_ext.rank[:-1]}"] \
+                        .lines[tuple(task_ext.rank)].append(tg_struct)
+                else:
+                    result.append(tg_struct)
 
     # print("organize_tasks result :\n", result)
     return result
