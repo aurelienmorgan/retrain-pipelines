@@ -257,7 +257,7 @@ def task_row(task_ext: TaskExt) -> Tr:
         Td(
             task_ext.name
         ),
-        id=task_ext.id
+        id=f"gantt-{task_ext.id}"
     )
 
     return result
@@ -291,7 +291,7 @@ def parallel_table(
     return Tr(Td(Table(
             *rows,
             style="border: 2px solid #333; border-collapse: collapse;",
-            id=parallel_lines.rank
+            id=f"gantt-{parallel_lines.rank}"
         )))
 
 
@@ -310,7 +310,7 @@ def taskgroup_table(
     return Tr(Td(Table(
             (Tr(Td(B(taskgroup.name))), *rows),
             style="border: 2px solid #FFD700; border-collapse: collapse; ",
-            id=taskgroup.uuid
+            id=f"gantt-{taskgroup.uuid}"
         )))
 
 
