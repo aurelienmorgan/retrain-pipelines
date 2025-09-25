@@ -647,9 +647,7 @@ def register(app, rt, prefix=""):
 
 
     @rt(f"{prefix}/load_executions", methods=["POST"])
-    async def get_execution_entries(
-        request: Request
-    ):
+    async def get_execution_entries(request: Request):
         # Retrieves params from form data (POST)
         form = await request.form()
 
@@ -692,7 +690,7 @@ def register(app, rt, prefix=""):
             content=Div(# page content
                 Div(# params panel
                     Div(
-                        Div(
+                        Div(# label
                             H3(
                                 "Latest pipeline executions",
                                 style=(
@@ -1455,37 +1453,86 @@ def register(app, rt, prefix=""):
                         const cookies = document.cookie.split("; ");
                         const COOKIE_PREFIX = "executions_dashboard:";
 
-                        pipeline_name = "";
-                        const pipeline_name_cookieKey = COOKIE_PREFIX + 'pipeline-name-autocomplete';
-                        for (const cookie of cookies) {
-                            const [key, val] = cookie.split("=");
-                            if (key === pipeline_name_cookieKey) {
-                                pipeline_name = decodeURIComponent(val || "");
+                        var pipeline_name = "";
+                        const pipeline_name_input = 
+                            document.getElementById("pipeline-name-autocomplete-input");
+                        if (
+                            // not an 'unselected' of the 3-states
+                            !['combo-input-selected-red', 'combo-input-unselected'].some(
+                                    cls => pipeline_name_input.classList.contains(cls)
+                            )
+                        ) {
+                            const dropdown = document.getElementById(
+                                "pipeline-name-autocomplete-dropdown");
+                            if (!dropdown.hasChildNodes()) {
+                                // if initial page load
+                                // (init from cookie didn't occur yet)
+                                const pipeline_name_cookieKey = COOKIE_PREFIX + 'pipeline-name-autocomplete';
+                                for (const cookie of cookies) {
+                                    const [key, val] = cookie.split("=");
+                                    if (key === pipeline_name_cookieKey) {
+                                        pipeline_name = decodeURIComponent(val || "");
+                                    }
+                                }
+                            } else {
+                                pipeline_name = pipeline_name_input.value;
                             }
+                        } else {
+                            pipeline_name = "";
                         }
+                        // console.log("pipeline_name : ", pipeline_name);
 
-                        username = "";
-                        const username_cookieKey = COOKIE_PREFIX + 'pipeline-user-autocomplete';
-                        for (const cookie of cookies) {
-                            const [key, val] = cookie.split("=");
-                            if (key === username_cookieKey) {
-                                username = decodeURIComponent(val || "");
+                        var username = "";
+                        const username_input = 
+                            document.getElementById("pipeline-user-autocomplete-input");
+                        if (
+                            // not an 'unselected' of the 3-states
+                            !['combo-input-selected-red', 'combo-input-unselected'].some(
+                                    cls => username_input.classList.contains(cls)
+                            )
+                        ) {
+                            const dropdown = document.getElementById(
+                                "pipeline-user-autocomplete-dropdown");
+                            if (!dropdown.hasChildNodes()) {
+                                // if initial page load
+                                // (init from cookie didn't occur yet)
+                                const username_cookieKey = COOKIE_PREFIX + 'pipeline-user-autocomplete';
+                                for (const cookie of cookies) {
+                                    const [key, val] = cookie.split("=");
+                                    if (key === username_cookieKey) {
+                                        username = decodeURIComponent(val || "");
+                                    }
+                                }
+                            } else {
+                                username = username_input.value;
                             }
+                        } else {
+                            username = "";
                         }
+                        // console.log("username : ", username);
 
                         // retrieve last validated datetime value from hidden input
                         before_datetime_str = 
                             document.getElementById("pipeline-before-datetime-selected").value;
 
                         // retrieve executions status filter
-                        execsStatus = "";
-                        const execsStatus_cookieKey = COOKIE_PREFIX + 'pipeline-status-bandit-toggle';
-                        for (const cookie of cookies) {
-                            const [key, val] = cookie.split("=");
-                            if (key === execsStatus_cookieKey) {
-                                execsStatus = decodeURIComponent(val || "");
-                            }
+                        var execsStatus = "";
+                        // const execsStatus_cookieKey = COOKIE_PREFIX + 'pipeline-status-bandit-toggle';
+                        // for (const cookie of cookies) {
+                        //     const [key, val] = cookie.split("=");
+                        //     if (key === execsStatus_cookieKey) {
+                        //         execsStatus = decodeURIComponent(val || "");
+                        //     }
+                        // }
+                        const execs_statuses_togglerLabels = document.getElementById("banditLabels");
+                        const execs_status_togglerValue =
+                            execs_statuses_togglerLabels.children[
+                                execs_statuses_togglerLabels.children.length - 3];
+                        if (execs_status_togglerValue.hasAttribute("data-execs-status")) {
+                            execsStatus = execs_status_togglerValue.getAttribute("data-execs-status");
                         }
+                        // console.log("execsStatus", execsStatus);
+
 
                         // form data for the html POST
                         const formData = new FormData();
