@@ -6,6 +6,10 @@ and var names '--background-normal' & '--background-hover'
 All list items must have "wavy-list-item" as one of its css classes. Those are the elements tha are animated.
 The body of those elements shall have "wavy-list-item-body" as one of its classes. Those are the subelements (or the element itself) the color of which is "transitioned" on hover.
 The list-items container (the list DOM containber element) has a css class named 'wavy-items-list'.
+
+Note regarding borders :
+We apply border only if the css var exists ('--border-normal' & '--border-hover').
+In js/css, we can only check against emty string.
 */
 
 const applyWaveEffect = (entry, entries, i) => {
@@ -51,11 +55,24 @@ const applyWaveEffect = (entry, entries, i) => {
 
     if (!entry.classList.contains('wavy-list-item-body')) {
         const entryBody = entry.querySelector('.wavy-list-item-body');
-        entryBody.style.transition = 'transform 0.2s ease, margin-top 0.2s ease, background 0.3s ease';
+        entryBody.style.transition =
+            'transform 0.2s ease, margin-top 0.2s ease, background 0.3s ease, border 0.3s ease';
         entryBody.style.transform = ''; //`scale(${scaleFocused})`;
-        entryBody.style.background = window.getComputedStyle(entryBody).getPropertyValue('--background-hover');
+        entryBody.style.background =
+            window.getComputedStyle(entryBody).getPropertyValue('--background-hover');
+        entryBody.style.color =
+            window.getComputedStyle(entryBody).getPropertyValue('--color-hover');
+        const borderColor = window.getComputedStyle(entryBody).getPropertyValue('--border-hover');
+        if (borderColor) {
+            entryBody.style.border = `1px solid ${borderColor.trim()}`;
+        }
     } else {
         entry.style.background = window.getComputedStyle(entry).getPropertyValue('--background-hover');
+        entry.style.color = window.getComputedStyle(entry).getPropertyValue('--color-hover');
+        const borderColor = window.getComputedStyle(entry).getPropertyValue('--border-hover');
+        if (borderColor) {
+            entry.style.border = `1px solid ${borderColor.trim()}`;
+        }
     }
 
     const mouseMoveHandler = (ev) => {
@@ -68,7 +85,7 @@ const applyWaveEffect = (entry, entries, i) => {
         if (before && relativeY <= 0.66) {
             const intensity = 1 - clamp(relativeY / 0.66, 0, 1);
             before.style.transition =
-                'transform 0.2s ease, margin-top 0.2s ease, background 0.3s ease';
+                'transform 0.2s ease, margin-top 0.2s ease, background 0.3s ease, border 0.3s ease';
 
             // Clamp neighbor scale as well:
             const neighborScale = 1 + (scaleNeighborMax - 1) * intensity;
@@ -87,11 +104,21 @@ const applyWaveEffect = (entry, entries, i) => {
             if (!before.classList.contains('wavy-list-item-body')) {
                 const beforeBody = before.querySelector('.wavy-list-item-body');
                 beforeBody.style.transition =
-                    'transform 0.2s ease, margin-top 0.2s ease, background 0.3s ease';
+                    'transform 0.2s ease, margin-top 0.2s ease, background 0.3s ease, border 0.3s ease';
                 beforeBody.style.transform = ''; //`scale(${neighborScale})`;
-                beforeBody.style.background = window.getComputedStyle(beforeBody).getPropertyValue('--background-hover');
+                beforeBody.style.background =
+                    window.getComputedStyle(beforeBody).getPropertyValue('--background-hover');
+                const borderColor = window.getComputedStyle(beforeBody).getPropertyValue('--border-hover');
+                if (borderColor) {
+                    beforeBody.style.border = `1px solid ${borderColor.trim()}`;
+                }
             } else {
-                before.style.background = window.getComputedStyle(before).getPropertyValue('--background-hover');
+                before.style.background =
+                    window.getComputedStyle(before).getPropertyValue('--background-hover');
+                const borderColor = window.getComputedStyle(before).getPropertyValue('--border-hover');
+                if (borderColor) {
+                    before.style.border = `1px solid ${borderColor.trim()}`;
+                }
             }
         } else if (before) {
             before.style.transform = '';
@@ -105,16 +132,26 @@ const applyWaveEffect = (entry, entries, i) => {
             if (!before.classList.contains('wavy-list-item-body')) {
                 const beforeBody = before.querySelector('.wavy-list-item-body');
                 beforeBody.style.transform = '';
-                beforeBody.style.background = window.getComputedStyle(beforeBody).getPropertyValue('--background-normal');
+                beforeBody.style.background =
+                    window.getComputedStyle(beforeBody).getPropertyValue('--background-normal');
+                const borderColor = window.getComputedStyle(beforeBody).getPropertyValue('--border-normal');
+                if (borderColor) {
+                    beforeBody.style.border = `1px solid ${borderColor.trim()}`;
+                }
             } else {
-                before.style.background = window.getComputedStyle(before).getPropertyValue('--background-normal');
+                before.style.background =
+                    window.getComputedStyle(before).getPropertyValue('--background-normal');
+                const borderColor = window.getComputedStyle(before).getPropertyValue('--border-normal');
+                if (borderColor) {
+                    before.style.border = `1px solid ${borderColor.trim()}`;
+                }
             }
         }
 
         if (after && relativeY >= 0.33) {
             const intensity = clamp((relativeY - 0.33) / 0.66, 0, 1);
             after.style.transition =
-                'transform 0.2s ease, margin-top 0.2s ease, background 0.3s ease';
+                'transform 0.2s ease, margin-top 0.2s ease, background 0.3s ease, border 0.3s ease';
 
             // Clamp neighbor scale as well:
             const neighborScale = 1 + (scaleNeighborMax - 1) * intensity;
@@ -133,11 +170,21 @@ const applyWaveEffect = (entry, entries, i) => {
             if (!after.classList.contains('wavy-list-item-body')) {
                 const afterBody = after.querySelector('.wavy-list-item-body');
                 afterBody.style.transition =
-                    'transform 0.2s ease, margin-top 0.2s ease, background 0.3s ease';
+                    'transform 0.2s ease, margin-top 0.2s ease, background 0.3s ease, border 0.3s ease';
                 afterBody.style.transform = ''; //`scale(${neighborScale})`;
-                afterBody.style.background = window.getComputedStyle(afterBody).getPropertyValue('--background-hover');
+                afterBody.style.background =
+                    window.getComputedStyle(afterBody).getPropertyValue('--background-hover');
+                const borderColor = window.getComputedStyle(afterBody).getPropertyValue('--border-hover');
+                if (borderColor) {
+                    afterBody.style.border = `1px solid ${borderColor.trim()}`;
+                }
             } else {
-                after.style.background = window.getComputedStyle(after).getPropertyValue('--background-hover');
+                after.style.background =
+                    window.getComputedStyle(after).getPropertyValue('--background-hover');
+                const borderColor = window.getComputedStyle(after).getPropertyValue('--border-hover');
+                if (borderColor) {
+                    after.style.border = `1px solid ${borderColor.trim()}`;
+                }
             }
         } else if (after) {
             after.style.transform = '';
@@ -151,9 +198,19 @@ const applyWaveEffect = (entry, entries, i) => {
             if (!after.classList.contains('wavy-list-item-body')) {
                 const afterBody = after.querySelector('.wavy-list-item-body');
                 afterBody.style.transform = '';
-                afterBody.style.background = window.getComputedStyle(afterBody).getPropertyValue('--background-normal');
+                afterBody.style.background =
+                    window.getComputedStyle(afterBody).getPropertyValue('--background-normal');
+                const borderColor = window.getComputedStyle(afterBody).getPropertyValue('--border-normal');
+                if (borderColor) {
+                    afterBody.style.border = `1px solid ${borderColor.trim()}`;
+                }
             } else {
-                after.style.background = window.getComputedStyle(after).getPropertyValue('--background-normal');
+                after.style.background =
+                    window.getComputedStyle(after).getPropertyValue('--background-normal');
+                const borderColor = window.getComputedStyle(after).getPropertyValue('--border-normal');
+                if (borderColor) {
+                    after.style.border = `1px solid ${borderColor.trim()}`;
+                }
             }
         }
     };
@@ -174,9 +231,20 @@ const applyWaveEffect = (entry, entries, i) => {
             if (!e.classList.contains('wavy-list-item-body')) {
                 const eBody = e.querySelector('.wavy-list-item-body');
                 eBody.style.transform = '';
-                eBody.style.background = window.getComputedStyle(eBody).getPropertyValue('--background-normal');
+                eBody.style.background =
+                    window.getComputedStyle(eBody).getPropertyValue('--background-normal');
+                eBody.style.color = window.getComputedStyle(eBody).getPropertyValue('--color-normal');
+                const borderColor = window.getComputedStyle(eBody).getPropertyValue('--border-normal');
+                if (borderColor) {
+                    eBody.style.border = `1px solid ${borderColor.trim()}`;
+                }
             } else {
                 e.style.background = window.getComputedStyle(e).getPropertyValue('--background-normal');
+                e.style.color = window.getComputedStyle(e).getPropertyValue('--color-normal');
+                const borderColor = window.getComputedStyle(e).getPropertyValue('--border-normal');
+                if (borderColor) {
+                    e.style.border = `1px solid ${borderColor.trim()}`;
+                }
             }
         });
         document.removeEventListener('mousemove', mouseMoveHandler);

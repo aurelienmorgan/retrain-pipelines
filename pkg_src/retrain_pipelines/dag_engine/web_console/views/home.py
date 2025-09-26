@@ -1305,8 +1305,9 @@ def register(app, rt, prefix=""):
 
                             background: var(--background-normal);
                             color: var(--color-normal);
+                            border: 1px solid var(--border-normal);
 
-                            line-height: 1em; margin-bottom: 4px;
+                            line-height: 0.85em; margin-bottom: 4px;
                             border-radius: 6px;
                             box-shadow: 0 2px 4px rgba(0,0,0,0.1),
                                 0 8px 16px rgba(0,0,0,0.05),
@@ -1324,7 +1325,7 @@ def register(app, rt, prefix=""):
                             display: flex;
                             align-items: center;
 
-                            line-height: 1em;
+                            /* line-height: 1em; */
                             padding-top: 3px; padding-bottom: 4px;
                             padding-left: 12px;
                             border-radius: 6px 0 0 6px;

@@ -42,6 +42,7 @@ def execution_to_html(execution_ext: Union[Execution, ExecutionExt]) -> Div:
     ui_css = UiCss(**execution_ext.ui_css) if execution_ext.ui_css else UiCss()
     exec_background = ui_css.background or "#4d0066"
     exec_color = ui_css.color or "#fff"
+    exec_border = ui_css.border or None #"#FFD700"
 
     return \
         Div(
@@ -77,10 +78,12 @@ def execution_to_html(execution_ext: Union[Execution, ExecutionExt]) -> Div:
             ),
             Style(f"""
                 #_{execution_ext.id}.execution {{
-                    --background-normal: {hex_to_rgba(exec_background, .25)};
-                    --background-hover: {hex_to_rgba(exec_background, .65)};
-                    --color-normal: {hex_to_rgba(exec_color, .45)};
-                    --color-hover: {hex_to_rgba(exec_color, .65)};
+                    --background-normal: {hex_to_rgba(exec_background, .35)};
+                    --background-hover: {hex_to_rgba(exec_background, .75)};
+                    --color-normal: {hex_to_rgba(exec_color, .65)};
+                    --color-hover: {hex_to_rgba(exec_color, 1)};
+                    --border-normal: {hex_to_rgba(exec_border, .45) if exec_border else " "};
+                    --border-hover: {hex_to_rgba(exec_border, .85) if exec_border else " "};
                 }}
             """),
             **{
