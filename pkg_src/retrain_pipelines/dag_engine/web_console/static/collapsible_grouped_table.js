@@ -613,6 +613,119 @@ function init(tableId, tableData, interBarsSpacing) {
 
 //////////////////////////////////////////////////////////////
 
+function collapseAll() {
+    /* ********************************************************
+    * For each group G in table.children (top-level),         *
+    * for each group g in G.children (depth 1),               *
+    * recursive call collapsAll(header_row).                  *
+    *    We start by collapsing deepest upward.               *
+    *                                                         *
+    * loop over children of current group (via data-path),    *
+    * for each group, make recursive call                     *
+    * after that's done for all chidren in current group,     *
+    * before leaving method, trigger actual group collapse by *
+    * programatically firing click event on header_row        *
+    * if current group is expanded.                           *
+    ******************************************************** */
+
+    function collapseGroup(groupPath) {
+        const groupRow =
+            document.querySelector(`[data-path="${groupPath}"]`);
+        if (
+            !groupRow ||
+            !groupRow.classList.contains('group-header')
+        ) return;
+
+        // Find all direct children groups
+        const allRows = document.querySelectorAll('[data-path]');
+        const directChildGroups = Array.from(allRows).filter(row => {
+            const path = row.getAttribute('data-path');
+            const pathParts = path.split('.');
+            const groupParts = groupPath.split('.');
+            return (
+                row.classList.contains('group-header') &&
+                pathParts.length === groupParts.length + 1 &&
+                path.startsWith(groupPath + '.')
+            );
+        });
+
+        // Recursively collapse children first (deepest first)
+        directChildGroups.forEach(childRow => {
+            const childPath = childRow.getAttribute('data-path');
+            collapseGroup(childPath);
+        });
+
+        // After all children are collapsed,
+        // collapse this group if expanded
+        if (!groupRow.classList.contains('collapsed')) {
+            toggleRow(groupPath);
+        }
+    }
+
+    // Collapse each top-level group
+    // (which will recursively collapse children)
+    const topLevelGroups = Array.from(
+        document.querySelectorAll('.group-header')
+    ).filter(row => {
+        const path = row.getAttribute('data-path');
+        return !path.includes('.');
+    });
+    topLevelGroups.forEach(groupRow => {
+        const path = groupRow.getAttribute('data-path');
+        collapseGroup(path);
+    });
+}
+
+function expandAll() {
+    function expandGroup(groupPath) {
+        const groupRow =
+            document.querySelector(`[data-path="${groupPath}"]`);
+        if (
+            !groupRow ||
+            !groupRow.classList.contains('group-header')
+        ) return;
+
+        // Expand this group first if collapsed
+        if (groupRow.classList.contains('collapsed')) {
+            toggleRow(groupPath);
+        }
+
+        // Find all direct children groups
+        const allRows = document.querySelectorAll('[data-path]');
+        const directChildGroups = Array.from(allRows).filter(row => {
+            const path = row.getAttribute('data-path');
+            const pathParts = path.split('.');
+            const groupParts = groupPath.split('.');
+            return (
+                row.classList.contains('group-header') &&
+                pathParts.length === groupParts.length + 1 &&
+                path.startsWith(groupPath + '.')
+            );
+        });
+
+        // Recursively expand children after parent is expanded
+        directChildGroups.forEach(childRow => {
+            const childPath = childRow.getAttribute('data-path');
+            expandGroup(childPath);
+        });
+    }
+
+    // Expand each top-level group
+    // (which will recursively expand children)
+    const topLevelGroups = Array.from(
+        document.querySelectorAll('.group-header')
+    ).filter(row => {
+        const path = row.getAttribute('data-path');
+        return !path.includes('.');
+    });
+    topLevelGroups.forEach(groupRow => {
+        const path = groupRow.getAttribute('data-path');
+        expandGroup(path);
+    });
+}
+
+//////////////////////////////////////////////////////////////
+
 function insertRowUnder(table_id, row_id) {
     // Get the existing row by id
     const table = document.getElementById(table_id);
@@ -636,7 +749,7 @@ function insertRowUnder(table_id, row_id) {
     tbody.insertBefore(newRow, existingRow.nextSibling);
 }
 
-function insertRowAt(table_id, row_id, index) {
+function insertRowAt(table_id, group_header_row_id, group_index) {
     /* *
     * 'row_id' one of a group header
     * (null if new row is table top-level standalone)
@@ -644,7 +757,6 @@ function insertRowAt(table_id, row_id, index) {
     // TODO, insert, manage (group) style and depth bars
     //       insert even if hidden (do not expand ancestors)
 }
-
 
 
 
