@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+    table {
+        border-collapse: collapse;
+        width: 100%;
+        table-layout: fixed;
+    }
+
+    th, td {
+        padding: 8px;           <!-- important -->
+        text-align: left;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        border: 1px solid #ddd;
+        position: relative;
+    }
+
+    #id-col { width: 20%; }
+    #name-col { width: 25%; }
+    #desc-col { width: 35%; }
+    #value-col { width: 20%; }
+
+    .group-header {
+        cursor: pointer;
+        font-weight: bold;
+    }
+
+    .hidden {
+        display: none;
+    }
+
+    tr td:first-child {
+        padding-left: calc(10px + var(--indent-level) * 5px);
+        position: relative;
+    }
+
+    .standalone-row {
+        font-style: italic;
+    }
+
+    .left-nesting-bar {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        width: 3px;           <!-- important -->
+        z-index: 0;
+    }
+
+    .right-nesting-bar {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        width: 3px;           <!-- important -->
+        z-index: 0;
+        right: 0;
+    }
+
+    .top-nesting-bar {
+        position: absolute;
+        height: 3px;           <!-- important -->
+        z-index: 0;
+        top: 0;
+    }
+
+    .bottom-nesting-bar {
+        position: absolute;
+        height: 3px;           <!-- important -->
+        z-index: 0;
+        bottom: 0;
+    }
+</style>
+<!-- <script src="collapsible_grouped_table.js"></script> -->
+<script src="http://localhost:5001/collapsible_grouped_table.js"></script>
+</head>
+<body>
+
+<button onclick="insertRowUnder('demo', 'G1.2.2.3.3.3.3.3.2')">Insert Row</button>
+
+<table id="demo">
+    <thead>
+        <tr>
+            <th>ID</th>
+            <th>Name</th>
+            <th>Description</th>
+            <th>Value</th>
+        </tr>
+    </thead>
+    <tbody id="data-tbody"></tbody>
+</table>
+
+<script>
+    const tableData = [
+        {
+            id: "S1",
+            name: "Global Standalone A",
+            description: "Always visible",
+            value: "999",
+            style: { color: "#1a5f7a", background: "#FFFA64", border: "#a0d4eb" },
+            standalone: true
+        },
+        {
+            id: "G1",
+            name: "Group 1",
+            description: "Dark theme group",
+            value: "",
+            style: { color: "#ffffff", background: "#6C849C", border: "#1a252f" },
+            children: [
+                { id: "G1.1", name: "Item 1.1", description: "Inherits G1 style", value: "10" },
+                {
+                    id: "G1.2",
+                    name: "Subgroup 1.2",
+                    description: "Red subgroup",
+                    value: "",
+                    style: { color: "#e74c3c", background: "#FEB3B3", border: "#E46054" },
+                    children: [
+                        { id: "G1.2.1", name: "Item 1.2.1", description: "Red style", value: "20" },
+                        {
+                            id: "G1.2.2",
+                            name: "Deep Subgroup",
+                            description: "Purple",
+                            value: "",
+                            style: { color: "#8e44ad", background: "#f5eefc", border: "#FF3FF9" },
+                            children: [
+                                { id: "G1.2.2.1", name: "Item 1.2.2.1", description: "Purple", value: "30" },
+                                { id: "G1.2.2.2", name: "Item 1.2.2.2", description: "Purple", value: "40" },
+                                {
+                                    id: "G1.2.2.3",
+                                    name: "Deep Subgroup",
+                                    description: "Purple",
+                                    value: "",
+                                    style: { color: "#f5eefc", background: "#CD9BFF", border: "#9D3AFF" },
+                                    children: [
+                                        { id: "G1.2.2.3.1", name: "Item 1.2.3.1", description: "Purple", value: "30" },
+                                        { id: "G1.2.2.3.2", name: "Item 1.2.3.2", description: "Purple", value: "40" },
+                                        {
+                                            id: "G1.2.2.3.3",
+                                            name: "Deep Subgroup",
+                                            description: "Purple",
+                                            value: "",
+                                            style: { color: "#f5eefc", background: "#BC7AFE", border: "#7AFFFA" },
+                                            children: [
+                                                { id: "G1.2.2.3.3.1", name: "Item 1.2.3.3.1", description: "Purple", value: "30" },
+                                                { id: "G1.2.2.3.3.2", name: "Item 1.2.3.3.2", description: "Purple", value: "40" },
+                                                {
+                                                    id: "G1.2.2.3.3.3",
+                                                    name: "Deep Subgroup",
+                                                    description: "Purple",
+                                                    value: "",
+                                                    style: { color: "#f5eefc", background: "#714D96", border: "#FBFF00" },
+                                                    children: [
+                                                        { id: "G1.2.2.3.3.3.1", name: "Item 1.2.3.3.1", description: "Purple", value: "30" },
+                                                        { id: "G1.2.2.3.3.3.2", name: "Item 1.2.3.3.2", description: "Purple", value: "40" },
+                                                        {
+                                                            id: "G1.2.2.3.3.3.3",
+                                                            name: "Deep Subgroup",
+                                                            description: "Purple",
+                                                            value: "",
+                                                            style: { color: "#f5eefc", background: "#714D96", border: "#FBFF00" },
+                                                            children: [
+                                                                { id: "G1.2.2.3.3.3.3.1", name: "Item 1.2.3.3.3.1", description: "Purple", value: "30" },
+                                                                { id: "G1.2.2.3.3.3.3.2", name: "Item 1.2.3.3.3.2", description: "Purple", value: "40" },
+                                                                {
+                                                                    id: "G1.2.2.3.3.3.3.3",
+                                                                    name: "Deep Subgroup",
+                                                                    description: "Purple",
+                                                                    value: "",
+                                                                    style: { color: "#f5eefc", background: "#714D96", border: "#FBFF00" },
+                                                                    children: [
+                                                                        { id: "G1.2.2.3.3.3..33.1", name: "Item 1.2.3.3.3.3.1", description: "Purple", value: "30" },
+                                                                        { id: "G1.2.2.3.3.3.3.3.2", name: "Item 1.2.3.3.3.3.2", description: "Purple", value: "40" }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                },
+                                { id: "G1.2.2.4", name: "Item 1.2.2.4", description: "Purple", value: "30" },
+                                { id: "G1.2.2.5", name: "Item 1.2.2.5", description: "Purple", value: "40" }
+                            ]
+                        }
+                    ]
+                },
+                { id: "G1.3", name: "Item 1.3", description: "Back to G1 style", value: "50" }
+            ]
+        },
+        {
+            id: "S2",
+            name: "Global Standalone B",
+            description: "Blue standalone",
+            value: "888",
+            style: { color: "#075E80", background: "#87CEEB", border: "#00B7FF" },
+            standalone: true
+        },
+        {
+            id: "G2",
+            name: "Group 2",
+            description: "Green group",
+            value: "",
+            style: { color: "#27ae60", background: "#e8f5e9", border: "#a3e4a3" },
+            children: [
+                { id: "G2.1", name: "Item 2.1", description: "Green", value: "100" },
+                {
+                    id: "G2.2",
+                    name: "Nested Subgroup",
+                    description: "Brown override",
+                    value: "",
+                    style: { color: "#5d4037", background: "#efebe9", border: "#bcaaa4" },
+                    children: [
+                        { id: "G2.2.1", name: "Item 2.2.1", description: "Brown", value: "150" },
+                        { id: "G2.2.2", name: "Item 2.2.2", description: "Brown", value: "200" }
+                    ]
+                },
+                { id: "G2.3", name: "Item 2.3", description: "Green", value: "100" },
+                { id: "G2.4", name: "Item 2.4", description: "Green", value: "100" },
+                {
+                    id: "G2.5",
+                    name: "Nested Subgroup",
+                    description: "Brown override",
+                    value: "",
+                    style: { color: "#5d4037", background: "#efebe9", border: "#bcaaa4" },
+                    children: [
+                        { id: "G2.5.1", name: "Item 2.5.1", description: "Brown", value: "150" },
+                        { id: "G2.5.2", name: "Item 2.5.2", description: "Brown", value: "200" },
+                        { id: "G2.5.3", name: "Item 2.5.3", description: "Brown", value: "200" }
+                    ]
+                },
+                { id: "G2.6", name: "Item 2.6", description: "Green", value: "100" },
+                { id: "G2.7", name: "Item 2.7", description: "Green", value: "100" },
+                { id: "G2.8", name: "Item 2.8", description: "Green", value: "100" },
+                {
+                    id: "G2.9",
+                    name: "Nested Subgroup",
+                    description: "Brown override",
+                    value: "",
+                    style: { color: "#5d4037", background: "#efebe9", border: "#bcaaa4" },
+                    children: [
+                        { id: "G2.9.1", name: "Item 2.9.1", description: "Brown", value: "150" },
+                        {
+                            id: "G2.9.2",
+                            name: "Nested Subgroup",
+                            description: "Brown override",
+                            value: "",
+                            style: { color: "#5d4037", background: "#efebe9", border: "#bcaaa4" },
+                            children: [
+                                { id: "G2.9.2.1", name: "Item 2.9.2.1", description: "Brown", value: "150" },
+                                { id: "G2.9.2.2", name: "Item 2.9.2.2", description: "Brown", value: "200" },
+                                { id: "G2.9.2.3", name: "Item 2.9.2.3", description: "Brown", value: "200" }
+                            ]
+                        }
+                    ]
+                },
+                { id: "G2.10", name: "Item 2.10", description: "Green", value: "100" },
+                { id: "G2.11", name: "Item 2.11", description: "Green", value: "100" },
+                { id: "G2.12", name: "Item 2.12", description: "Green", value: "100" }
+            ]
+        },
+        {
+            id: "S3",
+            name: "Global Standalone C",
+            description: "Orange standalone",
+            value: "777",
+            style: { color: "#555555", background: "#FFD563", border: "#dee2e6" },
+            standalone: true
+        }
+    ];
+
+    const interBarsSpacing = 2;     /* in px */
+
+    document.addEventListener('DOMContentLoaded', function() { 
+        init('demo', tableData, interBarsSpacing); 
+    });
+</script>
+
+</body>
+</html>
+
