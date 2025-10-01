@@ -112,7 +112,7 @@ function getGroupStyleForPath(path) {
     return null;
 }
 
-function findLastChildOfGroup(groupPath) {
+function findLastVisibleChildOfGroup(groupPath) {
     const groupRow = document.querySelector(`[data-path="${groupPath}"]`);
     if (!groupRow || !groupRow.classList.contains('group-header'))
         return null;
@@ -133,10 +133,10 @@ function findLastChildOfGroup(groupPath) {
     let lastChildPath = lastChild.getAttribute('data-path');
 
     if (
-        lastChild.classList.contains('group-header') &&
-        !lastChild.classList.contains('collapsed')
+        lastChild.classList.contains('group-header')
+        && !lastChild.classList.contains('collapsed')
     ) {
-        const deeperLastChild = findLastChildOfGroup(lastChildPath);
+        const deeperLastChild = findLastVisibleChildOfGroup(lastChildPath);
         if (deeperLastChild) {
             lastChildPath = deeperLastChild;
         }
@@ -150,7 +150,6 @@ function toggleRow(path) {
     if (!row) return;
 
     const isInitiallyCollapsed = row.classList.contains('collapsed');
-    const id = row.getAttribute('data-id');
 
     row.classList.toggle('collapsed', !isInitiallyCollapsed);
     applyVisibility();
@@ -166,7 +165,7 @@ function toggleRow(path) {
     //       lastChild if it was expanded)
     var rowToClean;
     if (!isInitiallyCollapsed) {
-        const lastChildPath = findLastChildOfGroup(path);
+        const lastChildPath = findLastVisibleChildOfGroup(path);
         rowToClean =
             document.querySelector(`[data-path="${lastChildPath}"]`);
     } else {
@@ -189,7 +188,7 @@ function toggleRow(path) {
     ****************************************** */
     var groupLastVisibleRow;
     if (isInitiallyCollapsed) {
-        const lastChildPath = findLastChildOfGroup(path);
+        const lastChildPath = findLastVisibleChildOfGroup(path);
         groupLastVisibleRow =
             document.querySelector(`[data-path="${lastChildPath}"]`);
     }
@@ -211,7 +210,7 @@ function toggleRow(path) {
     const existingTopBars = row.cells[0].querySelectorAll('.top-nesting-bar');
 
     row.cells[0].textContent =
-        (!isInitiallyCollapsed ? '► ' : '▼ ') + path + " - " + id;
+        (!isInitiallyCollapsed ? '► ' : '▼ ') + path + " - " + row.getAttribute('data-id');
 
     existingTopBars.forEach(bar => row.cells[0].appendChild(bar));
     /* ************************ */
@@ -223,7 +222,7 @@ function toggleRow(path) {
     // Find last visible row after toggle
     let targetRow;
     if (!isInitiallyCollapsed) { // Just expanded
-        const lastChildPath = findLastChildOfGroup(path);
+        const lastChildPath = findLastVisibleChildOfGroup(path);
         targetRow = document.querySelector(`[data-path="${lastChildPath}"]`);
     } else { // Just collapsed
         targetRow = row;
@@ -276,7 +275,7 @@ function isLastVisibleChild(groupPath, childPath) {
     if (isGroupCollapsed) {
         return childPath === groupPath;
     } else {
-        const lastChildPath = findLastChildOfGroup(groupPath);
+        const lastChildPath = findLastVisibleChildOfGroup(groupPath);
         return childPath === lastChildPath;
     }
 }
@@ -325,9 +324,11 @@ function countParentGroupsEndingAt(lastRow) {
 function applyGroupStyles(interBarsSpacing) {
     /* **************************
     * styling                   *
-    * for each standalone rows. *
+    * for each top-level rows. *
     ************************** */
-    document.querySelectorAll('.standalone-row').forEach(row => {
+    document.querySelectorAll(
+        'tr[data-level="0"]:not(.group-header)'
+    ).forEach(row => {
         const path = row.getAttribute('data-path');
         const item = getLeafByPath(tableData, path);
         if (item && item.style) {
@@ -344,7 +345,9 @@ function applyGroupStyles(interBarsSpacing) {
     * left, right, and top bars *
     * for each group.           *
     ************************** */
-    document.querySelectorAll('tbody tr:not(.standalone-row)').forEach(
+    document.querySelectorAll(
+        'table tbody tr:not([data-level="0"]), table tbody tr.group-header'
+    ).forEach(
         row => {
             const path = row.getAttribute('data-path');
             const groupStyle = getGroupStyleForPath(path);
@@ -514,7 +517,7 @@ function addBottomBar(row, interBarsSpacing) {
     } else {
         // expanded group
         if (groupStyle) {
-            const lastChildPath = findLastChildOfGroup(path);
+            const lastChildPath = findLastVisibleChildOfGroup(path);
             const lastChildRow =
                 document.querySelector(`[data-path="${lastChildPath}"]`);
 
@@ -565,12 +568,14 @@ function getLeafByPath(data, pathStr) {
     return null;
 }
 
-function renderRows(data, parentPath = "", level = 0) {
+function renderRows(data, parentPath = "", level = 0, startIndex = 0) {
     let html = '';
     data.forEach((item, index) => {
-        const path = parentPath ? `${parentPath}.${index}` : `${index}`;
+        const path = parentPath ?
+                    `${parentPath}.${startIndex + index}` :
+                    `${startIndex + index}`;
         const hasChildren = item.children && item.children.length > 0;
-        const isStandalone = item.standalone === true;
+        const isTopLevelRow = level === "0" && parentPath === "" && item.children;
 
         const idCell = (
             hasChildren
@@ -578,8 +583,7 @@ function renderRows(data, parentPath = "", level = 0) {
             : `<td>${path}&nbsp;-&nbsp;${item.id}</td>`
         );
 
-        const rowClass = (hasChildren ? 'group-header ' : '') +
-                         (isStandalone ? 'standalone-row' : '');
+        const rowClass = (hasChildren ? 'group-header ' : '');
         const clickAttr =
             hasChildren ? `onclick="toggleRow('${path}')"` : '';
         const dataAttrs =
@@ -726,37 +730,211 @@ function expandAll() {
 
 //////////////////////////////////////////////////////////////
 
-function insertRowUnder(table_id, row_id) {
-    // Get the existing row by id
+function insertAt(
+    table_id, group_header_row_id, group_index,
+    data,
+    interBarsSpacing
+) {
+    /* *************************************
+    * Inserts "data", a list of rows,      *
+    * at index "group_index" (zero-based)  *
+    * of the group with header-row         *
+    * of id "group_header_row_id"          *
+    * (null if new row is table top-level) *
+    ************************************* */
     const table = document.getElementById(table_id);
-    const existingRow = table.querySelector(`tr[data-id="${row_id}"]`);
-    if (!existingRow) {
-        console.error(
-            `row with data id ${row_id} not found ` +
-                `in table with id '${table_id}'.`);
+    if (!table) {
+        console.error(`Table with id '${table_id}' not found.`);
+        return;
+    }
+    if (!Number.isInteger(group_index)) {
+        console.error("Invalid group_index:", group_index);
         return;
     }
 
-    const newRow = document.createElement("tr");
-    // Add some cells to the new row (example)
-    for (let i = 0; i < existingRow.cells.length; i++) {
-        const newCell = document.createElement("td");
-        newCell.textContent = "New data 1";
-        newRow.appendChild(newCell);
+    //////////////////////////////////////////
+    // retrieve rows in the targetted group //
+    //////////////////////////////////////////
+    var level = 0;
+    var parentPath = "";
+    var groupRows;
+    if (group_header_row_id) {
+        const parentRow =
+            table.querySelector(`tr[data-id="${group_header_row_id}"]`);
+        if (!parentRow.classList.contains('group-header')) {
+            console.error(
+                `row-id '${group_header_row_id}' ` +
+                'is not that of a group-header but of a standard row.'
+            );
+            return;
+        }
+        if (!parentRow) {
+            console.error("Invalid group_header_row_id:", group_header_row_id);
+            return;
+        }
+        parentPath = parentRow.getAttribute('data-path');
+        groupRows =
+            Array.from(
+                table.querySelectorAll(`tr[data-path^="${parentPath}."]`)
+                    ).filter(row => {
+                const dataPath = row.getAttribute('data-path');
+                const suffix = dataPath.substring(parentPath.length + 1);
+                return !suffix.includes('.');
+            });
+        level = parseInt(parentRow.getAttribute('data-level')) + 1;
+    } else {
+        // Top-level insertion
+        groupRows = Array.from(
+            table.querySelectorAll('tbody tr[data-level="0"]')
+        );
     }
 
-    const tbody = existingRow.parentNode;
-    tbody.insertBefore(newRow, existingRow.nextSibling);
+    if (group_index > groupRows.length) {
+        console.error(
+            `Can't insert at index ${group_index} `+
+            `in a group of length ${groupRows.length}`);
+        return;
+    }
+    // case "insert at last position (append) in group"
+    if (group_index == -1) group_index = groupRows.length;
+    //////////////////////////////////////////
+
+    /////////////////////////////////
+    // get anchor for insert after //
+    /////////////////////////////////
+    var insertAfterRow;
+    if (group_index == 0) {
+        if (group_header_row_id) {
+            // insert at first position in group
+            insertAfterRow = table.querySelector(`tr[data-id="${group_header_row_id}"]`);
+        } else {
+            // insert at first position in table
+        }
+    } else if (
+        groupRows[group_index - 1].classList.contains("group-header")
+    ) {
+        // case "row before is a subgroup" =>
+        // offset in table by rows-count (may have deep children)
+        const subgroup_path =
+            groupRows[0].dataset.path.lastIndexOf('.') === -1
+                ? groupRows[0].dataset.path
+                : groupRows[0].dataset.path.substring(
+                    0, groupRows[0].dataset.path.lastIndexOf('.'));
+        insertAfterRowPath = findLastVisibleChildOfGroup(subgroup_path);
+        insertAfterRowPath = insertAfterRowPath ?
+            insertAfterRowPath :
+            groupRows[group_index-1].dataset.path; // if top-level insert
+        insertAfterRow = table.querySelector(`tr[data-path="${insertAfterRowPath}"]`);
+        if (
+            insertAfterRow.classList.contains("group-header") &&
+            insertAfterRow.classList.contains("collapsed")
+        ) {
+            insertAfterRow = Array.from(
+                    table.querySelectorAll(
+                        `tr[data-path^="${insertAfterRowPath}."]`)
+                ).slice(-1)[0];
+        }
+    } else {
+        // case "raw before is standard row"
+        insertAfterRowPath = groupRows[group_index - 1].dataset.path;
+        insertAfterRow = table.querySelector(`tr[data-path="${insertAfterRowPath}"]`);
+    }
+    /////////////////////////////////
+
+    /////////////////////////////
+    // insert raw html to DOM //
+    /////////////////////////////
+    rawHtml = renderRows(data, parentPath, level, group_index);
+    const tbody = insertAfterRow ? insertAfterRow.parentNode : table.tBodies[0];
+    if (insertAfterRow) {
+      // Insert after existing row
+      const nextSibling = insertAfterRow.nextSibling;
+      if (nextSibling) {
+        nextSibling.insertAdjacentHTML('beforebegin', rawHtml);
+      } else {
+        // insertAfterRow is last row
+        tbody.insertAdjacentHTML('beforeend', rawHtml);
+      }
+    } else {
+      // Insert at very start of tbody
+      tbody.insertAdjacentHTML('afterbegin', rawHtml);
+    }
+    /////////////////////////////
+
+    //////////////////////////////////////////
+    // update pathes of following rows      //
+    // (same level or deeper in that group) //
+    //////////////////////////////////////////
+    for (var i = group_index ; i <= groupRows.length - 1 ; i++) {
+        incrementIndexes(
+            table,
+            groupRows[i].dataset.path,
+            data.length, // incremnet by  -  TODO, revisit for inserted groups
+        );
+    }
+    //////////////////////////////////////////
+
+    // wipeout bars
+    for (const row of table.rows) {
+        const bars = row.querySelectorAll(
+            '.left-nesting-bar, .right-nesting-bar, ' +
+            '.top-nesting-bar, .bottom-nesting-bar'
+        );
+        bars.forEach(bar => {
+            bar.remove();
+        });
+        for (const cell of row.cells) {
+            cell.style.paddingBottom = `${defaultBottomPadding}px`;
+        }
+    }
+
+    applyVisibility()
+    // apply styling & restore bars
+    applyGroupStyles(interBarsSpacing);
+
+    saveState();
 }
 
-function insertRowAt(table_id, group_header_row_id, group_index) {
-    /* *
-    * 'row_id' one of a group header
-    * (null if new row is table top-level standalone)
-    ** */
-    // TODO, insert, manage (group) style and depth bars
-    //       insert even if hidden (do not expand ancestors)
+function incrementIndexes(table, path, incrementValue) {
+    /* *******************************************
+    * "path" may be that of a group header       *
+    * or a standard row.                         *
+    * Increment prefix path by "incrementValue". *
+    ******************************************* */
+
+    // take last row with path
+    // (the former one, the one that now
+    //  requires to be incremented)
+    const row = Array.from(
+            table.querySelectorAll(`tr[data-path="${path}"]`)
+        ).slice(-1)[0];
+
+    // increment row path
+    const old_index_value = parseInt(
+        row.dataset.path.lastIndexOf('.') === -1
+            ? row.dataset.path
+            : row.dataset.path.substring(
+                row.dataset.path.lastIndexOf('.') + 1)
+    );
+
+    const new_path =
+        path.substring(0, path.length - String(old_index_value).length) +
+        String(old_index_value + incrementValue)
+    row.dataset.path = new_path;
+
+    if (row.classList.contains('group-header')) {
+        // case "row is a group header" =>
+        // replace path prefix for all group rows
+        // (all depths)
+        table.querySelectorAll(
+            `tr[data-path^="${path}."]`
+        ).forEach(deepChildRow => {
+            deepChildRow.dataset.path =
+                new_path + deepChildRow.dataset.path.substring(path.length);
+        });
+    }
 }
+
 
 
 

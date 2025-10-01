@@ -19,10 +19,10 @@
         position: relative;
     }
 
-    #id-col { width: 20%; }
+    #id-col { width: 40%; }
     #name-col { width: 25%; }
     #desc-col { width: 35%; }
-    #value-col { width: 20%; }
+    <!-- #value-col { width: 20%; } -->
 
     .group-header {
         cursor: pointer;
@@ -36,10 +36,6 @@
     tr td:first-child {
         padding-left: calc(10px + var(--indent-level) * 5px);
         position: relative;
-    }
-
-    .standalone-row {
-        font-style: italic;
     }
 
     .left-nesting-bar {
@@ -78,13 +74,48 @@
 </head>
 <body>
 
-<button onclick="insertRowUnder('demo', 'G1.2.2.3.3.3.3.3.2')">Insert Row</button>
-
 <button onclick="collapseAll()">Collapse All</button>
 
 <button onclick="expandAll()">Expand All</button>
 
+<br /><br />
+
+<button onclick="insertRowUnder('demo', 'G1.2.2.3.3.3.3.3.2')">Insert Row</button>
+
+<input type="text" id="levelInput" placeholder="data-level (e.g. G1.2.2.3.3.3.3)" value="G2.5">
+<input type="number" id="positionInput" placeholder="Position (e.g. 3)" value="0">
+<button onclick="insertRowButtonHandler()">Insert Styled Row</button>
+<script>
+function insertRowButtonHandler() {
+    const level = document.getElementById('levelInput').value;
+    const position = parseInt(document.getElementById('positionInput').value, 10);
+    insertAt(
+        'demo', level, position,
+        [
+            { id: "new-row-id", name: "new-row-name",
+              description: "new-row-description", value: "new-row-value",
+              style: { color: "#fff", background: "#000", border: "#dee2e6" }
+            },
+            { id: "new-row-2-id", name: "new-row-2-name",
+              description: "new-row-2-description", value: "new-row-2-value",
+              style: { color: "#fff", background: "#000", border: "#dee2e6" }
+            }
+        ],
+        interBarsSpacing
+    );
+}
+</script>
+
+
+<br /><br />
+
 <table id="demo">
+    <colgroup>
+        <col id="id-col">
+        <col id="name-col">
+        <col id="desc-col">
+        <col id="value-col">
+    </colgroup>
     <thead>
         <tr>
             <th>ID</th>
@@ -103,8 +134,7 @@
             name: "Global Standalone A",
             description: "Always visible",
             value: "999",
-            style: { color: "#1a5f7a", background: "#FFFA64", border: "#a0d4eb" },
-            standalone: true
+            style: { color: "#1a5f7a", background: "#FFFA64", border: "#a0d4eb" }
         },
         {
             id: "G1",
@@ -174,7 +204,7 @@
                                                                     value: "",
                                                                     style: { color: "#f5eefc", background: "#714D96", border: "#FBFF00" },
                                                                     children: [
-                                                                        { id: "G1.2.2.3.3.3..33.1", name: "Item 1.2.3.3.3.3.1", description: "Purple", value: "30" },
+                                                                        { id: "G1.2.2.3.3.3.3.3.1", name: "Item 1.2.3.3.3.3.1", description: "Purple", value: "30" },
                                                                         { id: "G1.2.2.3.3.3.3.3.2", name: "Item 1.2.3.3.3.3.2", description: "Purple", value: "40" }
                                                                     ]
                                                                 }
@@ -198,10 +228,9 @@
         {
             id: "S2",
             name: "Global Standalone B",
-            description: "Blue standalone",
+            description: "Blue top-level",
             value: "888",
-            style: { color: "#075E80", background: "#87CEEB", border: "#00B7FF" },
-            standalone: true
+            style: { color: "#075E80", background: "#87CEEB", border: "#00B7FF" }
         },
         {
             id: "G2",
@@ -269,10 +298,9 @@
         {
             id: "S3",
             name: "Global Standalone C",
-            description: "Orange standalone",
+            description: "Orange top-level",
             value: "777",
-            style: { color: "#555555", background: "#FFD563", border: "#dee2e6" },
-            standalone: true
+            style: { color: "#555555", background: "#FFD563", border: "#dee2e6" }
         }
     ];
 
