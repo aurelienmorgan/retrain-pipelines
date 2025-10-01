@@ -82,25 +82,90 @@
 
 <button onclick="insertRowUnder('demo', 'G1.2.2.3.3.3.3.3.2')">Insert Row</button>
 
-<input type="text" id="levelInput" placeholder="data-level (e.g. G1.2.2.3.3.3.3)" value="G2.5">
-<input type="number" id="positionInput" placeholder="Position (e.g. 3)" value="0">
+<input type="text" id="levelInput" placeholder="data-level (e.g. G1.2.2.3.3.3.3)" value="G2.9.2">
+<input type="number" id="positionInput" placeholder="Position (e.g. 3)" value="3">
 <button onclick="insertRowButtonHandler()">Insert Styled Row</button>
 <script>
 function insertRowButtonHandler() {
     const level = document.getElementById('levelInput').value;
     const position = parseInt(document.getElementById('positionInput').value, 10);
+/*
+    const insertData = [
+        { id: "new-row-id", name: "new-row-name",
+          description: "new-row-description", value: "new-row-value",
+          style: { color: "#fff", background: "#000", border: "#dee2e6" }
+        },
+        { id: "new-row-2-id", name: "new-row-2-name",
+          description: "new-row-2-description", value: "new-row-2-value",
+          style: { color: "#fff", background: "#000", border: "#dee2e6" }
+        }
+    ];
+*/
+    const insertData = [
+        { id: "new-row-id", name: "new-row-name",
+          description: "new-row-description", value: "new-row-value",
+          style: { color: "#fff", background: "#000", border: "#dee2e6" }
+        },
+        {
+            id: "new-group-1",
+            name: "new-group-1",
+            description: "new-group-1-description",
+            value: "",
+            style: { color: "#C8C899", background: "#A72FA9", border: "#0097D8" },
+            children: [
+                { id: "new-group-1-row-0", name: "new-group-1-row-0",
+                  description: "new-group-1-row-0-description", value: "new-group-1-row-0-value" },
+                {
+                    id: "new-group-1.1",
+                    name: "new-group-1.1",
+                    description: "new-group-1.1-description",
+                    value: "",
+                    style: { color: "#C8C899", background: "#A72FA9", border: "#0097D8" },
+                    children: [
+                        { id: "new-group-1.1-row-0", name: "new-group-1.1-row-0",
+                          description: "new-group-1.1-row-0-description", value: "new-group-1.1-row-0-value" },
+                        { id: "new-group-1.1-row-1", name: "new-group-1.1-row-1",
+                          description: "new-group-1.1-row-1-description", value: "new-group-1.1-row-1-value" }
+                    ]
+                },
+                { id: "new-group-1-row-1", name: "new-group-1-row-1",
+                  description: "new-group-1-row-1-description", value: "new-group-1-row-1-value" }
+            ]
+        },
+        { id: "new-row-2-id", name: "new-row-2-name",
+          description: "new-row-2-description", value: "new-row-2-value",
+          style: { color: "#fff", background: "#000", border: "#dee2e6" }
+        },
+        {
+            id: "new-group-2",
+            name: "new-group-2",
+            description: "new-group-2-description",
+            value: "",
+            style: { color: "#C8C899", background: "#A72FA9", border: "#0097D8" },
+            children: [
+                { id: "new-group-2-row-0", name: "new-group-2-row-0",
+                  description: "new-group-2-row-0-description", value: "new-group-2-row-0-value" },
+                { id: "new-group-2-row-1", name: "new-group-2-row-1",
+                  description: "new-group-2-row-1-description", value: "new-group-2-row-1-value" },
+                {
+                    id: "new-group-2.2",
+                    name: "new-group-2.2",
+                    description: "new-group-2.2-description",
+                    value: "",
+                    style: { color: "#C8C899", background: "#A72FA9", border: "#0097D8" },
+                    children: [
+                        { id: "new-group-2.2-row-0", name: "new-group-2.2-row-0",
+                          description: "new-group-2.2-row-0-description", value: "new-group-2.2-row-0-value" },
+                        { id: "new-group-2.2-row-1", name: "new-group-2.2-row-1",
+                          description: "new-group-2.2-row-1-description", value: "new-group-2.2-row-1-value" }
+                    ]
+                }
+            ]
+        }
+    ];
+
     insertAt(
-        'demo', level, position,
-        [
-            { id: "new-row-id", name: "new-row-name",
-              description: "new-row-description", value: "new-row-value",
-              style: { color: "#fff", background: "#000", border: "#dee2e6" }
-            },
-            { id: "new-row-2-id", name: "new-row-2-name",
-              description: "new-row-2-description", value: "new-row-2-value",
-              style: { color: "#fff", background: "#000", border: "#dee2e6" }
-            }
-        ],
+        'demo', level, position, insertData,
         interBarsSpacing
     );
 }
@@ -303,6 +368,8 @@ function insertRowButtonHandler() {
             style: { color: "#555555", background: "#FFD563", border: "#dee2e6" }
         }
     ];
+    console.log(`${countAllDepthsItems(tableData)} total rows ` +
+                'in tableData array.');
 
     const interBarsSpacing = 2;     /* in px */
 

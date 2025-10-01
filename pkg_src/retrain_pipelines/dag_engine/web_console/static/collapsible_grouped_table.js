@@ -751,6 +751,12 @@ function insertAt(
         console.error("Invalid group_index:", group_index);
         return;
     }
+    try {
+        checkUnicityOfAllDepthsItems(table, data);
+    } catch (error) {
+        console.error(error);
+        return;
+    }
 
     //////////////////////////////////////////
     // retrieve rows in the targetted group //
@@ -869,7 +875,7 @@ function insertAt(
         incrementIndexes(
             table,
             groupRows[i].dataset.path,
-            data.length, // incremnet by  -  TODO, revisit for inserted groups
+            countAllDepthsItems(data)
         );
     }
     //////////////////////////////////////////
@@ -893,6 +899,67 @@ function insertAt(
     applyGroupStyles(interBarsSpacing);
 
     saveState();
+}
+
+function checkUnicityOfAllDepthsItems(table, data) {
+    /* ******************************************
+    * Ensure that we don't insert any rows with *
+    * id that already exists in target table.   *
+    ****************************************** */
+
+    // Collect all existing data-id values from the table
+    const existingIds = new Set();
+    const existingRows = table.querySelectorAll('[data-id]');
+    existingRows.forEach(row => {
+        const id = row.getAttribute('data-id');
+        if (id) {
+            existingIds.add(id);
+        }
+    });
+    const duplicates = [];
+
+    function traverse(items) {
+        for (const item of items) {
+            // Check if this item's id already exists in the table
+            if (existingIds.has(item.id)) {
+                duplicates.push(item.id);
+            }
+            // If item has children, traverse them recursively
+            if (item.children && Array.isArray(item.children)) {
+                traverse(item.children);
+            }
+        }
+    }
+
+    traverse(data);
+
+    // If duplicates found, throw error
+    // with all duplicate IDs
+    if (duplicates.length > 0) {
+        const error = new Error(
+            `Duplicate ids found: ${duplicates.join(', ')}. ` +
+            'These data-id values already exist in the table.'
+        );
+        throw error;
+    }
+}
+
+function countAllDepthsItems(data) {
+    let count = 0;
+
+    function traverse(items) {
+        for (const item of items) {
+            count++; // Count the current item
+            
+            // If item has children, traverse them recursively
+            if (item.children && Array.isArray(item.children)) {
+                traverse(item.children);
+            }
+        }
+    }
+
+    traverse(data);
+    return count;
 }
 
 function incrementIndexes(table, path, incrementValue) {
