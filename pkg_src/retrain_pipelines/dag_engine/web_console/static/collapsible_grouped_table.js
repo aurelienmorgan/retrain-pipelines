@@ -17,36 +17,37 @@ function getCookie(name) {
     return null;
 }
 
-function saveState() {
+function saveState(tableId) {
+    var table = document.getElementById(tableId);
     const state = {};
-    document.querySelectorAll('.group-header').forEach(row => {
+    table.querySelectorAll('.group-header').forEach(row => {
         const path = row.getAttribute('data-path');
         state[path] = row.classList.contains('collapsed');
     });
-    setCookie('tableState', JSON.stringify(state));
+    setCookie(`${tableId}.tableState`, JSON.stringify(state));
 }
 
-function hasCollapsedAncestor(path) {
-    /* ****************************************
-    * For any given row, whether or not it is *
-    * part of a (even distant) parent         *
-    * that is collapsed.                      *
-    **************************************** */
-    const parts = path.split('.');
-    for (let i = parts.length - 1; i > 0; i--) {
-        const ancestorPath = parts.slice(0, i).join('.');
-        const ancestor = document.querySelector(`[data-path="${ancestorPath}"]`);
-        if (ancestor && ancestor.classList.contains('collapsed')) {
-            return true;
+function applyVisibility(table) {
+    function hasCollapsedAncestor(path) {
+        /* ****************************************
+        * For any given row, whether or not it is *
+        * part of a (even distant) parent         *
+        * that is collapsed.                      *
+        **************************************** */
+        const parts = path.split('.');
+        for (let i = parts.length - 1; i > 0; i--) {
+            const ancestorPath = parts.slice(0, i).join('.');
+            const ancestor = table.querySelector(`[data-path="${ancestorPath}"]`);
+            if (ancestor && ancestor.classList.contains('collapsed')) {
+                return true;
+            }
         }
+        return false;
     }
-    return false;
-}
 
-function applyVisibility() {
-    document.querySelectorAll('tbody tr').forEach(
+    table.querySelectorAll('tbody tr').forEach(
         row => row.classList.remove('hidden'));
-    document.querySelectorAll('[data-path]').forEach(row => {
+    table.querySelectorAll('[data-path]').forEach(row => {
         if (
             hasCollapsedAncestor(row.getAttribute('data-path'))
         ) {
@@ -55,10 +56,11 @@ function applyVisibility() {
     });
 }
 
-function loadState() {
-    const stateStr = getCookie('tableState');
+function loadState(tableId) {
+    var table = document.getElementById(tableId);
+    const stateStr = getCookie(`${tableId}.tableState`);
     if (!stateStr) {
-        applyVisibility();
+        applyVisibility(table);
         return;
     }
 
@@ -72,9 +74,9 @@ function loadState() {
                                         path + " - " +
                                         row.getAttribute('data-id');
         });
-        applyVisibility();
+        applyVisibility(table);
     } catch (e) {
-        applyVisibility();
+        applyVisibility(table);
     }
 }
 
@@ -85,16 +87,30 @@ function isLastChildOfParent(path) {
     const parentPath = parts.slice(0, -1).join('.');
     const index = parseInt(parts[parts.length - 1]);
 
-    let parentData = tableData;
+    // Find parent row
+    const parentRow = parentPath 
+        ? document.querySelector(`tr[data-path="${parentPath}"]`)
+        : null;
+
+    // Get all direct children of parent
+    let siblingRows;
     if (parentPath) {
-        const indices = parentPath.split('.').map(Number);
-        for (const idx of indices) {
-            if (!parentData[idx] || !parentData[idx].children) return false;
-            parentData = parentData[idx].children;
-        }
+        // Get direct children of this parent group
+        siblingRows = Array.from(
+            document.querySelectorAll(`tr[data-path^="${parentPath}."]`)
+        ).filter(row => {
+            const rowPath = row.getAttribute('data-path');
+            const suffix = rowPath.substring(parentPath.length + 1);
+            return !suffix.includes('.');
+        });
+    } else {
+        // Top-level rows
+        siblingRows = Array.from(
+            document.querySelectorAll('tr[data-level="0"]')
+        );
     }
 
-    result = index === parentData.length - 1;
+    result = index === siblingRows.length - 1;
     return result;
 }
 
@@ -111,13 +127,13 @@ function getGroupStyleForPath(path) {
     return null;
 }
 
-function findLastVisibleChildOfGroup(groupPath) {
-    const groupRow = document.querySelector(`[data-path="${groupPath}"]`);
+function findLastVisibleChildOfGroup(table, groupPath) {
+    const groupRow = table.querySelector(`[data-path="${groupPath}"]`);
     if (!groupRow || !groupRow.classList.contains('group-header'))
         return null;
 
     const allDescendants =
-        Array.from(document.querySelectorAll(`[data-path^="${groupPath}."]`));
+        Array.from(table.querySelectorAll(`[data-path^="${groupPath}."]`));
     const directChildren = allDescendants.filter(row => {
         const path = row.getAttribute('data-path');
         const pathParts = path.split('.');
@@ -135,7 +151,7 @@ function findLastVisibleChildOfGroup(groupPath) {
         lastChild.classList.contains('group-header')
         && !lastChild.classList.contains('collapsed')
     ) {
-        const deeperLastChild = findLastVisibleChildOfGroup(lastChildPath);
+        const deeperLastChild = findLastVisibleChildOfGroup(table, lastChildPath);
         if (deeperLastChild) {
             lastChildPath = deeperLastChild;
         }
@@ -144,14 +160,14 @@ function findLastVisibleChildOfGroup(groupPath) {
     return lastChildPath;
 }
 
-function toggleRow(path) {
-    const row = document.querySelector(`[data-path="${path}"]`);
+function toggleRow(table, path) {
+    const row = table.querySelector(`[data-path="${path}"]`);
     if (!row) return;
 
     const isInitiallyCollapsed = row.classList.contains('collapsed');
 
     row.classList.toggle('collapsed', !isInitiallyCollapsed);
-    applyVisibility();
+    applyVisibility(table);
 
     /* *****************************
     * cleanup of bottom bars       *
@@ -164,9 +180,9 @@ function toggleRow(path) {
     //       lastChild if it was expanded)
     var rowToClean;
     if (!isInitiallyCollapsed) {
-        const lastChildPath = findLastVisibleChildOfGroup(path);
+        const lastChildPath = findLastVisibleChildOfGroup(table, path);
         rowToClean =
-            document.querySelector(`[data-path="${lastChildPath}"]`);
+            table.querySelector(`[data-path="${lastChildPath}"]`);
     } else {
         rowToClean = row;
     }
@@ -187,9 +203,9 @@ function toggleRow(path) {
     ****************************************** */
     var groupLastVisibleRow;
     if (isInitiallyCollapsed) {
-        const lastChildPath = findLastVisibleChildOfGroup(path);
+        const lastChildPath = findLastVisibleChildOfGroup(table, path);
         groupLastVisibleRow =
-            document.querySelector(`[data-path="${lastChildPath}"]`);
+            table.querySelector(`[data-path="${lastChildPath}"]`);
     }
     row.querySelectorAll(
         'td:first-child .left-nesting-bar, ' +
@@ -220,9 +236,9 @@ function toggleRow(path) {
     ************************************** */
     // Find last visible row after toggle
     let targetRow;
-    if (!isInitiallyCollapsed) { // Just expanded
-        const lastChildPath = findLastVisibleChildOfGroup(path);
-        targetRow = document.querySelector(`[data-path="${lastChildPath}"]`);
+    if (isInitiallyCollapsed) { // Just expanded
+        const lastChildPath = findLastVisibleChildOfGroup(table, path);
+        targetRow = table.querySelector(`[data-path="${lastChildPath}"]`);
     } else { // Just collapsed
         targetRow = row;
     }
@@ -237,10 +253,12 @@ function toggleRow(path) {
         if (isLastChildOfParent(checkPath)) {
             const parentPath = targetParts.slice(0, level - 1).join('.');
             const parentRow =
-                document.querySelector(`[data-path="${parentPath}"]`);
+                table.querySelector(`[data-path="${parentPath}"]`);
             if (parentRow && parentRow.classList.contains('group-header')) {
                 addBottomBar(parentRow, interBarsSpacing);
             }
+        } else {
+            break;
         }
     }
     // Add bottom bar for the deepest child itself if it's a group
@@ -260,11 +278,11 @@ function toggleRow(path) {
     }
     /* *********************************** */
 
-    saveState();
+    saveState(table.id);
 }
 
-function isLastVisibleChild(groupPath, childPath) {
-    const groupRow = document.querySelector(`[data-path="${groupPath}"]`);
+function isLastVisibleChild(table, groupPath, childPath) {
+    const groupRow = table.querySelector(`[data-path="${groupPath}"]`);
     if (!groupRow || !groupRow.classList.contains('group-header')) {
         return false;
     }
@@ -274,12 +292,13 @@ function isLastVisibleChild(groupPath, childPath) {
     if (isGroupCollapsed) {
         return childPath === groupPath;
     } else {
-        const lastChildPath = findLastVisibleChildOfGroup(groupPath);
+        const lastChildPath = findLastVisibleChildOfGroup(table, groupPath);
         return childPath === lastChildPath;
     }
 }
 
 function countParentGroupsEndingAt(lastRow) {
+    const table = lastRow.parentNode.parentNode;
     const currentPath = lastRow.getAttribute('data-path');
     const pathParts = currentPath.split('.');
     
@@ -291,13 +310,13 @@ function countParentGroupsEndingAt(lastRow) {
         
         // Find parent group row
         const parentRow =
-            document.querySelector(`tr[data-path="${parentPath}"]`);
+            table.querySelector(`tr[data-path="${parentPath}"]`);
         if (!parentRow) break;
         
         // Find all children of this parent at the next level
         const childLevel = level;
         const childRows = Array.from(
-            document.querySelectorAll(`tr[data-level="${childLevel}"]`)
+            table.querySelectorAll(`tr[data-level="${childLevel}"]`)
         ).filter(row => {
             const rowPath = row.getAttribute('data-path');
             return rowPath.startsWith(parentPath + '.');
@@ -320,14 +339,14 @@ function countParentGroupsEndingAt(lastRow) {
     return count;
 }
 
-function applyGroupStyles(interBarsSpacing) {  
+function applyGroupStyles(table, interBarsSpacing) {  
     /* **************************
     * styling +                 *
     * left, right, and top bars *
     * for each group.           *
     ************************** */
-    document.querySelectorAll(
-        'table tbody tr:not([data-level="0"]), table tbody tr.group-header'
+    table.querySelectorAll(
+        'tbody tr:not([data-level="0"]), tbody tr.group-header'
     ).forEach(
         row => {
             const path = row.getAttribute('data-path');
@@ -381,7 +400,7 @@ function applyGroupStyles(interBarsSpacing) {
     /* ****************************
     * bottom bars for each group. *
     **************************** */
-    document.querySelectorAll('tbody tr.group-header').forEach(
+    table.querySelectorAll('tbody tr.group-header').forEach(
         row => addBottomBar(row, interBarsSpacing));;
 }
 
@@ -389,6 +408,7 @@ function addLeftRightBars(row, interBarsSpacing) {
     /*
     * All at once, accounting for all depths.
     */
+    const table = row.parentNode.parentNode;
     const path = row.getAttribute('data-path');
     const parts = path.split('.');
     const offset = barThickness + interBarsSpacing;
@@ -412,7 +432,7 @@ function addLeftRightBars(row, interBarsSpacing) {
                 leftBar.style.backgroundColor = style.border;
                 leftBar.style.zIndex = MAX_Z_INDEX - level;
                 
-                if (isLastVisibleChild(candidatePath, path)) {
+                if (isLastVisibleChild(table, candidatePath, path)) {
                     // how many groups are ending at this row
                     // that are deeper than candidatePath
                     leftBar.style.bottom =
@@ -427,7 +447,7 @@ function addLeftRightBars(row, interBarsSpacing) {
                 rightBar.style.backgroundColor = style.border;
                 rightBar.style.zIndex = MAX_Z_INDEX - level;
                 
-                if (isLastVisibleChild(candidatePath, path)) {
+                if (isLastVisibleChild(table, candidatePath, path)) {
                     // how many groups are ending at this row
                     // that are deeper than candidatePath
                     rightBar.style.bottom =
@@ -441,6 +461,7 @@ function addLeftRightBars(row, interBarsSpacing) {
 }
 
 function addBottomBar(row, interBarsSpacing) {
+//console.log("addBottomBar ENTER", row);
     /* *********************************************************
     * header row of the group for which to add a bottom line   *
     * the last row at which to add the bottom bar.             *
@@ -453,7 +474,6 @@ function addBottomBar(row, interBarsSpacing) {
     *           withing the group having "row" as its header.  *
     ********************************************************* */
     const path = row.getAttribute('data-path');
-    const isLastChildOfDirectParentGroup = isLastChildOfParent(path);
     const isCollapsed = row.classList.contains('collapsed');
     const groupStyle = getGroupStyleForPath(path);
     const offset = barThickness + interBarsSpacing;
@@ -498,7 +518,9 @@ function addBottomBar(row, interBarsSpacing) {
     } else {
         // expanded group
         if (groupStyle) {
-            const lastChildPath = findLastVisibleChildOfGroup(path);
+            const table = row.parentNode.parentNode;
+            const lastChildPath =
+                findLastVisibleChildOfGroup(table, path);
             const lastChildRow =
                 document.querySelector(`[data-path="${lastChildPath}"]`);
 
@@ -567,7 +589,9 @@ function renderRows(data, parentPath = "", level = 0, startIndex = 0) {
 
         const rowClass = (hasChildren ? 'group-header ' : '');
         const clickAttr =
-            hasChildren ? `onclick="toggleRow(this.dataset.path)"` : '';
+            hasChildren ?
+            `onclick="toggleRow(this.closest('table'), this.dataset.path)"` :
+            '';
         const dataAttrs =
             `data-path="${path}" data-level="${level}" data-id="${item.id}"`;
         const extraAttrs = hasChildren && item.style 
@@ -593,13 +617,13 @@ function init(tableId, tableData, interBarsSpacing) {
     var tbody = table.querySelector('tbody#' + tbodyId);
     if (!tbody) return;
     tbody.innerHTML = renderRows(tableData);
-    loadState();
-    applyGroupStyles(interBarsSpacing);
+    loadState(tableId);
+    applyGroupStyles(table, interBarsSpacing);
 }
 
 //////////////////////////////////////////////////////////////
 
-function collapseAll() {
+function collapseAll(tableId) {
     /* ********************************************************
     * For each group G in table.children (top-level),         *
     * for each group g in G.children (depth 1),               *
@@ -614,16 +638,19 @@ function collapseAll() {
     * if current group is expanded.                           *
     ******************************************************** */
 
+    var table = document.getElementById(tableId);
+    if (!table) return;
+
     function collapseGroup(groupPath) {
         const groupRow =
-            document.querySelector(`[data-path="${groupPath}"]`);
+            table.querySelector(`[data-path="${groupPath}"]`);
         if (
             !groupRow ||
             !groupRow.classList.contains('group-header')
         ) return;
 
         // Find all direct children groups
-        const allRows = document.querySelectorAll('[data-path]');
+        const allRows = table.querySelectorAll('[data-path]');
         const directChildGroups = Array.from(allRows).filter(row => {
             const path = row.getAttribute('data-path');
             const pathParts = path.split('.');
@@ -644,14 +671,14 @@ function collapseAll() {
         // After all children are collapsed,
         // collapse this group if expanded
         if (!groupRow.classList.contains('collapsed')) {
-            toggleRow(groupPath);
+            toggleRow(table, groupPath);
         }
     }
 
     // Collapse each top-level group
     // (which will recursively collapse children)
     const topLevelGroups = Array.from(
-        document.querySelectorAll('.group-header')
+        table.querySelectorAll('.group-header')
     ).filter(row => {
         const path = row.getAttribute('data-path');
         return !path.includes('.');
@@ -662,10 +689,13 @@ function collapseAll() {
     });
 }
 
-function expandAll() {
+function expandAll(tableId) {
+    var table = document.getElementById(tableId);
+    if (!table) return;
+
     function expandGroup(groupPath) {
         const groupRow =
-            document.querySelector(`[data-path="${groupPath}"]`);
+            table.querySelector(`[data-path="${groupPath}"]`);
         if (
             !groupRow ||
             !groupRow.classList.contains('group-header')
@@ -673,11 +703,11 @@ function expandAll() {
 
         // Expand this group first if collapsed
         if (groupRow.classList.contains('collapsed')) {
-            toggleRow(groupPath);
+            toggleRow(table, groupPath);
         }
 
         // Find all direct children groups
-        const allRows = document.querySelectorAll('[data-path]');
+        const allRows = table.querySelectorAll('[data-path]');
         const directChildGroups = Array.from(allRows).filter(row => {
             const path = row.getAttribute('data-path');
             const pathParts = path.split('.');
@@ -699,7 +729,7 @@ function expandAll() {
     // Expand each top-level group
     // (which will recursively expand children)
     const topLevelGroups = Array.from(
-        document.querySelectorAll('.group-header')
+        table.querySelectorAll('.group-header')
     ).filter(row => {
         const path = row.getAttribute('data-path');
         return !path.includes('.');
@@ -749,15 +779,15 @@ function insertAt(
     if (group_header_row_id) {
         const parentRow =
             table.querySelector(`tr[data-id="${group_header_row_id}"]`);
+        if (!parentRow) {
+            console.error("Invalid group_header_row_id:", group_header_row_id);
+            return;
+        }
         if (!parentRow.classList.contains('group-header')) {
             console.error(
                 `row-id '${group_header_row_id}' ` +
                 'is not that of a group-header but of a standard row.'
             );
-            return;
-        }
-        if (!parentRow) {
-            console.error("Invalid group_header_row_id:", group_header_row_id);
             return;
         }
         parentPath = parentRow.getAttribute('data-path');
@@ -808,7 +838,7 @@ function insertAt(
                 ? groupRows[0].dataset.path
                 : groupRows[0].dataset.path.substring(
                     0, groupRows[0].dataset.path.lastIndexOf('.'));
-        insertAfterRowPath = findLastVisibleChildOfGroup(subgroup_path);
+        insertAfterRowPath = findLastVisibleChildOfGroup(table, subgroup_path);
         insertAfterRowPath = insertAfterRowPath ?
             insertAfterRowPath :
             groupRows[group_index-1].dataset.path; // if top-level insert
@@ -878,11 +908,11 @@ function insertAt(
         }
     }
 
-    applyVisibility()
+    applyVisibility(table)
     // apply styling & restore bars
-    applyGroupStyles(interBarsSpacing);
+    applyGroupStyles(table, interBarsSpacing);
 
-    saveState();
+    saveState(table_id);
 }
 
 function checkUnicityOfAllDepthsItems(table, data) {

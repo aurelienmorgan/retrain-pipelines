@@ -74,16 +74,16 @@
 </head>
 <body>
 
-<button onclick="collapseAll()">Collapse All</button>
+<button onclick="collapseAll('demo')">Collapse All</button>
 
-<button onclick="expandAll()">Expand All</button>
+<button onclick="expandAll('demo')">Expand All</button>
 
 <br /><br />
 
 <button onclick="insertRowUnder('demo', 'G1.2.2.3.3.3.3.3.2')">Insert Row</button>
 
-<input type="text" id="levelInput" placeholder="data-level (e.g. G1.2.2.3.3.3.3)" value="G2.9.2">
-<input type="number" id="positionInput" placeholder="Position (e.g. 3)" value="3">
+<input type="text" id="levelInput" placeholder="data-level (e.g. G1.2.2.3.3.3.3)" value="G2.9">
+<input type="number" id="positionInput" placeholder="Position (e.g. 3)" value="2">
 <button onclick="insertRowButtonHandler()">Insert Styled Row</button>
 <script>
 function insertRowButtonHandler() {
@@ -101,6 +101,7 @@ function insertRowButtonHandler() {
         }
     ];
 */
+
     const insertData = [
         { id: "new-row-id", name: "new-row-name",
           description: "new-row-description", value: "new-row-value",
@@ -334,7 +335,45 @@ function insertRowButtonHandler() {
                     children: [
                         { id: "G2.5.1", name: "Item 2.5.1", description: "Brown", value: "150" },
                         { id: "G2.5.2", name: "Item 2.5.2", description: "Brown", value: "200" },
-                        { id: "G2.5.3", name: "Item 2.5.3", description: "Brown", value: "200" }
+                        {
+                            id: "G2.5.3",
+                            name: "Nested Subgroup",
+                            description: "Brown override",
+                            value: "",
+                            style: { color: "#5d4037", background: "#efebe9", border: "#bcaaa4" },
+                            children: [
+                                { id: "G2.5.3.1", name: "Item 2.5.3.1", description: "Brown", value: "150" },
+                                {
+                                    id: "G2.5.3.2",
+                                    name: "Nested Subgroup",
+                                    description: "Brown override",
+                                    value: "",
+                                    style: { color: "#5d4037", background: "#efebe9", border: "#bcaaa4" },
+                                    children: [
+                                        { id: "G2.5.3.2.1", name: "Item 2.5.3.2.1",
+                                          description: "Brown", value: "150" },
+                                        {
+                                            id: "G2.5.3.2.2",
+                                            name: "Nested Subgroup",
+                                            description: "Brown override",
+                                            value: "",
+                                            style: { color: "#5d4037", background: "#efebe9", border: "#bcaaa4" },
+                                            children: [
+                                                { id: "G2.5.3.2.2.1", name: "Item 2.5.3.2.2.1", description: "Brown", value: "150" },
+                                                { id: "G2.5.3.2.2.2", name: "Item 2.5.3.2.2.2", description: "Brown", value: "150" }
+                                            ]
+                                        },
+                                        { id: "G2.5.3.2.3", name: "Item 2.5.3.2.3",
+                                          description: "Brown", value: "200" },
+                                        { id: "G2.5.3.2.4", name: "Item 2.5.3.2.4",
+                                          description: "Brown", value: "200" }
+                                    ]
+                                },
+                                { id: "G2.5.3.3", name: "Item 2.5.3.3", description: "Brown", value: "150" },
+                            ]
+                        },
+                        { id: "G2.5.4", name: "Item 2.5.4", description: "Brown", value: "200" },
+                        { id: "G2.5.5", name: "Item 2.5.5", description: "Brown", value: "200" }
                     ]
                 },
                 { id: "G2.6", name: "Item 2.6", description: "Green", value: "100" },
