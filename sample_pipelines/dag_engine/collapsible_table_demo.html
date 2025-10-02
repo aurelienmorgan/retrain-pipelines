@@ -195,6 +195,13 @@ function insertRowButtonHandler() {
 <script>
     const tableData = [
         {
+            id: "S0",
+            name: "Global Standalone A",
+            description: "Always visible",
+            value: "999",
+            style: { color: "#1a5f7a", background: "#FFFA64", border: "#a0d4eb" }
+        },
+        {
             id: "S1",
             name: "Global Standalone A",
             description: "Always visible",
@@ -368,6 +375,24 @@ function insertRowButtonHandler() {
             style: { color: "#555555", background: "#FFD563", border: "#dee2e6" }
         }
     ];
+
+    function countAllDepthsItems(data) {
+        let count = 0;
+
+        function traverse(items) {
+            for (const item of items) {
+                count++; // Count the current item
+
+                // If item has children, traverse them recursively
+                if (item.children && Array.isArray(item.children)) {
+                    traverse(item.children);
+                }
+            }
+        }
+
+        traverse(data);
+        return count;
+    }
     console.log(`${countAllDepthsItems(tableData)} total rows ` +
                 'in tableData array.');
 

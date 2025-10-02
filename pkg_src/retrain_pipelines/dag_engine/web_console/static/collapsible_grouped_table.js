@@ -1,6 +1,5 @@
 
 const MAX_Z_INDEX = zIndex = 2147483647;
-const defaultBottomPadding = 8; /* in px, must match with td CSS */
 const barThickness = 3;         /* in px, nesting-bar width,
                                    must match with nesting-bar CSSs */
 
@@ -176,9 +175,9 @@ function toggleRow(path) {
         cell.querySelectorAll('.bottom-nesting-bar').forEach(bar => {
             bar.remove();
         });
-        // force reset bottom padding to default
+        // force reset bottom padding to CSS default
         // (avoid webbrowser rounding issues)
-        cell.style.paddingBottom = `${defaultBottomPadding}px`;
+        cell.style.paddingBottom = null;
     }
     /* ************************** */
 
@@ -321,25 +320,7 @@ function countParentGroupsEndingAt(lastRow) {
     return count;
 }
 
-function applyGroupStyles(interBarsSpacing) {
-    /* **************************
-    * styling                   *
-    * for each top-level rows. *
-    ************************** */
-    document.querySelectorAll(
-        'tr[data-level="0"]:not(.group-header)'
-    ).forEach(row => {
-        const path = row.getAttribute('data-path');
-        const item = getLeafByPath(tableData, path);
-        if (item && item.style) {
-            const { color, background, border } = item.style;
-            row.style.cssText =
-                `color: ${color}; background-color: ${background}; ` +
-                `border-color: ${border}; ` +
-                `--indent-level: ${row.getAttribute('data-level')}`;
-        }
-    });
-
+function applyGroupStyles(interBarsSpacing) {  
     /* **************************
     * styling +                 *
     * left, right, and top bars *
@@ -554,20 +535,6 @@ function addBottomBar(row, interBarsSpacing) {
     }
 }
 
-function getLeafByPath(data, pathStr) {
-    const parts = pathStr.split('.').map(Number);
-    let current = data;
-    for (let i = 0; i < parts.length; i++) {
-        if (Array.isArray(current) && current[parts[i]]) {
-            if (i === parts.length - 1) return current[parts[i]];
-            current = current[parts[i]].children || [];
-        } else {
-            return null;
-        }
-    }
-    return null;
-}
-
 function renderRows(data, parentPath = "", level = 0, startIndex = 0) {
     let html = '';
     data.forEach((item, index) => {
@@ -575,7 +542,22 @@ function renderRows(data, parentPath = "", level = 0, startIndex = 0) {
                     `${parentPath}.${startIndex + index}` :
                     `${startIndex + index}`;
         const hasChildren = item.children && item.children.length > 0;
-        const isTopLevelRow = level === "0" && parentPath === "" && item.children;
+        const isTopLevelRow = level == 0 && parentPath === "" && !hasChildren;
+
+      /* ****************************
+      * styling for top-level rows. *
+      **************************** */
+        var rowCss = "";
+        if (isTopLevelRow && item.style) {
+            const { color, background, border } = item.style;
+            rowCss =
+                'style="' +
+                  `color: ${color}; background-color: ${background}; ` +
+                  `border-color: ${border}; ` +
+                  `--indent-level: ${level};` +
+                '"';
+        }
+      /* ************************* */
 
         const idCell = (
             hasChildren
@@ -585,7 +567,7 @@ function renderRows(data, parentPath = "", level = 0, startIndex = 0) {
 
         const rowClass = (hasChildren ? 'group-header ' : '');
         const clickAttr =
-            hasChildren ? `onclick="toggleRow('${path}')"` : '';
+            hasChildren ? `onclick="toggleRow(this.dataset.path)"` : '';
         const dataAttrs =
             `data-path="${path}" data-level="${level}" data-id="${item.id}"`;
         const extraAttrs = hasChildren && item.style 
@@ -593,7 +575,7 @@ function renderRows(data, parentPath = "", level = 0, startIndex = 0) {
             : '';
 
         html += `<tr class="${rowClass.trim()}" ${dataAttrs} ` +
-                           `${clickAttr} ${extraAttrs}>` +
+                `${clickAttr} ${extraAttrs} ${rowCss}>` +
                 `${idCell}<td>${item.name}</td><td>${item.description}</td>` +
                 `<td>${item.value}</td></tr>`;
 
@@ -847,9 +829,9 @@ function insertAt(
     }
     /////////////////////////////////
 
-    /////////////////////////////
+    ////////////////////////////
     // insert raw html to DOM //
-    /////////////////////////////
+    ////////////////////////////
     rawHtml = renderRows(data, parentPath, level, group_index);
     const tbody = insertAfterRow ? insertAfterRow.parentNode : table.tBodies[0];
     if (insertAfterRow) {
@@ -865,17 +847,17 @@ function insertAt(
       // Insert at very start of tbody
       tbody.insertAdjacentHTML('afterbegin', rawHtml);
     }
-    /////////////////////////////
+    ////////////////////////////
 
     //////////////////////////////////////////
     // update pathes of following rows      //
     // (same level or deeper in that group) //
     //////////////////////////////////////////
-    for (var i = group_index ; i <= groupRows.length - 1 ; i++) {
+    for (var i = groupRows.length - 1; i >= group_index; i--) {
         incrementIndexes(
             table,
             groupRows[i].dataset.path,
-            countAllDepthsItems(data)
+            data.length
         );
     }
     //////////////////////////////////////////
@@ -890,7 +872,9 @@ function insertAt(
             bar.remove();
         });
         for (const cell of row.cells) {
-            cell.style.paddingBottom = `${defaultBottomPadding}px`;
+            // force reset bottom padding to CSS default
+            // (avoid webbrowser rounding issues)
+            cell.style.paddingBottom = null;
         }
     }
 
@@ -944,24 +928,6 @@ function checkUnicityOfAllDepthsItems(table, data) {
     }
 }
 
-function countAllDepthsItems(data) {
-    let count = 0;
-
-    function traverse(items) {
-        for (const item of items) {
-            count++; // Count the current item
-            
-            // If item has children, traverse them recursively
-            if (item.children && Array.isArray(item.children)) {
-                traverse(item.children);
-            }
-        }
-    }
-
-    traverse(data);
-    return count;
-}
-
 function incrementIndexes(table, path, incrementValue) {
     /* *******************************************
     * "path" may be that of a group header       *
@@ -1001,77 +967,4 @@ function incrementIndexes(table, path, incrementValue) {
         });
     }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
