@@ -1,4 +1,13 @@
 
+/* ***************************************
+* rows items have mandatory attributes : *
+*   - id, name, children and style       *
+* any additional is treated as           *
+* an additional column in the table      *
+* (Note : in order they're declared,     *
+*  not by name).                         *
+*************************************** */
+
 const MAX_Z_INDEX = zIndex = 2147483647;
 const barThickness = 3;         /* in px, nesting-bar width,
                                    must match with nesting-bar CSSs */
@@ -585,7 +594,7 @@ function renderRows(data, parentPath = "", level = 0, startIndex = 0) {
         const idCell = (
             hasChildren
             ? `<td data-id="${item.id}">▼ ${path} - ${item.id}</td>`
-            : `<td>${path}&nbsp;-&nbsp;${item.id}</td>`
+            : `<td>${item.name}</td>`
         );
 
         const rowClass = (hasChildren ? 'group-header ' : '');
@@ -600,9 +609,13 @@ function renderRows(data, parentPath = "", level = 0, startIndex = 0) {
             : '';
 
         html += `<tr class="${rowClass.trim()}" ${dataAttrs} ` +
-                `${clickAttr} ${extraAttrs} ${rowCss}>` +
-                `${idCell}<td>${item.name}</td><td>${item.description}</td>` +
-                `<td>${item.value}</td></tr>`;
+                     `${clickAttr} ${extraAttrs} ${rowCss}>` +
+                idCell +
+                Object.keys(item)
+                  .filter(key => key !== "id" && key !== "name" && key !== "style" && key !== "children")
+                  .map(key => `<td>${item[key]}</td>`)
+                  .join("") +
+                `</tr>`;
 
         if (hasChildren) {
             html += renderRows(item.children, path, level + 1);

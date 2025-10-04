@@ -5,6 +5,7 @@ import asyncio
 from typing import List, Tuple
 from fasthtml.common import H1, H2, Div, P, \
     Link, Script, Style, \
+    Table, Colgroup, Col, Thead, Tr, Th, Tbody, \
     Request, Response, JSONResponse, \
     StreamingResponse
 from jinja2 import Environment, FileSystemLoader
@@ -149,7 +150,7 @@ def register(app, rt, prefix=""):
         if tasks_list is None:
             return Div(P(f"Invalid execution ID {execution_id}"))
 
-        return draw_chart(tasks_list, taskgroups_list)
+        return draw_chart(execution_id, tasks_list, taskgroups_list)
 
 
     @rt(f"{prefix}/execution_info", methods=["GET"])
@@ -171,6 +172,10 @@ def register(app, rt, prefix=""):
 
     @rt(f"{prefix}/execution_number", methods=["GET"])
     async def get_execution_number(request: Request):
+        """Which execution of that pipeline (by name) it is,
+
+        (first, second, etc.).
+        """
         execution_id = request.query_params.get("id")
         execution_number_response = await execution_number(execution_id)
 
@@ -223,13 +228,14 @@ def register(app, rt, prefix=""):
                     Div(
                         "execution # ",
                         Div(
-                            id="execution-number"
+                            id="execution-number",
+                            title=f"exec_id:\u00A0{execution_id}",
                         ),
                         "/",
                         Div(
                             id="executions-count"
                         ),
-                        f", exec_id: {execution_id} -\u00A0",
+                        " -\u00A0",
                         Div(
                             id="utc-start-date-time-str"
                         ),
@@ -560,12 +566,110 @@ def register(app, rt, prefix=""):
                 """),
 
                 ## TODO, add stuff here (live-streamed Gantt diagram of tasks, etc.)
+                H1(
+                    "Execution Timeline",
+                    style="""
+                        color: #6082B6;
+                        padding: 2rem 0 3rem;
+                        margin-bottom: 0;
+                        background-color: rgba(0, 0, 0, 0.03);
+                        border-bottom: 1px solid rgba(0, 0, 0, 0.125);
+                        text-align: center;
+                    """
+                ),
+                Script(src="/collapsible_grouped_table.js"),
+                Style(""" /* Gantt collapsible table */
+                    .gantt-table {
+                        border-collapse: collapse;
+                        width: 100%;
+                        table-layout: fixed;
+                    }
+
+                    .gantt-table th,
+                    .gantt-table td {
+                        padding: 8px; /* important */
+                        text-align: left;
+                        overflow: hidden;
+                        text-overflow: ellipsis;
+                        white-space: nowrap;
+                        border: 1px solid #ddd;
+                        position: relative;
+                    }
+
+                    .gantt-table #task-col {
+                        width: 25%;
+                    }
+                    .gantt-table #timeline-col {
+                        width: 75%;
+                    }
+                    .gantt-table tr td:first-child {
+                        padding-left: calc(10px + var(--indent-level) * 5px);
+                        position: relative;
+                    }
+
+                    .hidden {
+                        display: none;
+                    }
+
+                    .left-nesting-bar {
+                        position: absolute;
+                        top: 0;
+                        bottom: 0;
+                        width: 3px;           <!-- important -->
+                        z-index: 0;
+                    }
+
+                    .right-nesting-bar {
+                        position: absolute;
+                        top: 0;
+                        bottom: 0;
+                        width: 3px;           <!-- important -->
+                        z-index: 0;
+                        right: 0;
+                    }
+
+                    .top-nesting-bar {
+                        position: absolute;
+                        height: 3px;           <!-- important -->
+                        z-index: 0;
+                        top: 0;
+                    }
+
+                    .bottom-nesting-bar {
+                        position: absolute;
+                        height: 3px;           <!-- important -->
+                        z-index: 0;
+                        bottom: 0;
+                    }
+                """),
+                Table(# Gantt diagram
+                    Colgroup(
+                        Col(id="task-col"),
+                        Col(id="timeline-col"),
+                    ),
+                    Thead(
+                        Tr(
+                            Th("task"),
+                            Th("timeline")
+                        )
+                    ),
+                    Tbody(id="data-tbody"),
+                    cls="gantt-table",
+                    id=f"gantt-{execution_id}"
+                ),
                 Div(# Gantt diagram
-                    P("\u00A0 Loading Gantt diagram...", style="color: white;"),
+                    Script("console.log('Placeholder script...');"),
+                    id="gantt-script-placeholder",
                     hx_get=f"{prefix}/exec_current_progress?id={execution_id}",
                     hx_trigger="load",
-                    hx_swap="outerHTML"
+                    hx_swap="innerHTML"
                 ),
+                # Div(# Gantt diagram
+                    # P("\u00A0 Loading Gantt diagram...", style="color: white;"),
+                    # hx_get=f"{prefix}/exec_current_progress?id={execution_id}",
+                    # hx_trigger="load",
+                    # hx_swap="outerHTML"
+                # ),
 
                 H1(
                     "Execution DAG",

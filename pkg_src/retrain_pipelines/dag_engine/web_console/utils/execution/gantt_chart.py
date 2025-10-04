@@ -2,9 +2,11 @@
 import logging
 
 from collections import defaultdict
-from typing import List, Tuple, Union, Optional
+from typing import Any, List, Tuple, Union, \
+    Optional
 
-from fasthtml.common import Table, Tr, Td, B
+from fasthtml.common import Div, Style, Script, \
+    to_xml
 
 from ....db.model import TaskExt, TaskGroup
 
@@ -20,7 +22,74 @@ class ParallelLines:
         self.merging_task = merging_task
 
     def __repr__(self):
-        return "PP"+str([self.lines] + ([self.merging_task] if self.merging_task else []))
+        return "PP" + str([self.lines] + \
+               ([self.merging_task] if self.merging_task else []))
+
+
+class GroupedRows:
+    def __init__(
+        self,
+        id: str,
+        name: str,
+        timeline: Optional[Any],
+        children: Optional[List["GroupedRows"]],
+        style: Optional[Any]
+    ):
+        self.id = id
+        self.name = name
+        self.timeline = timeline
+        self.children = children if children is not None else []
+        self.style = style
+
+    def to_js_literal(self):
+        """
+        Convert a nested Python structure
+        to a JavaScript literal string.
+
+        Recursively serializes Python
+        dicts, lists, primitives, None, and booleans
+        to a valid JavaScript object literal (not JSON):
+        dictionary keys are unquoted, None becomes null,
+        True/False map to true/false,
+        and strings are single-quoted.
+        """
+        def recursive_js(obj):
+            # If object is class with to_js_literal, call it
+            if hasattr(obj, "to_js_literal") and callable(obj.to_js_literal):
+                return obj.to_js_literal()
+            # For dict, recurse over key-values
+            elif isinstance(obj, dict):
+                items = ", ".join(f"{k}: {recursive_js(v)}" for k, v in obj.items())
+                return "{" + items + "}"
+            # For list (or tuple), recurse over items
+            elif isinstance(obj, (list, tuple)):
+                items = ", ".join(recursive_js(i) for i in obj)
+                return "[" + items + "]"
+            # For strings, escape and quote
+            elif isinstance(obj, str):
+                return repr(obj)
+            elif obj is None:
+                return "null"
+            elif isinstance(obj, bool):
+                return "true" if obj else "false"
+            # For other primitives, just str
+            else:
+                return str(obj)
+
+        return (f"{{id: {recursive_js(self.id)}, "
+                f"name: {recursive_js(self.name)}, "
+                f"timeline: {recursive_js(self.timeline)}, "
+                f"children: {recursive_js(self.children)}, "
+                f"style: {recursive_js(self.style)}}}")
+
+
+    def __repr__(self) -> str:
+        return (
+            f"{self.__class__.__name__}("
+            f"id={self.id!r}, "
+            f"name={self.name!r}, "
+            f"children={len(self.children)})"
+        )
 
 
 def _organize_tasks(
@@ -216,14 +285,20 @@ def _organize_tasks(
 
 
 def draw_chart(
+    execution_id: int,
     tasks_list: List[TaskExt],
     taskgroups_list: List[TaskGroup]
-) -> Table:
-    """The html DOM element
+) -> Script:
+    """The js list of row literals.
 
     for the Gantt diagramm of a given execution.
+    Format is the one expected by
+    the collapsible-grouped-table init function.
 
     Params:
+        - execution_id (int):
+            The id of the execution
+            to draw a Gantt diagramm for.
         - tasks_list (List[TaskExt]):
             the exhaustive (topologically sorted)
             list of tasks for a given execution.
@@ -232,7 +307,7 @@ def draw_chart(
             list of taskgroups for that execution.
 
     Results:
-        - (Table)
+        - (Script)
     """
 
     current_organize_tasks = _organize_tasks(tasks_list, taskgroups_list)
@@ -249,15 +324,46 @@ def draw_chart(
             # standalone inline task
             rows.append(task_row(element))
 
-    return Table(*rows)
+    js_rows = "[" + ", ".join(r.to_js_literal() for r in rows) + "]"
+    return (
+        Script(f"""
+            const tableData = {js_rows};
+
+            function countAllDepthsItems(data) {{
+                let count = 0;
+
+                function traverse(items) {{
+                    for (const item of items) {{
+                        count++; // Count the current item
+
+                        // If item has children, traverse them recursively
+                        if (item.children && Array.isArray(item.children)) {{
+                            traverse(item.children);
+                        }}
+                    }}
+                }}
+
+                traverse(data);
+                return count;
+            }}
+            console.log(`${{countAllDepthsItems(tableData)}} total rows ` +
+                        'in tableData array.');
+
+            const interBarsSpacing = 2;     /* in px */
+        init('gantt-{execution_id}', tableData, interBarsSpacing);
+        """)
+    )
 
 
-def task_row(task_ext: TaskExt) -> Tr:
-    result = Tr(
-        Td(
-            task_ext.name
-        ),
-        id=f"gantt-{task_ext.id}"
+def task_row(task_ext: TaskExt) -> GroupedRows:
+    result = GroupedRows(
+        id=task_ext.id,
+        name=task_ext.name,
+        timeline=\
+            to_xml(Div(
+            )),
+        children=None,
+        style=task_ext.ui_css
     )
 
     return result
@@ -265,10 +371,14 @@ def task_row(task_ext: TaskExt) -> Tr:
 
 def parallel_table(
     parallel_lines: ParallelLines
-) -> Table:
-    print(f"sub-DAG : {parallel_lines}")
+) -> GroupedRows:
+    # get one of the split instances
+    # of the opening parallel task
+    parralel_task_ext = \
+        parallel_lines.lines[next(iter(parallel_lines.lines))][0]
+    # print(f"sub-DAG {parralel_task_ext.name} : {parallel_lines}")
 
-    rows = []
+    parallel_lines_list = []
     for parallel_line_rank, elements_list in parallel_lines.lines.items():
         line_rows = []
         for element in elements_list:
@@ -278,55 +388,45 @@ def parallel_table(
                 line_rows.append(taskgroup_table(element))
             else:
                 line_rows.append(task_row(element))
-        rows.append(
-            Tr(Td(Table(
-                *line_rows,
-                id=parallel_line_rank
-            )))
+        parallel_lines_list.append(
+            {
+                "id": f"{parralel_task_ext.name}.{parallel_line_rank}",
+                "name": f"{parralel_task_ext.name}.{parallel_line_rank}",
+                "timeline": None,
+                "children": line_rows,
+                "style": None
+            }
         )
 
     if parallel_lines.merging_task is not None:
-        rows.append(task_row(parallel_lines.merging_task))
+        parallel_lines_list.append(task_row(parallel_lines.merging_task))
 
-    return Tr(Td(Table(
-            *rows,
-            style="border: 2px solid #333; border-collapse: collapse;",
-            id=f"gantt-{parallel_lines.rank}"
-        )))
+    return GroupedRows(
+        id=parralel_task_ext.name,
+        name=parralel_task_ext.name,
+        timeline=None,
+        children=parallel_lines_list,
+        style=parralel_task_ext.ui_css
+    )
 
 
 def taskgroup_table(
     taskgroup_tuple: Tuple[TaskGroup, List[Union[TaskExt, Tuple]]]
-) -> Tr:
+) -> GroupedRows:
     taskgroup, taskgroup_elements = taskgroup_tuple
 
-    rows = []
+    elements = []
     for element in taskgroup_elements:
         if isinstance(element, Tuple):
-            rows.append(taskgroup_table(element))
+            elements.append(taskgroup_table(element))
         else:
-            rows.append(task_row(element))
+            elements.append(task_row(element))
 
-    return Tr(Td(Table(
-            (Tr(Td(B(taskgroup.name))), *rows),
-            style="border: 2px solid #FFD700; border-collapse: collapse; ",
-            id=f"gantt-{taskgroup.uuid}"
-        )))
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    return GroupedRows(
+        id=str(taskgroup.uuid),
+        name=taskgroup.name,
+        timeline=None,
+        children=elements,
+        style=taskgroup.ui_css
+    )
 
