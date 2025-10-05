@@ -706,6 +706,7 @@ def register(app, rt, prefix=""):
                     """
                 ),
                 Script(src="/collapsible_grouped_table.js"),
+                Script(src="/gantt-timeline.js"),
                 Style(""" /* Gantt collapsible table */
                     .gantt-table {
                         border-collapse: collapse;

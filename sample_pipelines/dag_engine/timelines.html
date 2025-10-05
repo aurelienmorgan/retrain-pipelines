@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Gantt Timeline - Timestamps</title>
+<style>
+    body {
+        font-family: Arial, sans-serif;
+        padding: 20px;
+        max-width: 1200px;
+        margin: 0 auto;
+    }
+    
+    table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 30px 0;
+    }
+    
+    th, td {
+        border: 1px solid #ddd;
+        padding: 8px;
+        text-align: left;
+    }
+    
+    th {
+        background-color: #f2f2f2;
+        font-weight: bold;
+    }
+    
+    .add-row-form {
+        margin: 20px 0;
+        padding: 15px;
+        background: #f9f9f9;
+        border-radius: 5px;
+    }
+    
+    .add-row-form input, .add-row-form button {
+        margin: 5px;
+        padding: 8px;
+    }
+</style>
+</head>
+<body>
+
+<table id="timelineTable">
+    <thead>
+        <tr>
+            <th>Task</th>
+            <th>Timeline</th>
+        </tr>
+    </thead>
+    <tbody>
+        <tr>
+            <td>task1</td>
+            <td data-start-timestamp="1759651200000" data-end-timestamp="1759651800000"></td>
+        </tr>
+        <tr>
+            <td>task2</td>
+            <td data-start-timestamp="1759564800000" data-end-timestamp="1759579200000"></td>
+        </tr>
+        <tr>
+            <td>task3</td>
+            <td data-start-timestamp="1759618800000"></td>
+        </tr>
+        </tr>
+        <tr>
+            <td>task4</td>
+            <td data-start-timestamp="1759582800000"></td>
+        </tr>
+    </tbody>
+</table>
+
+<div class="add-row-form">
+    <h3>Add New Task</h3>
+    <input type="text" id="taskName" placeholder="Task Name">
+    <input type="datetime-local" id="taskStart">
+    <input type="datetime-local" id="taskEnd">
+    <button onclick="addTask()">Add Task</button>
+</div>
+
+<script src="gantt-timeline.js"></script>
+<script>
+    const projectTimeline = new GanttTimeline('timelineTable', 'Timeline');
+
+    function addTask(tableId, columnName) {
+        // programmatic insert demo
+        // (second column of table with id 'timelineTable')
+        const name = document.getElementById('taskName').value;
+        const start = document.getElementById('taskStart').value;
+        const end = document.getElementById('taskEnd').value;
+
+        if (name && start && end) {
+            const tbody = document.querySelector('#timelineTable tbody');
+            const row = document.createElement('tr');
+
+            const startTimestamp = new Date(start).getTime();
+            const endTimestamp = new Date(end).getTime();
+
+            row.innerHTML = `
+                <td>${name}</td>
+                <td data-start-timestamp="${startTimestamp}" data-end-timestamp="${endTimestamp}"></td>
+            `;
+
+            tbody.appendChild(row);
+
+            document.getElementById('taskName').value = '';
+            document.getElementById('taskStart').value = '';
+            document.getElementById('taskEnd').value = '';
+        } else {
+            alert('Please fill all fields');
+        }
+    }
+</script>
+
+</body>
+</html>

@@ -1,8 +1,9 @@
 
 import logging
 
+from datetime import datetime
 from collections import defaultdict
-from typing import Any, List, Tuple, Union, \
+from typing import List, Tuple, Union, \
     Optional
 
 from fasthtml.common import Div, Style, Script, \
@@ -31,13 +32,15 @@ class GroupedRows:
         self,
         id: str,
         name: str,
-        timeline: Optional[Any],
+        start_timestamp: Optional[datetime],
+        end_timestamp: Optional[datetime],
         children: Optional[List["GroupedRows"]],
-        style: Optional[Any]
+        style: Optional[dict]
     ):
         self.id = id
         self.name = name
-        self.timeline = timeline
+        self.start_timestamp = start_timestamp
+        self.end_timestamp = end_timestamp
         self.children = children if children is not None else []
         self.style = style
 
@@ -72,16 +75,24 @@ class GroupedRows:
                 return "null"
             elif isinstance(obj, bool):
                 return "true" if obj else "false"
+            elif isinstance(obj, datetime):
+                return int(obj.timestamp() * 1000)
             # For other primitives, just str
             else:
-                return str(obj)
+                return repr(str(obj))
 
         js_literal = (
             "{"
                 f"id: {recursive_js(self.id)}, "
                 "cells: {"
                     f"name: {{ value: {recursive_js(self.name)}, attributes: {{}} }}, "
-                    f"timeline: {{ value: {recursive_js(self.timeline)}, attributes: {{}} }}"
+                    "timeline: {"
+                        "value: null, "
+                        "attributes: {"
+                            f"start-timestamp: {recursive_js(self.start_timestamp)}, "
+                            f"end-timestamp: {recursive_js(self.end_timestamp)}"
+                        "}"
+                    "}"
                 "}, "
                 f"children: {recursive_js(self.children)}, "
                 f"style: {recursive_js(self.style)}"
@@ -366,9 +377,8 @@ def task_row(task_ext: TaskExt) -> GroupedRows:
     result = GroupedRows(
         id=task_ext.id,
         name=task_ext.name,
-        timeline=\
-            to_xml(Div(
-            )),
+        start_timestamp=task_ext.start_timestamp,
+        end_timestamp=task_ext.end_timestamp,
         children=None,
         style=task_ext.ui_css
     )
@@ -399,7 +409,8 @@ def parallel_table(
             GroupedRows(
                 id=f"{parralel_task_ext.name}.{parallel_line_rank}",
                 name=f"{parralel_task_ext.name}.{parallel_line_rank}",
-                timeline=None,
+                start_timestamp=None,
+                end_timestamp=None,
                 children=line_rows,
                 style=None
             )
@@ -411,7 +422,8 @@ def parallel_table(
     return GroupedRows(
         id=parralel_task_ext.name,
         name=parralel_task_ext.name,
-        timeline=None,
+        start_timestamp=None,
+        end_timestamp=None,
         children=parallel_lines_list,
         style=parralel_task_ext.ui_css
     )
@@ -432,7 +444,8 @@ def taskgroup_table(
     return GroupedRows(
         id=str(taskgroup.uuid),
         name=taskgroup.name,
-        timeline=None,
+        start_timestamp=None,
+        end_timestamp=None,
         children=elements,
         style=taskgroup.ui_css
     )
