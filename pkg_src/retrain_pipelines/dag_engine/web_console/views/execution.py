@@ -4,7 +4,7 @@ import asyncio
 
 from typing import List, Tuple
 from fasthtml.common import H1, H2, Div, P, \
-    Link, Script, Style, \
+    Link, Script, Style, Button, \
     Table, Colgroup, Col, Thead, Tr, Th, Tbody, \
     Request, Response, JSONResponse, \
     StreamingResponse
@@ -150,7 +150,8 @@ def register(app, rt, prefix=""):
         if tasks_list is None:
             return Div(P(f"Invalid execution ID {execution_id}"))
 
-        return draw_chart(execution_id, tasks_list, taskgroups_list)
+        chart = draw_chart(execution_id, tasks_list, taskgroups_list)
+        return chart
 
 
     @rt(f"{prefix}/execution_info", methods=["GET"])
@@ -565,6 +566,133 @@ def register(app, rt, prefix=""):
                     }
                 """),
 
+                Script("""// savePageAsSingleFile
+                    async function savePageAsSingleFile() {
+                        try {
+                            // Clone the entire document
+                            const docClone = document.cloneNode(true);
+
+                            // === INLINE CSS ===
+                            const styles = Array.from(document.styleSheets);
+                            const inlinedStyles = [];
+
+                            for (const sheet of styles) {
+                                try {
+                                    const rules = Array.from(sheet.cssRules || sheet.rules || []);
+                                    const css = rules.map(rule => rule.cssText).join('\\n');
+                                    if (css) {
+                                        inlinedStyles.push(css);
+                                    }
+                                } catch (e) {
+                                    console.warn('Could not access stylesheet:', sheet.href || 'inline stylesheet', 'Error:', e.message);
+                                }
+                            }
+
+                            // Remove existing style and link elements from clone
+                            const oldStyles = docClone.querySelectorAll('style, link[rel="stylesheet"]');
+                            oldStyles.forEach(el => el.remove());
+
+                            // Add new consolidated style element
+                            if (inlinedStyles.length > 0) {
+                                const styleElement = docClone.createElement('style');
+                                styleElement.textContent = inlinedStyles.join('\\n\\n');
+                                docClone.head.appendChild(styleElement);
+                            }
+
+                            // === INLINE EXTERNAL JAVASCRIPT ===
+                            const externalScripts = docClone.querySelectorAll('script[src]');
+
+                            for (const script of externalScripts) {
+                                try {
+                                    const src = script.src;
+
+                                    const response = await fetch(src);
+                                    if (!response.ok) {
+                                        console.warn(`Failed to fetch script: ${src} - Status: ${response.status}`);
+                                        continue;
+                                    }
+
+                                    const jsContent = await response.text();
+
+                                    // Create new inline script with the fetched content
+                                    const inlineScript = docClone.createElement('script');
+
+                                    // Preserve script attributes (except src)
+                                    for (const attr of script.attributes) {
+                                        if (attr.name !== 'src') {
+                                            inlineScript.setAttribute(attr.name, attr.value);
+                                        }
+                                    }
+
+                                    inlineScript.textContent = jsContent;
+
+                                    // Replace the external script with inline version
+                                    script.parentNode.replaceChild(inlineScript, script);
+
+                                } catch (e) {
+                                    console.warn(`Could not inline script ${script.src}:`, e.message);
+                                }
+                            }
+
+                            // === INLINE IMAGES (fetch to base64) ===
+                            const images = Array.from(document.querySelectorAll('img[src]'));
+                            const cloneImages = Array.from(docClone.querySelectorAll('img[src]'));
+
+                            for (let i = 0; i < images.length; i++) {
+                                const originalImg = images[i];
+                                const cloneImg = cloneImages[i];
+
+                                if (!cloneImg || !originalImg.src) continue;
+
+                                try {
+                                    const response = await fetch(originalImg.src);
+                                    if (!response.ok) {
+                                        console.warn(`Failed to fetch image: ${originalImg.src} - Status: ${response.status}`);
+                                        continue;
+                                    }
+
+                                    const blob = await response.blob();
+                                    const base64 = await new Promise((resolve, reject) => {
+                                        const reader = new FileReader();
+                                        reader.onloadend = () => resolve(reader.result);
+                                        reader.onerror = reject;
+                                        reader.readAsDataURL(blob);
+                                    });
+
+                                    cloneImg.src = base64;
+                                    console.log('Successfully inlined image:', originalImg.src);
+
+                                } catch (e) {
+                                    console.warn('Could not inline image:', originalImg.src, '- Error:', e.message);
+                                }
+                            }
+
+                            // Get the final HTML
+                            const doctype = '<!DOCTYPE html>';
+                            const html = docClone.documentElement.outerHTML;
+                            const fullHtml = doctype + '\\n' + html;
+
+                            // Create blob and download
+                            const blob = new Blob([fullHtml], { type: 'text/html' });
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement('a');
+                            a.href = url;
+                            a.download = `saved-page-${Date.now()}.html`;
+                            document.body.appendChild(a);
+                            a.click();
+                            document.body.removeChild(a);
+                            URL.revokeObjectURL(url);
+
+                            alert('Page saved successfully!');
+
+                        } catch (error) {
+                            console.error('Error saving page:', error);
+                            alert('Error saving page. Check console for details.');
+                        }
+                    }
+                """),
+                Button("Save Page", onclick="savePageAsSingleFile()"),
+
                 ## TODO, add stuff here (live-streamed Gantt diagram of tasks, etc.)
                 H1(
                     "Execution Timeline",
@@ -657,19 +785,13 @@ def register(app, rt, prefix=""):
                     cls="gantt-table",
                     id=f"gantt-{execution_id}"
                 ),
-                Div(# Gantt diagram
-                    Script("console.log('Placeholder script...');"),
+                Div(# init Gantt diagram data (loaded async)
+                    Script("// Placeholder script (shall be replaced async)."),
                     id="gantt-script-placeholder",
                     hx_get=f"{prefix}/exec_current_progress?id={execution_id}",
                     hx_trigger="load",
                     hx_swap="innerHTML"
                 ),
-                # Div(# Gantt diagram
-                    # P("\u00A0 Loading Gantt diagram...", style="color: white;"),
-                    # hx_get=f"{prefix}/exec_current_progress?id={execution_id}",
-                    # hx_trigger="load",
-                    # hx_swap="outerHTML"
-                # ),
 
                 H1(
                     "Execution DAG",

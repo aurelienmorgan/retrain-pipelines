@@ -76,11 +76,18 @@ class GroupedRows:
             else:
                 return str(obj)
 
-        return (f"{{id: {recursive_js(self.id)}, "
-                f"name: {recursive_js(self.name)}, "
-                f"timeline: {recursive_js(self.timeline)}, "
+        js_literal = (
+            "{"
+                f"id: {recursive_js(self.id)}, "
+                "cells: {"
+                    f"name: {{ value: {recursive_js(self.name)}, attributes: {{}} }}, "
+                    f"timeline: {{ value: {recursive_js(self.timeline)}, attributes: {{}} }}"
+                "}, "
                 f"children: {recursive_js(self.children)}, "
-                f"style: {recursive_js(self.style)}}}")
+                f"style: {recursive_js(self.style)}"
+            "}"
+        )
+        return js_literal
 
 
     def __repr__(self) -> str:
@@ -389,13 +396,13 @@ def parallel_table(
             else:
                 line_rows.append(task_row(element))
         parallel_lines_list.append(
-            {
-                "id": f"{parralel_task_ext.name}.{parallel_line_rank}",
-                "name": f"{parralel_task_ext.name}.{parallel_line_rank}",
-                "timeline": None,
-                "children": line_rows,
-                "style": None
-            }
+            GroupedRows(
+                id=f"{parralel_task_ext.name}.{parallel_line_rank}",
+                name=f"{parralel_task_ext.name}.{parallel_line_rank}",
+                timeline=None,
+                children=line_rows,
+                style=None
+            )
         )
 
     if parallel_lines.merging_task is not None:

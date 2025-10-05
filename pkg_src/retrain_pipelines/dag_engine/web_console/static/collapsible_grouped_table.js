@@ -576,9 +576,9 @@ function renderRows(data, parentPath = "", level = 0, startIndex = 0) {
         const hasChildren = item.children && item.children.length > 0;
         const isTopLevelRow = level == 0 && parentPath === "" && !hasChildren;
 
-      /* ****************************
-      * styling for top-level rows. *
-      **************************** */
+        /* ****************************
+        * styling for top-level rows. *
+        **************************** */
         var rowCss = "";
         if (isTopLevelRow && item.style) {
             const { color, background, border } = item.style;
@@ -589,13 +589,21 @@ function renderRows(data, parentPath = "", level = 0, startIndex = 0) {
                   `--indent-level: ${level};` +
                 '"';
         }
-      /* ************************* */
+        /* ************************* */
 
-        const idCell = (
-            hasChildren
-            ? `<td data-id="${item.id}">▼ ${path} - ${item.id}</td>`
-            : `<td>${item.name}</td>`
-        );
+        // Helper function to render attributes for a cell
+        const renderCellAttributes = (cell) => {
+            if (!cell.attributes) return '';
+            return Object.entries(cell.attributes)
+                .map(([key, value]) => ` data-${key}="${value}"`)
+                .join('');
+        };
+
+        // Name cell handling
+        const nameCell = item.cells.name;
+        const nameCellHtml = hasChildren
+            ? `<td data-id="${item.id}"${renderCellAttributes(nameCell)}>▼ ${nameCell.value}</td>`
+            : `<td data-id="${item.id}"${renderCellAttributes(nameCell)}>${nameCell.value}</td>`;
 
         const rowClass = (hasChildren ? 'group-header ' : '');
         const clickAttr =
@@ -604,18 +612,23 @@ function renderRows(data, parentPath = "", level = 0, startIndex = 0) {
             '';
         const dataAttrs =
             `data-path="${path}" data-level="${level}" data-id="${item.id}"`;
-        const extraAttrs = hasChildren && item.style 
-            ? `data-group-style='${JSON.stringify(item.style)}'` 
+        const extraAttrs = hasChildren && item.style
+            ? `data-group-style='${JSON.stringify(item.style)}'`
             : '';
 
         html += `<tr class="${rowClass.trim()}" ${dataAttrs} ` +
                      `${clickAttr} ${extraAttrs} ${rowCss}>` +
-                idCell +
-                Object.keys(item)
-                  .filter(key => key !== "id" && key !== "name" && key !== "style" && key !== "children")
-                  .map(key => `<td>${item[key]}</td>`)
-                  .join("") +
-                `</tr>`;
+                nameCellHtml;
+
+        // Render other cells (all except 'name')
+        Object.keys(item.cells)
+            .filter(key => key !== 'name')
+            .forEach(key => {
+                const cell = item.cells[key];
+                html += `<td${renderCellAttributes(cell)}>${cell.value}</td>`;
+            });
+
+        html += `</tr>`;
 
         if (hasChildren) {
             html += renderRows(item.children, path, level + 1);
