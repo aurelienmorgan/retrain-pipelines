@@ -242,14 +242,24 @@ def _run_regular_taskgroup(
 ) -> TaskPayload:
     """Executes tasks (and potential nested taskgroups) asynchronously.
 
+    All individual (potentially nested) tasks
+    get the same input payload.
+
+    The top-level taskgroup completes
+    when all (potentially nested) task do.
+
+    The following task gets the TaskPayload objects
+    with all (potentially nested) tasks' outputs
+
     Params:
         - tg (TaskGroup):
-            The task to execute.
+            The taskgroup to execute.
         - parent_results (TaskPayload):
             Input values from parent tasks.
         - rank (List[int], optional):
             Index path for nested branches.
-            Indices of branches if inside a parallel lane.
+            Indices of branches
+            if inside a parallel lane.
 
     Results:
         - TaskPayload:
@@ -258,22 +268,46 @@ def _run_regular_taskgroup(
     """
     result = TaskPayload({})
     with concurrent.futures.ThreadPoolExecutor() as executor:
+        # Submit all elements (both tasks and nested taskgroups) to executor
+        futures = {}
         for elmt in tg.elements:
             result[elmt.name] = None  # to preserve keys ordering
             if isinstance(elmt, Task):
-                f = executor.submit(
+                future = executor.submit(
                     _run_regular_task,
                     elmt,
                     parent_results,
                     (rank or [])
                 )
-                result[elmt.name] = f.result()
+                futures[future] = elmt.name
             else:
-                nested_tg_results = _run_regular_taskgroup(
-                    elmt, parent_results, rank
+                # Submit nested taskgroups to executor as well
+                future = executor.submit(
+                    _run_regular_taskgroup,
+                    elmt,
+                    parent_results,
+                    rank
                 )
-                for task_name, task_result in nested_tg_results.items():
-                    result[task_name] = task_result
+                futures[future] = elmt.name
+
+        # Wait for all submitted tasks and taskgroups to complete
+        for future in concurrent.futures.as_completed(futures):
+            element_name = futures[future]
+            try:
+                element_result = future.result()
+                if isinstance(element_result, TaskPayload):
+                    # For taskgroups, merge all individual task results
+                    for task_name, task_result in element_result.items():
+                        result[task_name] = task_result
+                else:
+                    # For regular tasks, store the result directly
+                    result[element_name] = element_result
+            except Exception as exc:
+                # Log the exception and re-raise to maintain error behavior
+                logging.getLogger().error(
+                    f"Element {element_name} generated an exception: {exc}"
+                )
+                raise
 
     return result
 
