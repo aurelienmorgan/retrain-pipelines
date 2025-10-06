@@ -595,7 +595,7 @@ function renderRows(data, parentPath = "", level = 0, startIndex = 0) {
         const renderCellAttributes = (cell) => {
             if (!cell.attributes) return '';
             return Object.entries(cell.attributes)
-                .map(([key, value]) => ` data-${key}="${value}"`)
+                .map(([key, value]) => ` data-${key.replaceAll("_", "-")}="${value}"`)
                 .join('');
         };
 

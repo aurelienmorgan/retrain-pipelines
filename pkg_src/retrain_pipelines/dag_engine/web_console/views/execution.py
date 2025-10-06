@@ -499,7 +499,7 @@ def register(app, rt, prefix=""):
                     const observer = new MutationObserver(onClassChange);
                     observer.observe(statusCircle, { attributes: true });
                 """),
-                Style("""
+                Style(""" /* header and body */
                     .shiny-gold-text {
                         font-size: 3em; font-weight: bold; min-height: 50.5px;
                         color: #FFD700; /* Base gold color */
@@ -512,57 +512,9 @@ def register(app, rt, prefix=""):
                         -webkit-text-fill-color: transparent;
                     }
 
-                    .body-execution {
+                    .body-execution { /* page content container */
                         padding-top: 3.5rem;
                         padding-bottom: 2.5rem;
-                    }
-
-                    #dag-docstring {
-                        margin: 0 20px;
-                        padding: 12px 12px 12px 16px;
-                        min-height: 56px;
-                        position: relative;
-                        display: flex;
-                        flex-direction: column;
-                        align-items: flex-end;
-                    }
-                    #dag-docstring.showing {
-                        background: linear-gradient(135deg, rgba(255, 255, 255, 0.1) 0%, rgba(248, 249, 250, 0.1) 100%);
-                        border: 1px solid rgba(222, 226, 230, 0.5);
-                        border-radius: 10px;
-                        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.8);
-                        color: white;
-                    }
-                    #dag-docstring.collapsed {
-                        height: 56px; /* min-height*/
-                        overflow: hidden;
-                    }
-                    #dag-docstring.expanded {
-                        height: 150px;
-                        overflow-y: auto;
-                    }
-
-                    #dag-docstring .content {
-                        flex: 1 1 auto;
-                        min-width: 0;
-                        width: 100%;
-                        text-align: justify;
-                    }
-
-                    #dag-docstring-show-more {
-                        position: sticky;
-                        bottom: 0;
-                        transform: translateY(10px);
-                        background: rgba(0, 0, 0, 0.5);
-                        color: white;
-                        padding: 2px 8px;
-                        border-radius: 5px;
-                        cursor: pointer;
-                        font-size: 13px;
-                        white-space: nowrap; /* prevents wrapping */
-                        width: auto;
-                        max-width: fit-content;
-                        z-index: 10;
                     }
                 """),
 
@@ -771,6 +723,64 @@ def register(app, rt, prefix=""):
                         bottom: 0;
                     }
                 """),
+                Style(""" /* timelines */
+                    .gantt-timeline-cell {
+                        position: relative;
+                        min-height: 50px;
+                        background: linear-gradient(to right, #f9f9f9 0%, #f9f9f9 100%);
+                        padding: 5px !important;
+                        min-width: 250px;
+                        vertical-align: middle;
+                    }
+
+                    .gantt-timeline-container {
+                        position: relative;
+                        width: 100%;
+                        height: 35px;
+                        background: #e8e8e8;
+                        border-radius: 4px;
+                        overflow: visible;
+                    }
+
+                    .gantt-timeline-bar {
+                        position: absolute;
+                        height: 100%;
+                        top: 0;
+                        border-radius: 4px;
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        color: white;
+                        font-size: 11px;
+                        font-weight: bold;
+                        box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+                        transition: all 0.3s ease;
+                        cursor: pointer;
+                        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    }
+
+                    .gantt-timeline-bar.ongoing {
+                        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+                        animation: pulse 2s ease-in-out infinite;
+                    }
+
+                    @keyframes pulse {
+                        0%, 100% { opacity: 1; }
+                        50% { opacity: 0.8; }
+                    }
+
+                    .gantt-timeline-bar:hover {
+                        box-shadow: 0 3px 6px rgba(0,0,0,0.3);
+                        filter: brightness(1.1);
+                    }
+
+                    .gantt-timeline-controls {
+                        display: flex;
+                        gap: 5px;
+                        margin-top: 8px;
+                        justify-content: center;
+                    }
+                """),
                 Table(# Gantt diagram
                     Colgroup(
                         Col(id="task-col"),
@@ -786,7 +796,7 @@ def register(app, rt, prefix=""):
                     cls="gantt-table",
                     id=f"gantt-{execution_id}"
                 ),
-                Div(# init Gantt diagram data (loaded async)
+                Div(# init Gantt diagram data (loaded async) and timeline renderer
                     Script("// Placeholder script (shall be replaced async)."),
                     id="gantt-script-placeholder",
                     hx_get=f"{prefix}/exec_current_progress?id={execution_id}",
@@ -805,6 +815,57 @@ def register(app, rt, prefix=""):
                         text-align: center;
                     """
                 ),
+                Style(""" /* DAG */
+                    #dag-docstring {
+                        margin: 0 20px;
+                        padding: 12px 12px 12px 16px;
+                        min-height: 56px;
+                        position: relative;
+                        display: flex;
+                        flex-direction: column;
+                        align-items: flex-end;
+                    }
+                    #dag-docstring.showing {
+                        background: linear-gradient(135deg, rgba(255, 255, 255, 0.1) 0%,
+                                                    rgba(248, 249, 250, 0.1) 100%);
+                        border: 1px solid rgba(222, 226, 230, 0.5);
+                        border-radius: 10px;
+                        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08),
+                                    inset 0 1px 0 rgba(255, 255, 255, 0.8);
+                        color: white;
+                    }
+                    #dag-docstring.collapsed {
+                        height: 56px; /* min-height*/
+                        overflow: hidden;
+                    }
+                    #dag-docstring.expanded {
+                        height: 150px;
+                        overflow-y: auto;
+                    }
+
+                    #dag-docstring .content {
+                        flex: 1 1 auto;
+                        min-width: 0;
+                        width: 100%;
+                        text-align: justify;
+                    }
+
+                    #dag-docstring-show-more {
+                        position: sticky;
+                        bottom: 0;
+                        transform: translateY(10px);
+                        background: rgba(0, 0, 0, 0.5);
+                        color: white;
+                        padding: 2px 8px;
+                        border-radius: 5px;
+                        cursor: pointer;
+                        font-size: 13px;
+                        white-space: nowrap; /* prevents wrapping */
+                        width: auto;
+                        max-width: fit-content;
+                        z-index: 10;
+                    }
+                """),
                 Div(# DAG renderer
                     P("\u00A0 Loading DAG...", style="color: white;"),
                     hx_get=f"{prefix}/dag_rendering?id={execution_id}",

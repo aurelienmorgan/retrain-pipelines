@@ -89,8 +89,8 @@ class GroupedRows:
                     "timeline: {"
                         "value: null, "
                         "attributes: {"
-                            f"start-timestamp: {recursive_js(self.start_timestamp)}, "
-                            f"end-timestamp: {recursive_js(self.end_timestamp)}"
+                            f"start_timestamp: {recursive_js(self.start_timestamp)}, "
+                            f"end_timestamp: {recursive_js(self.end_timestamp)}"
                         "}"
                     "}"
                 "}, "
@@ -367,8 +367,12 @@ def draw_chart(
             console.log(`${{countAllDepthsItems(tableData)}} total rows ` +
                         'in tableData array.');
 
+            /* load gantt-chart data */
             const interBarsSpacing = 2;     /* in px */
-        init('gantt-{execution_id}', tableData, interBarsSpacing);
+            init('gantt-{execution_id}', tableData, interBarsSpacing);
+
+            /* instantiate timelines renderer */
+            const projectTimeline = new GanttTimeline('gantt-{execution_id}', 'timeline');
         """)
     )
 
