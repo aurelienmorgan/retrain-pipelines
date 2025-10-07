@@ -606,9 +606,12 @@ function renderRows(data, parentPath = "", level = 0, startIndex = 0) {
             : `<td data-id="${item.id}"${renderCellAttributes(nameCell)}>${nameCell.value}</td>`;
 
         const rowClass = (hasChildren ? 'group-header ' : '');
+        const callbacks = (item.callbacks || []).map(
+            cb => cb.replace(/;+$/, '') // Remove all trailing semicolons
+        ).join('; ');
         const clickAttr =
             hasChildren ?
-            `onclick="toggleRow(this.closest('table'), this.dataset.path)"` :
+            `onclick="toggleRow(this.closest('table'), this.dataset.path);${callbacks ? ' ' + callbacks + ';' : ''}"` :
             '';
         const dataAttrs =
             `data-path="${path}" data-level="${level}" data-id="${item.id}"`;
