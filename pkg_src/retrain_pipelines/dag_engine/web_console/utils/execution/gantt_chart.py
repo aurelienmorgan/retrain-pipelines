@@ -28,12 +28,14 @@ class ParallelLines:
 
 
 class GroupedRows:
+    """collapsible grouped table rows serializer."""
     def __init__(
         self,
         id: str,
         name: str,
         start_timestamp: Optional[datetime],
         end_timestamp: Optional[datetime],
+        callbacks: Optional[str],
         children: Optional[List["GroupedRows"]],
         style: Optional[dict]
     ):
@@ -41,6 +43,7 @@ class GroupedRows:
         self.name = name
         self.start_timestamp = start_timestamp
         self.end_timestamp = end_timestamp
+        self.callbacks = callbacks
         self.children = children if children is not None else []
         self.style = style
 
@@ -82,20 +85,27 @@ class GroupedRows:
                 return repr(str(obj))
 
         js_literal = (
-            "{"
-                f"id: {recursive_js(self.id)}, "
-                "cells: {"
-                    f"name: {{ value: {recursive_js(self.name)}, attributes: {{}} }}, "
-                    "timeline: {"
-                        "value: null, "
-                        "attributes: {"
-                            f"start_timestamp: {recursive_js(self.start_timestamp)}, "
-                            f"end_timestamp: {recursive_js(self.end_timestamp)}"
-                        "}"
-                    "}"
-                "}, "
-                f"children: {recursive_js(self.children)}, "
-                f"style: {recursive_js(self.style)}"
+            "{" +
+                f"id: {recursive_js(self.id)}, " +
+                "cells: {" +
+                    f"name: {{ value: {recursive_js(self.name)}, attributes: {{}} }}, " +
+                    "timeline: {" +
+                        "value: null, " +
+                        "attributes: {" +
+                            (
+                                f"start_timestamp: {recursive_js(self.start_timestamp)}, "
+                                if self.start_timestamp else ""
+                            ) +
+                            (
+                                f"end_timestamp: {recursive_js(self.end_timestamp)}"
+                                if self.end_timestamp else ""
+                            ) +
+                        "}" +
+                    "}" +
+                "}, " +
+                (f"callbacks: {recursive_js(self.callbacks)}, " if self.callbacks else "") +
+                (f"children: {recursive_js(self.children)}, " if self.children else "") +
+                f"style: {recursive_js(self.style)}" +
             "}"
         )
         return js_literal
@@ -334,10 +344,10 @@ def draw_chart(
     for element in current_organize_tasks:
         if isinstance(element, Tuple):
             # taskgroup
-            rows.append(taskgroup_table(element))
+            rows.append(taskgroup_grouped_rows(element))
         elif isinstance(element, ParallelLines):
             # parallel line
-            rows.append(parallel_table(element))
+            rows.append(parallel_grouped_rows(element))
         else:
             # standalone inline task
             rows.append(task_row(element))
@@ -372,7 +382,12 @@ def draw_chart(
             init('gantt-{execution_id}', tableData, interBarsSpacing);
 
             /* instantiate timelines renderer */
-            const projectTimeline = new GanttTimeline('gantt-{execution_id}', 'timeline');
+            window.execGanttTimelineObj =
+                new GanttTimeline('gantt-{execution_id}', 'timeline');
+
+            /* handle collapsed group-header rows *
+            *  for summary timeline timestamps    */
+            initSummaryOnCollapsed('execGanttTimelineObj');
         """)
     )
 
@@ -383,6 +398,7 @@ def task_row(task_ext: TaskExt) -> GroupedRows:
         name=task_ext.name,
         start_timestamp=task_ext.start_timestamp,
         end_timestamp=task_ext.end_timestamp,
+        callbacks=None,
         children=None,
         style=task_ext.ui_css
     )
@@ -390,7 +406,7 @@ def task_row(task_ext: TaskExt) -> GroupedRows:
     return result
 
 
-def parallel_table(
+def parallel_grouped_rows(
     parallel_lines: ParallelLines
 ) -> GroupedRows:
     # get one of the split instances
@@ -404,9 +420,9 @@ def parallel_table(
         line_rows = []
         for element in elements_list:
             if isinstance(element, ParallelLines):
-                line_rows.append(parallel_table(element))
+                line_rows.append(parallel_grouped_rows(element))
             elif isinstance(element, Tuple):
-                line_rows.append(taskgroup_table(element))
+                line_rows.append(taskgroup_grouped_rows(element))
             else:
                 line_rows.append(task_row(element))
         parallel_lines_list.append(
@@ -415,6 +431,8 @@ def parallel_table(
                 name=f"{parralel_task_ext.name}.{parallel_line_rank}",
                 start_timestamp=None,
                 end_timestamp=None,
+                callbacks=["toggleHeaderTimeline('execGanttTimelineObj', this);",
+                           "console.log('parallel line');"],
                 children=line_rows,
                 style=None
             )
@@ -428,12 +446,14 @@ def parallel_table(
         name=parralel_task_ext.name,
         start_timestamp=None,
         end_timestamp=None,
+        callbacks=["toggleHeaderTimeline('execGanttTimelineObj', this);",
+                   "console.log('sub-DAG');"],
         children=parallel_lines_list,
         style=parralel_task_ext.ui_css
     )
 
 
-def taskgroup_table(
+def taskgroup_grouped_rows(
     taskgroup_tuple: Tuple[TaskGroup, List[Union[TaskExt, Tuple]]]
 ) -> GroupedRows:
     taskgroup, taskgroup_elements = taskgroup_tuple
@@ -441,7 +461,7 @@ def taskgroup_table(
     elements = []
     for element in taskgroup_elements:
         if isinstance(element, Tuple):
-            elements.append(taskgroup_table(element))
+            elements.append(taskgroup_grouped_rows(element))
         else:
             elements.append(task_row(element))
 
@@ -450,6 +470,8 @@ def taskgroup_table(
         name=taskgroup.name,
         start_timestamp=None,
         end_timestamp=None,
+        callbacks=["toggleHeaderTimeline('execGanttTimelineObj', this);",
+                   "console.log('taskgroup');"],
         children=elements,
         style=taskgroup.ui_css
     )

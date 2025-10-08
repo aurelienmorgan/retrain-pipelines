@@ -27,7 +27,7 @@ function getCookie(name) {
 }
 
 function saveState(tableId) {
-    var table = document.getElementById(tableId);
+    const table = document.getElementById(tableId);
     const state = {};
     table.querySelectorAll('.group-header').forEach(row => {
         const path = row.getAttribute('data-path');
@@ -311,18 +311,18 @@ function countParentGroupsEndingAt(lastRow) {
     const table = lastRow.parentNode.parentNode;
     const currentPath = lastRow.getAttribute('data-path');
     const pathParts = currentPath.split('.');
-    
+
     let count = 0;
-    
+
     // For each parent level, check if this row is the last child
     for (let level = pathParts.length - 1; level > 0; level--) {
         const parentPath = pathParts.slice(0, level).join('.');
-        
+
         // Find parent group row
         const parentRow =
             table.querySelector(`tr[data-path="${parentPath}"]`);
         if (!parentRow) break;
-        
+
         // Find all children of this parent at the next level
         const childLevel = level;
         const childRows = Array.from(
@@ -331,11 +331,11 @@ function countParentGroupsEndingAt(lastRow) {
             const rowPath = row.getAttribute('data-path');
             return rowPath.startsWith(parentPath + '.');
         });
-        
+
         // Check if current row is the last child
         const lastChild = childRows[childRows.length - 1];
         const currentSubPath = pathParts.slice(0, level + 1).join('.');
-        
+
         if (
             lastChild &&
             lastChild.getAttribute('data-path') === currentSubPath
@@ -345,7 +345,7 @@ function countParentGroupsEndingAt(lastRow) {
             break;
         }
     }
-    
+
     return count;
 }
 
@@ -628,7 +628,7 @@ function renderRows(data, parentPath = "", level = 0, startIndex = 0) {
             .filter(key => key !== 'name')
             .forEach(key => {
                 const cell = item.cells[key];
-                html += `<td${renderCellAttributes(cell)}>${cell.value}</td>`;
+                html += `<td${renderCellAttributes(cell)}>${cell.value ? cell.value : ""}</td>`;
             });
 
         html += `</tr>`;

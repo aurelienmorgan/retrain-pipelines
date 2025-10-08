@@ -168,6 +168,25 @@ class GanttTimeline {
         return `${year}-${month}-${day}T${hours}:${minutes}`;
     }
 
+    formatEpochDiff(startMs, endMs) {
+        let remaining = endMs - startMs;
+
+        const hours = Math.floor(remaining / 3600000);
+        remaining %= 3600000;
+
+        const minutes = Math.floor(remaining / 60000);
+        remaining %= 60000;
+
+        const seconds = Math.floor(remaining / 1000);
+        remaining %= 1000;
+
+        // fractional milliseconds - pad to 6 digits (milliseconds + 3 zeros for microseconds)
+        const fractional = remaining.toString().padStart(3, '0') + '000';
+
+        return `${hours}:${minutes.toString().padStart(2, '0')}:`+ 
+               `${seconds.toString().padStart(2, '0')}.${fractional}`;
+    }
+
     getRowLabel(row) {
         const cells = Array.from(row.element.querySelectorAll('td'));
         for (let i = 0; i < cells.length; i++) {
@@ -191,16 +210,28 @@ class GanttTimeline {
         const ongoingClass = row.isOngoing ? 'ongoing' : '';
 
         row.timelineCell.className = 'gantt-timeline-cell';
-        row.timelineCell.innerHTML = `
-            <div class="gantt-timeline-container">
-                <div class="gantt-timeline-bar ${ongoingClass}" style="left: ${left}%; width: ${width}%;">
-                    ${showLabel ? label : ''}
-                </div>
-            </div>
-        `;
+
+        // remove any timeline from previous rendering
+        // (it might need updating, e.g. if major bounds changed)
+        const oldTimeleineElement = row.timelineCell.querySelector('.gantt-timeline-container');
+        if (oldTimeleineElement) oldTimeleineElement.remove();
+        // create and prepend to content
+        // (to preserve any unrelated content)
+        const newTimeleineElement = document.createElement('div');
+        newTimeleineElement.className = 'gantt-timeline-container';
+        newTimeleineElement.innerHTML =
+            `<div class="gantt-timeline-bar ${ongoingClass}" ` +
+                 `style="left: ${left}%; width: ${width}%;"` +
+            '>' +
+                (showLabel ? label : '') +
+            '</div>'
+        ;
+        row.timelineCell.prepend(newTimeleineElement);
+
         row.timelineCell.title =
             `${this.formatTimestamp(row.start)} → ` +
-            `${row.isOngoing ? 'NOW' : this.formatTimestamp(row.end)}`
+            `${row.isOngoing ? 'NOW' : this.formatTimestamp(row.end)} ` +
+            `(${this.formatEpochDiff(row.start, row.end)})`
     }
 
     render() {

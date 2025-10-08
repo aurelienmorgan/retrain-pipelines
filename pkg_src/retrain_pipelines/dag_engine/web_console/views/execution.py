@@ -658,7 +658,8 @@ def register(app, rt, prefix=""):
                     """
                 ),
                 Script(src="/collapsible_grouped_table.js"),
-                Script(src="/gantt-timeline.js"),
+                Script(src="/gantt-timeline-renderer.js"),
+                Script(src="/gantt-events.js"),
                 Style(""" /* Gantt collapsible table */
                     .gantt-table {
                         border-collapse: collapse;
@@ -727,9 +728,11 @@ def register(app, rt, prefix=""):
                     .gantt-timeline-cell {
                         position: relative;
                         min-height: 50px;
-                        background: linear-gradient(to right, #f9f9f9 0%, #f9f9f9 100%);
-                        padding: 5px !important;
-                        min-width: 250px;
+/*
+    background: linear-gradient(to right, #f9f9f9 0%, #f9f9f9 100%);
+    padding: 5px !important;
+    min-width: 250px;
+*/
                         vertical-align: middle;
                     }
 
