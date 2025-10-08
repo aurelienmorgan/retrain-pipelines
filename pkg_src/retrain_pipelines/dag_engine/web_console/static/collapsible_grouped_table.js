@@ -602,8 +602,8 @@ function renderRows(data, parentPath = "", level = 0, startIndex = 0) {
         // Name cell handling
         const nameCell = item.cells.name;
         const nameCellHtml = hasChildren
-            ? `<td data-id="${item.id}"${renderCellAttributes(nameCell)}>▼ ${nameCell.value}</td>`
-            : `<td data-id="${item.id}"${renderCellAttributes(nameCell)}>${nameCell.value}</td>`;
+            ? `<td${renderCellAttributes(nameCell)}>▼ ${nameCell.value}</td>`
+            : `<td${renderCellAttributes(nameCell)}>${nameCell.value}</td>`;
 
         const rowClass = (hasChildren ? 'group-header ' : '');
         const callbacks = (item.callbacks || []).map(

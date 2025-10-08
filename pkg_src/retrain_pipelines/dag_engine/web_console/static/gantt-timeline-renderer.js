@@ -337,7 +337,6 @@ class GanttTimeline {
         const row = this.rowsMap.get(rowId);
         if (!row) return;
 
-        console.log("deleteRow", row);
         if (confirm('Are you sure you want to delete this row?')) {
             this.isUpdating = true;
 

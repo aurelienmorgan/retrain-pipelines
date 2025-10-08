@@ -180,15 +180,15 @@ def _organize_tasks(
                 # check if element is a task and, if so, add its id
                 for task_ext in tasks_list:
                     if str(task_ext.tasktype_uuid) == tg_element_uuid:
-                        children_map[str(tg.uuid)] = [task_ext.id] + \
+                        children_map[str(tg.uuid)] = \
                             ([] if not str(tg.uuid) in children_map
-                             else children_map[str(tg.uuid)])
+                             else children_map[str(tg.uuid)]) + [task_ext.id]
                         # DO NOT BREAK, parallel tasks have different ids
                         # but common tasktype uuid
 
-                children_map[str(tg.uuid)] = tg.elements + \
+                children_map[str(tg.uuid)] = \
                     ([] if not str(tg.uuid) in children_map
-                     else children_map[str(tg.uuid)])
+                     else children_map[str(tg.uuid)]) + tg.elements
 
         # Determine which taskgroup (if any) contains each taskgroup
         for tg in taskgroups_list:
@@ -454,19 +454,22 @@ def parallel_grouped_rows(
 
 
 def taskgroup_grouped_rows(
-    taskgroup_tuple: Tuple[TaskGroup, List[Union[TaskExt, Tuple]]]
+    taskgroup_tuple: Tuple[TaskGroup, List[Union[TaskExt, Tuple]]],
+    rank: Optional[List[str]] = None
 ) -> GroupedRows:
     taskgroup, taskgroup_elements = taskgroup_tuple
 
     elements = []
     for element in taskgroup_elements:
         if isinstance(element, Tuple):
-            elements.append(taskgroup_grouped_rows(element))
+            elements.append(taskgroup_grouped_rows(element, rank))
         else:
+            # standard task (for taskgroup in parallel branch)
+            rank = element.rank
             elements.append(task_row(element))
 
     return GroupedRows(
-        id=str(taskgroup.uuid),
+        id=str(taskgroup.uuid) + f".{rank}" if rank else "",
         name=taskgroup.name,
         start_timestamp=None,
         end_timestamp=None,
