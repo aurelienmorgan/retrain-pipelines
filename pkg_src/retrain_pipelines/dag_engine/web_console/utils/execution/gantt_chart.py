@@ -1,6 +1,7 @@
 
 import logging
 
+from enum import Enum, auto
 from datetime import datetime
 from collections import defaultdict
 from typing import List, Tuple, Union, \
@@ -27,6 +28,16 @@ class ParallelLines:
                ([self.merging_task] if self.merging_task else []))
 
 
+class GroupTypes(Enum):
+    NONE = auto()
+    TASKGROUP = auto()
+    PARALLEL_LINES = auto()
+    PARALLEL_LINE = auto()
+
+    def __str__(self):
+        return self.name.lower().replace("_", "-")
+logging.getLogger().error(f"[bold red blink]GroupTypes {GroupTypes}[/]") # DEBUG  -  DELETE
+
 class GroupedRows:
     """collapsible grouped table rows serializer."""
     def __init__(
@@ -36,6 +47,7 @@ class GroupedRows:
         start_timestamp: Optional[datetime],
         end_timestamp: Optional[datetime],
         callbacks: Optional[str],
+        extraClasses: Optional[List[str]],
         children: Optional[List["GroupedRows"]],
         style: Optional[dict]
     ):
@@ -44,6 +56,7 @@ class GroupedRows:
         self.start_timestamp = start_timestamp
         self.end_timestamp = end_timestamp
         self.callbacks = callbacks
+        self.extraClasses = extraClasses
         self.children = children if children is not None else []
         self.style = style
 
@@ -104,6 +117,7 @@ class GroupedRows:
                     "}" +
                 "}, " +
                 (f"callbacks: {recursive_js(self.callbacks)}, " if self.callbacks else "") +
+                (f"extraClasses: {recursive_js(self.extraClasses)}, " if self.extraClasses else "") +
                 (f"children: {recursive_js(self.children)}, " if self.children else "") +
                 f"style: {recursive_js(self.style)}" +
             "}"
@@ -387,7 +401,7 @@ def draw_chart(
 
             /* handle collapsed group-header rows *
             *  for summary timeline timestamps    */
-            initSummaryOnCollapsed('execGanttTimelineObj');
+            initFormat('execGanttTimelineObj');
         """)
     )
 
@@ -399,8 +413,9 @@ def task_row(task_ext: TaskExt) -> GroupedRows:
         start_timestamp=task_ext.start_timestamp,
         end_timestamp=task_ext.end_timestamp,
         callbacks=None,
+        extraClasses=None,
         children=None,
-        style=task_ext.ui_css
+        style=task_ext.ui_css # TODO  -  fill_defaults(task_ext.ui_css, GroupTypes.NONE)  -  TODO
     )
 
     return result
@@ -431,10 +446,10 @@ def parallel_grouped_rows(
                 name=f"{parralel_task_ext.name}.{parallel_line_rank}",
                 start_timestamp=None,
                 end_timestamp=None,
-                callbacks=["toggleHeaderTimeline('execGanttTimelineObj', this);",
-                           "console.log('parallel line');"],
+                callbacks=["toggleHeaderTimeline('execGanttTimelineObj', this);"],
+                extraClasses=["parallel-line"],
                 children=line_rows,
-                style=None
+                style={"border": "pink"}
             )
         )
 
@@ -442,14 +457,15 @@ def parallel_grouped_rows(
         parallel_lines_list.append(task_row(parallel_lines.merging_task))
 
     return GroupedRows(
-        id=parralel_task_ext.name,
+        id=parralel_task_ext.name + \
+           str(parralel_task_ext.rank[:-1]) if len(parralel_task_ext.rank) > 1 else "",
         name=parralel_task_ext.name,
         start_timestamp=None,
         end_timestamp=None,
-        callbacks=["toggleHeaderTimeline('execGanttTimelineObj', this);",
-                   "console.log('sub-DAG');"],
+        callbacks=["toggleHeaderTimeline('execGanttTimelineObj', this);"],
+                extraClasses=["parallel-lines"],
         children=parallel_lines_list,
-        style=parralel_task_ext.ui_css
+        style=parralel_task_ext.ui_css if parralel_task_ext.ui_css else {"border": "#fff"}
     )
 
 
@@ -473,9 +489,9 @@ def taskgroup_grouped_rows(
         name=taskgroup.name,
         start_timestamp=None,
         end_timestamp=None,
-        callbacks=["toggleHeaderTimeline('execGanttTimelineObj', this);",
-                   "console.log('taskgroup');"],
+        callbacks=["toggleHeaderTimeline('execGanttTimelineObj', this);"],
+        extraClasses=["taskgroup"],
         children=elements,
-        style=taskgroup.ui_css
+        style=taskgroup.ui_css if taskgroup.ui_css else {"border": "#000"}
     )
 

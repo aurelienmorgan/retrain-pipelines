@@ -646,7 +646,7 @@ def register(app, rt, prefix=""):
                 Button("Save Page", onclick="savePageAsSingleFile()"),
 
                 ## TODO, add stuff here (live-streamed Gantt diagram of tasks, etc.)
-                H1(
+                H1( # timeline
                     "Execution Timeline",
                     style="""
                         color: #6082B6;
@@ -663,8 +663,35 @@ def register(app, rt, prefix=""):
                 Style(""" /* Gantt collapsible table */
                     .gantt-table {
                         border-collapse: collapse;
-                        width: 100%;
                         table-layout: fixed;
+                        width: calc(100% - 10px); /* left+right margin */
+                        margin: 6px 5px 4px 5px; /* extra room on top (vs. bottom) for reflexion effect */
+                        border-radius: 12px;
+                        overflow: hidden;
+                        box-sizing: border-box; /* ensure padding affects size correctly */
+
+/*
+--task-default-color: #
+--task-default-background: #
+--task-default-border: #
+
+--taskgroup-default-color: #
+--taskgroup-default-background: #
+--taskgroup-default-border: #
+
+--parallel-lines-default-color: #
+--parallel-lines-default-background: #
+--parallel-lines-default-border: #
+
+--parallel-line-default-color: #
+--parallel-line-default-background: #
+--parallel-line-default-border: #
+*/
+
+                    }
+
+                    .gantt-table thead {
+                        display: none;
                     }
 
                     .gantt-table th,
@@ -676,6 +703,23 @@ def register(app, rt, prefix=""):
                         white-space: nowrap;
                         border: 1px solid #ddd;
                         position: relative;
+                    }
+
+                    /* Remove border on top row cells */
+                    tr:first-child td, tr:first-child th {
+                      border-top: none;
+                    }
+                    /* Remove border on bottom row cells */
+                    tr:last-child td, tr:last-child th {
+                      border-bottom: none;
+                    }
+                    /* Remove border on first column cells */
+                    td:first-child, th:first-child {
+                      border-left: none;
+                    }
+                    /* Remove border on last column cells */
+                    td:last-child, th:last-child {
+                      border-right: none;
                     }
 
                     .gantt-table #task-col {
@@ -764,10 +808,10 @@ def register(app, rt, prefix=""):
 
                     .gantt-timeline-bar.ongoing {
                         background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
-                        animation: pulse 2s ease-in-out infinite;
+                        animation: timeline-bar-pulse 2s ease-in-out infinite;
                     }
 
-                    @keyframes pulse {
+                    @keyframes timeline-bar-pulse {
                         0%, 100% { opacity: 1; }
                         50% { opacity: 0.8; }
                     }
@@ -784,20 +828,46 @@ def register(app, rt, prefix=""):
                         justify-content: center;
                     }
                 """),
-                Table(# Gantt diagram
-                    Colgroup(
-                        Col(id="task-col"),
-                        Col(id="timeline-col"),
+                Div(
+                    Div(
+                        Table(# Gantt diagram
+                            Colgroup(
+                                Col(id="task-col"),
+                                Col(id="timeline-col"),
+                            ),
+                            Thead(
+                                Tr(
+                                    Th("task"),
+                                    Th("timeline")
+                                )
+                            ),
+                            Tbody(id="data-tbody"),
+                            cls="gantt-table",
+                            id=f"gantt-{execution_id}"
+                        ),
+                        style="""
+                            border-radius: 12px;
+                            overflow: hidden;
+                            box-sizing: border-box; /* ensure padding affects size correctly */
+
+                            background: rgba(255, 255, 255, 0.2); /* translucent white */
+                            backdrop-filter: blur(8px);           /* blur the content behind the table */
+                            border: 1px solid rgba(255, 255, 255, 0.3); /* subtle white border */
+                            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1),
+                                        inset 0 1px 0 rgba(255, 255, 255, 0.6); /* some shadow for depth *
+                        """
                     ),
-                    Thead(
-                        Tr(
-                            Th("task"),
-                            Th("timeline")
-                        )
-                    ),
-                    Tbody(id="data-tbody"),
-                    cls="gantt-table",
-                    id=f"gantt-{execution_id}"
+                    style="""
+                        width: 90vw;
+                        display: block;
+                        margin-left: auto;
+                        margin-right: auto;
+                        padding: 8px 12px 8px 12px; border-radius: 12px;
+                        background: rgba(248, 249, 250, 0.3);
+                        box-shadow: 0 4px 12px rgba(0,0,0,0.1),
+                                    inset 0 1px 0 rgba(255,255,255,0.6);
+                        border: 1px solid rgba(222,226,230,0.4);
+                    """
                 ),
                 Div(# init Gantt diagram data (loaded async) and timeline renderer
                     Script("// Placeholder script (shall be replaced async)."),
@@ -807,7 +877,7 @@ def register(app, rt, prefix=""):
                     hx_swap="innerHTML"
                 ),
 
-                H1(
+                H1(# DAG
                     "Execution DAG",
                     style="""
                         color: #6082B6;

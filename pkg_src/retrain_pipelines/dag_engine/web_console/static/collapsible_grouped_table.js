@@ -11,6 +11,12 @@
 const MAX_Z_INDEX = zIndex = 2147483647;
 const barThickness = 3;         /* in px, nesting-bar width,
                                    must match with nesting-bar CSSs */
+const defaultGroupStyle = JSON.parse(JSON.stringify({
+  "color": "#00ff37",
+  "background": "#00ff37",
+  "border": "#00ff37"
+}));
+console.log("defaultGroupStyle", defaultGroupStyle);
 
 function setCookie(name, value) {
     document.cookie = name + "=" +
@@ -609,6 +615,7 @@ function renderRows(data, parentPath = "", level = 0, startIndex = 0) {
         const callbacks = (item.callbacks || []).map(
             cb => cb.replace(/;+$/, '') // Remove all trailing semicolons
         ).join('; ');
+        const extraClasses = item.extraClasses ? " " + (item.extraClasses).join(" ") : "";
         const clickAttr =
             hasChildren ?
             `onclick="toggleRow(this.closest('table'), this.dataset.path);${callbacks ? ' ' + callbacks + ';' : ''}"` :
@@ -619,7 +626,7 @@ function renderRows(data, parentPath = "", level = 0, startIndex = 0) {
             ? `data-group-style='${JSON.stringify(item.style)}'`
             : '';
 
-        html += `<tr class="${rowClass.trim()}" ${dataAttrs} ` +
+        html += `<tr class="${rowClass.trim()}${extraClasses}" ${dataAttrs} ` +
                      `${clickAttr} ${extraAttrs} ${rowCss}>` +
                 nameCellHtml;
 

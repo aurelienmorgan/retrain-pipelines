@@ -16,24 +16,43 @@ function getGlobalObjByName(globalObjectName) {
     return obj;
 }
 
-function initSummaryOnCollapsed(ganttTimelineObjName) {
+function initFormat(ganttTimelineObjName) {
     /* ***************************************
     * Execute on a collapsible-grouped-table *
-    * at load time.                          *
+    * with a timeline column at load time.   *
     *************************************** */
     const ganttTimelineObj = getGlobalObjByName(ganttTimelineObjName);
     const tbody = ganttTimelineObj.table.querySelector('tbody');
     if (!tbody) return;
-    const bodyRows = Array.from(tbody.querySelectorAll('tr'));
 
+    const bodyRows = Array.from(tbody.querySelectorAll('tr'));
     bodyRows.forEach((tr) => {
-        if (
-            tr.classList.contains("group-header") &&
-            tr.classList.contains("collapsed")
-        ) {
-            // header row of a collapsed group =>
-            // set the start-timestamp/end-timestamp dataset attrs
-            addSummaryTimestamps(ganttTimelineObj, tr);
+        if (tr.classList.contains("group-header")) {
+            if (tr.classList.contains("collapsed")) {
+                // header row of a collapsed group =>
+                // set the start-timestamp/end-timestamp dataset attrs
+                addSummaryTimestamps(ganttTimelineObj, tr);
+            }
+
+            if (tr.classList.contains("parallel-line")) {
+                // header of one of the spilt sub-DAG lines =>
+                // apply odd/even backgroupd overlay
+                const index = tr.dataset.path.split(".").at(-1);
+                if (index%2) {
+                    tbody.querySelectorAll(
+                        `tr[data-path="${tr.dataset.path}"], tr[data-path^="${tr.dataset.path}."]`
+                    ).forEach(row => {
+                        [...row.children].forEach(td => {
+                            const bg = window.getComputedStyle(td).backgroundImage;
+                            td.style.backgroundImage = (
+                                    'linear-gradient(135deg, rgba(255,255,255,0.3) 0%, ' +
+                                                            'rgba(248,249,250,0.3) 100%), ' +
+                                    `${bg !== 'none' ? bg : ''}`
+                                ).replace(/,\s*$/, '');
+                        });
+                    });
+                }
+            }
         }
     });
 
