@@ -86,8 +86,7 @@ function loadState(tableId) {
             const isCollapsed = state[path] === true;
             row.classList.toggle('collapsed', isCollapsed);
             row.cells[0].textContent = (isCollapsed ? '► ' : '▼ ') +
-                                        path + " - " +
-                                        row.getAttribute('data-id');
+                                        row.getAttribute('data-name');
         });
         applyVisibility(table);
     } catch (e) {
@@ -241,7 +240,7 @@ function toggleRow(table, path) {
     const existingTopBars = row.cells[0].querySelectorAll('.top-nesting-bar');
 
     row.cells[0].textContent =
-        (!isInitiallyCollapsed ? '► ' : '▼ ') + path + " - " + row.getAttribute('data-id');
+        (!isInitiallyCollapsed ? '► ' : '▼ ') + row.getAttribute('data-name');
 
     existingTopBars.forEach(bar => row.cells[0].appendChild(bar));
     /* ************************ */
@@ -621,7 +620,7 @@ function renderRows(data, parentPath = "", level = 0, startIndex = 0) {
             `onclick="toggleRow(this.closest('table'), this.dataset.path);${callbacks ? ' ' + callbacks + ';' : ''}"` :
             '';
         const dataAttrs =
-            `data-path="${path}" data-level="${level}" data-id="${item.id}"`;
+            `data-path="${path}" data-level="${level}" data-id="${item.id}" data-name="${item.cells.name.value}"`;
         const extraAttrs = hasChildren && item.style
             ? `data-group-style='${JSON.stringify(item.style)}'`
             : '';

@@ -16,6 +16,25 @@ function getGlobalObjByName(globalObjectName) {
     return obj;
 }
 
+function getMaxVisibleLevel(bodyRows) {
+    /* **************************
+    * table-wise, how deep is   *
+    * the deepest visible group *
+    * (collapsed or not).       *
+    ************************** */
+    let maxLevel = 0;
+    bodyRows.forEach((tr) => {
+        if (
+            !tr.classList.contains("hidden") &&
+            tr.classList.contains("group-header")
+        ) {
+            maxLevel = Math.max(
+                maxLevel, parseInt(tr.dataset.level));
+        }
+    });
+    return maxLevel;
+}
+
 function initFormat(ganttTimelineObjName) {
     /* ***************************************
     * Execute on a collapsible-grouped-table *
@@ -24,8 +43,12 @@ function initFormat(ganttTimelineObjName) {
     const ganttTimelineObj = getGlobalObjByName(ganttTimelineObjName);
     const tbody = ganttTimelineObj.table.querySelector('tbody');
     if (!tbody) return;
-
     const bodyRows = Array.from(tbody.querySelectorAll('tr'));
+
+    // update right padding (based on max visible depth level)
+    const maxLevel = getMaxVisibleLevel(bodyRows);
+    tbody.style.setProperty('--max-visible-level', maxLevel);
+
     bodyRows.forEach((tr) => {
         if (tr.classList.contains("group-header")) {
             if (tr.classList.contains("collapsed")) {
@@ -40,15 +63,17 @@ function initFormat(ganttTimelineObjName) {
                 const index = tr.dataset.path.split(".").at(-1);
                 if (index%2) {
                     tbody.querySelectorAll(
-                        `tr[data-path="${tr.dataset.path}"], tr[data-path^="${tr.dataset.path}."]`
+                        `tr[data-path="${tr.dataset.path}"], ` +
+                        `tr[data-path^="${tr.dataset.path}."]`
                     ).forEach(row => {
                         [...row.children].forEach(td => {
                             const bg = window.getComputedStyle(td).backgroundImage;
                             td.style.backgroundImage = (
-                                    'linear-gradient(135deg, rgba(255,255,255,0.3) 0%, ' +
-                                                            'rgba(248,249,250,0.3) 100%), ' +
-                                    `${bg !== 'none' ? bg : ''}`
-                                ).replace(/,\s*$/, '');
+                                'linear-gradient(135deg,' +
+                                                'rgba(255,255,255,0.3) 0%, ' +
+                                                'rgba(248,249,250,0.3) 100%), ' +
+                                `${bg !== 'none' ? bg : ''}`
+                            ).replace(/,\s*$/, '');
                         });
                     });
                 }
@@ -79,6 +104,15 @@ function toggleHeaderTimeline(ganttTimelineObjName, groupHeaderRow) {
         // group just collapsed
         addSummaryTimestamps(ganttTimelineObj, groupHeaderRow);
     }
+
+    /* ************************************
+    * update right padding                *
+    * (based on max visible depth level). *
+    ************************************ */
+    const tbody = ganttTimelineObj.table.querySelector('tbody');
+    const bodyRows = Array.from(tbody.querySelectorAll('tr'));
+    const maxDepth = getMaxVisibleLevel(bodyRows);
+    tbody.style.setProperty('--max-visible-level', maxDepth);
 
     ganttTimelineObj.refresh();
 }

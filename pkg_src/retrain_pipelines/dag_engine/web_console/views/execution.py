@@ -732,6 +732,10 @@ def register(app, rt, prefix=""):
                         padding-left: calc(10px + var(--indent-level) * 5px);
                         position: relative;
                     }
+                    .gantt-table tr td:last-child {
+                        padding-right:
+                            calc(8px + var(--max-visible-level, 0) * 5px);
+                    }
 
                     .hidden {
                         display: none;

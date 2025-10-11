@@ -459,7 +459,7 @@ def parallel_grouped_rows(
     return GroupedRows(
         id=parralel_task_ext.name + \
            str(parralel_task_ext.rank[:-1]) if len(parralel_task_ext.rank) > 1 else "",
-        name=parralel_task_ext.name,
+        name="Distributed sub-pipeline",
         start_timestamp=None,
         end_timestamp=None,
         callbacks=["toggleHeaderTimeline('execGanttTimelineObj', this);"],
