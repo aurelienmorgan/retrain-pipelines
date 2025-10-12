@@ -35,6 +35,145 @@ function getMaxVisibleLevel(bodyRows) {
     return maxLevel;
 }
 
+
+////////////////////////////////////////////////////////
+
+
+function hexToRgba(hex, alpha) {
+    /* ***************************
+    * Helper function to convert *
+    * hex to rgba with alpha.    *
+    *************************** */
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+// Helper function to generate gradient
+function generateGradient(backgroundColor) {
+    /* **************************************
+    * Helper function to generate gradient. *
+    ************************************** */
+    return `linear-gradient(180deg, 
+            ${hexToRgba(backgroundColor, 0.48)} 0%,
+            ${hexToRgba(backgroundColor, 0.42)} 20%,
+            ${hexToRgba(backgroundColor, 0.98)} 40%, 
+            ${hexToRgba(backgroundColor, 0.73)} 60%,
+            ${hexToRgba(backgroundColor, 0.59)} 80%,
+            ${hexToRgba(backgroundColor, 0.54)} 100%)`;
+}
+
+function trapezoidalLabel(
+    textContent,
+    color, backgroundColor, borderColor,
+    flipped = false
+) {
+    /* ******************************************
+    * html for formatted trapezoidal shaped div *
+    ****************************************** */
+    const gradient = generateGradient(backgroundColor);
+    const borderRadius = flipped ?
+        '10px 10px 8px 8px' : '8px 8px 10px 10px';
+    // adjust for 3D tilting leaving
+    // empty top and bottom space
+    const correctionMargin = flipped ?
+        '-5px 0 -8px' :
+        '-8px 0 -2px'; 
+    const rotation = flipped ?
+        'rotateX(-35deg)' : 'rotateX(35deg)';
+    const justifyContent = flipped ?
+        'justify-content: center;' : '';
+
+    return "" +
+        `<div class="shaped-label" style="
+            position: relative;
+            min-width: 125px;
+            width: fit-content;
+            padding: 0 8px 0 6px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            ${justifyContent}
+            line-height: normal;
+            color: ${color};
+            font-size: 16px;
+            font-family: Robotto, Arial, sans-serif;
+            letter-spacing: 0.5px;
+            text-shadow: 0 0.75px 2px rgba(0,0,0,0.5);
+            margin: ${correctionMargin};
+            z-index: 0;
+        ">
+            ${textContent}
+            <div style="
+                position: absolute;
+                top: 0;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                background: ${gradient};
+                border-radius: ${borderRadius};
+                border: 2px solid ${borderColor};
+                box-shadow: 
+                  inset 0 6.25px 5px -3.75px rgba(255,255,255,0.6),
+                  inset 0 -3.75px 5px -2.5px rgba(0,0,0,0.2),
+                  0 3.125px 6.25px rgba(0,0,0,0.5);
+                transform: perspective(200px) ${rotation};
+                z-index: -1;
+            "></div>
+        </div>`;
+}
+
+function rectangularLabel(
+    textContent,
+    color, backgroundColor, borderColor
+) {
+    /* ******************************************
+    * html for formatted rectangular-shaped div *
+    ****************************************** */
+    const gradient = generateGradient(backgroundColor);
+
+    return "" +
+        `<div class="shaped-label" style="
+            position: relative;
+            min-width: 125px;
+            width: fit-content;
+            padding: 0 8px 0 6px;
+            height: 34px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            line-height: normal;
+            color: ${color};
+            font-size: 16px;
+            font-family: Robotto, Arial, sans-serif;
+            letter-spacing: 0.5px;
+            text-shadow: 0 0.75px 2px rgba(0,0,0,0.5);
+            z-index: 0;
+        ">
+            ${textContent}
+            <div style="
+                position: absolute;
+                top: 0;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                background: ${gradient};
+                border-radius: 8px;
+                border: 2px solid ${borderColor};
+                box-shadow: 
+                  inset 0 6.25px 5px -3.75px rgba(255,255,255,0.6),
+                  inset 0 -3.75px 5px -2.5px rgba(0,0,0,0.2),
+                  0 3.125px 6.25px rgba(0,0,0,0.5);
+                z-index: -1;
+            "></div>
+        </div>`;
+}
+
+
+////////////////////////////////////////////////////////
+
+
 function initFormat(ganttTimelineObjName) {
     /* ***************************************
     * Execute on a collapsible-grouped-table *
@@ -81,7 +220,71 @@ function initFormat(ganttTimelineObjName) {
         }
     });
 
+    overrideLabels(ganttTimelineObj, bodyRows);
     ganttTimelineObj.refresh();
+}
+
+function overrideLabels(ganttTimelineObj, bodyRows) {
+    /* *****************************************
+    * replaces default textNode                *
+    * from default 'collapsible-grouped-table' *
+    * with a formatted one in label cell.      *
+    ***************************************** */
+    bodyRows.forEach((tr) => {
+        let trToUpdate = null;
+        let shapedLabelHtmlString = null;
+        if (tr.classList.contains("parallel-line")) {
+            // case "split line of a distributed sub-pipeline"
+            trToUpdate = tr;
+
+            shapedLabelHtmlString  = trapezoidalLabel(
+                (
+                    (trToUpdate.classList.contains("collapsed") ? "► " : "▼ ") +
+                    trToUpdate.dataset.name
+                ),
+                // !!!!  TODO  -  handle group styling and defaults
+                "#EAEAEA", "#00FF0D", "#FFD700"
+            )
+
+        } else if (tr.classList.contains("parallel-lines")) {
+            // case "merge task of a distributed sub-pipeline"
+            const targetPath = findLastVisibleChildOfGroup(
+                ganttTimelineObj.table, tr.dataset.path
+            );
+            trToUpdate = ganttTimelineObj.table.querySelector(
+                `[data-path="${targetPath}"]`
+            );
+
+            shapedLabelHtmlString  = trapezoidalLabel(
+                trToUpdate.dataset.name,
+                // !!!!  TODO  -  handle group styling and defaults
+                "#EAEAEA", "#C80043", "#FFD700",
+                true
+            )
+        }
+        if (trToUpdate) {
+            // first, find original text-content
+            // from default 'collapsible-grouped-table'
+            let firstTextNode = null;
+            for (let child of trToUpdate.cells[0].childNodes) {
+                if (child.nodeType === 3) { // Text node
+                    firstTextNode = child;
+                    break;
+                }
+            }
+            if (firstTextNode) {
+                // then replace that node with shaped label
+                const shapedLabel = document.createElement('div');
+                shapedLabel.innerHTML = shapedLabelHtmlString;
+                trToUpdate.cells[0].replaceChild(shapedLabel, firstTextNode);
+            } else {
+                // default didn't update with a textNode
+                // (e.g. merge-task row of collapse/expand
+                //  distributed sub-pipeline).
+                // => no need to override.
+            }
+        }
+    });
 }
 
 function toggleHeaderTimeline(ganttTimelineObjName, groupHeaderRow) {
@@ -104,6 +307,11 @@ function toggleHeaderTimeline(ganttTimelineObjName, groupHeaderRow) {
         // group just collapsed
         addSummaryTimestamps(ganttTimelineObj, groupHeaderRow);
     }
+
+    /* *************************
+    * override default labels. *
+    ************************* */
+    overrideLabels(ganttTimelineObj, [groupHeaderRow]);
 
     /* ************************************
     * update right padding                *
