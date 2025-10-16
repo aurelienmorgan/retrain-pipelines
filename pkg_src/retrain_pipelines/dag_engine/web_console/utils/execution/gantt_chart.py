@@ -4,6 +4,8 @@ import logging
 from enum import Enum, auto
 from datetime import datetime
 from collections import defaultdict
+from pydantic import BaseModel, Field, \
+    ConfigDict
 from typing import List, Tuple, Union, \
     Optional
 
@@ -11,6 +13,7 @@ from fasthtml.common import Div, Style, Script, \
     to_xml
 
 from ....db.model import TaskExt, TaskGroup
+from .....utils import hex_to_rgba
 
 
 class ParallelLines:
@@ -34,9 +37,91 @@ class GroupTypes(Enum):
     PARALLEL_LINES = auto()
     PARALLEL_LINE = auto()
 
-    def __str__(self):
-        return self.name.lower().replace("_", "-")
-logging.getLogger().error(f"[bold red blink]GroupTypes {GroupTypes}[/]") # DEBUG  -  DELETE
+
+class Style(dict):
+    def __new__(cls, *args, **kwargs):
+        instance = super().__new__(cls)
+        return instance
+
+    def __init__(self, *args, **kwargs):
+        if args:
+            if len(args) == 1 and (isinstance(args[0], dict) or not args[0]):
+                data = args[0] or {}
+            elif len(args) == 3:
+                data = {"color": args[0], "background": args[1], "border": args[2]}
+            else:
+                raise TypeError(f"Expected 3 positional arguments, got {len(args)}")
+        else:
+            data = kwargs
+
+        # Pydantic validation
+        validated = StyleValidator(**data)
+        super().__init__(validated.model_dump())
+
+    def __setattr__(self, key, value):
+        self[key] = value
+
+    def __getattr__(self, key):
+        try:
+            return self[key]
+        except KeyError:
+            raise AttributeError(f"'Style' object has no attribute '{key}'")
+
+    def __setitem__(self, key, value):
+        # Validate on set
+        temp = dict(self)
+        temp[key] = value
+        validated = StyleValidator(**temp)
+        super().__setitem__(key, value)
+
+class StyleValidator(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
+    color: Optional[str] = None
+    background: Optional[str] = None
+    border: Optional[str] = None
+
+
+DEFAULT_GROUP_STYLES = {
+    GroupTypes.PARALLEL_LINES:
+        Style("#FFFFFF", "#4d0066", "#FFD700")
+}
+
+
+def fill_defaults(
+    group_style: Style,
+    group_type: GroupTypes
+) -> None:
+    """
+    in place
+    """
+
+    group_style.color = hex_to_rgba(
+        (
+            group_style.color or
+            DEFAULT_GROUP_STYLES[group_type].color
+        ),
+        0.75
+    )
+    group_style.background = hex_to_rgba(
+        (
+            group_style.background or
+            DEFAULT_GROUP_STYLES[group_type].background
+        ),
+        0.25
+    )
+    group_style["border"] = hex_to_rgba(
+        (
+            group_style.border or
+            DEFAULT_GROUP_STYLES[group_type].border
+        ),
+        # no transparency, so border color DOES NOT
+        # vary depending on the row it is hovering
+        1
+    )
+
+    return None
+
 
 class GroupedRows:
     """collapsible grouped table rows serializer."""
@@ -454,7 +539,12 @@ def parallel_grouped_rows(
         )
 
     if parallel_lines.merging_task is not None:
+        # if distributed sub-DAG merging (last) task has started
         parallel_lines_list.append(task_row(parallel_lines.merging_task))
+
+    # fill_defaults, complementing ui_css if need be
+    group_rows_style = Style(parralel_task_ext.ui_css)
+    fill_defaults(group_rows_style, GroupTypes.PARALLEL_LINES)
 
     return GroupedRows(
         id=parralel_task_ext.name + \
@@ -465,7 +555,7 @@ def parallel_grouped_rows(
         callbacks=["toggleHeaderTimeline('execGanttTimelineObj', this);"],
                 extraClasses=["parallel-lines"],
         children=parallel_lines_list,
-        style=parralel_task_ext.ui_css if parralel_task_ext.ui_css else {"border": "#fff"}
+        style=group_rows_style
     )
 
 

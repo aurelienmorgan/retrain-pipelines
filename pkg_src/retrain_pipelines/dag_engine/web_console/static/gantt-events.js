@@ -197,8 +197,8 @@ function initFormat(ganttTimelineObjName) {
             }
 
             if (tr.classList.contains("parallel-line")) {
-                // header of one of the spilt sub-DAG lines =>
-                // apply odd/even backgroupd overlay
+                // header row of one of the spilt sub-DAG lines =>
+                // apply odd/even backgroupd overlay to group
                 const index = tr.dataset.path.split(".").at(-1);
                 if (index%2) {
                     tbody.querySelectorAll(
@@ -217,6 +217,15 @@ function initFormat(ganttTimelineObjName) {
                     });
                 }
             }
+        } else if (tr.dataset.level === "0") {
+            // top-level row (not part of a group)
+            // we remove row-styling (set by collapsible-grouped-table
+            // as the default behavior)
+            tr.style.color = "";
+            tr.style.background = "";
+            tr.style.borderColor = "";
+        } else {
+            // non-header row (group row that is not the header)
         }
     });
 
@@ -247,7 +256,7 @@ function overrideLabels(ganttTimelineObj, bodyRows) {
             )
 
         } else if (tr.classList.contains("parallel-lines")) {
-            // case "merge task of a distributed sub-pipeline"
+            // case of the "merging (last) task of a distributed sub-pipeline"
             const targetPath = findLastVisibleChildOfGroup(
                 ganttTimelineObj.table, tr.dataset.path
             );
@@ -260,6 +269,18 @@ function overrideLabels(ganttTimelineObj, bodyRows) {
                 // !!!!  TODO  -  handle group styling and defaults
                 "#EAEAEA", "#C80043", "#FFD700",
                 true
+            )
+        } else if (tr.classList.contains("taskgroup")) {
+            // case "header row of a taskgoup"
+        } else {
+            // non-header row (can be top-level row
+            // or group row that is not the header)
+            trToUpdate = tr;
+
+            shapedLabelHtmlString  = rectangularLabel(
+                trToUpdate.dataset.name,
+                // !!!!  TODO  -  handle group styling and defaults
+                "#EAEAEA", "#00FF0D", "#FFD700"
             )
         }
         if (trToUpdate) {
@@ -276,6 +297,7 @@ function overrideLabels(ganttTimelineObj, bodyRows) {
                 // then replace that node with shaped label
                 const shapedLabel = document.createElement('div');
                 shapedLabel.innerHTML = shapedLabelHtmlString;
+                shapedLabel.classList.add("element-name");
                 trToUpdate.cells[0].replaceChild(shapedLabel, firstTextNode);
             } else {
                 // default didn't update with a textNode

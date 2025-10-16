@@ -696,7 +696,7 @@ def register(app, rt, prefix=""):
 
                     .gantt-table th,
                     .gantt-table td {
-                        padding: 8px; /* important */
+                        padding: 8px;         <!-- important -->
                         text-align: left;
                         overflow: hidden;
                         text-overflow: ellipsis;
@@ -737,8 +737,14 @@ def register(app, rt, prefix=""):
                             calc(8px + var(--max-visible-level, 0) * 5px);
                     }
 
-                    .hidden {
+                    .gantt-table tr.hidden {
                         display: none;
+                    }
+
+                    .element-name {<!-- shaped labels -->
+                        align-items: center;
+                        justify-content: center;
+                        display: flex;
                     }
 
                     .left-nesting-bar {

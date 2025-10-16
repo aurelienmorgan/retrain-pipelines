@@ -11,12 +11,6 @@
 const MAX_Z_INDEX = zIndex = 2147483647;
 const barThickness = 3;         /* in px, nesting-bar width,
                                    must match with nesting-bar CSSs */
-const defaultGroupStyle = JSON.parse(JSON.stringify({
-  "color": "#00ff37",
-  "background": "#00ff37",
-  "border": "#00ff37"
-}));
-console.log("defaultGroupStyle", defaultGroupStyle);
 
 function setCookie(name, value) {
     document.cookie = name + "=" +
@@ -126,19 +120,6 @@ function isLastChildOfParent(table, path) {
 
     result = index === siblingRows.length - 1;
     return result;
-}
-
-function getGroupStyleForPath(table, path) {
-    const parts = path.split('.');
-    for (let i = parts.length; i > 0; i--) {
-        const candidatePath = parts.slice(0, i).join('.');
-        const row = table.querySelector(`[data-path="${candidatePath}"]`);
-        if (row && row.classList.contains('group-header')) {
-            const styleJson = row.getAttribute('data-group-style');
-            if (styleJson) return JSON.parse(styleJson);
-        }
-    }
-    return null;
 }
 
 function findLastVisibleChildOfGroup(table, groupPath) {
@@ -352,6 +333,19 @@ function countParentGroupsEndingAt(lastRow) {
     }
 
     return count;
+}
+
+function getGroupStyleForPath(table, path) {
+    const parts = path.split('.');
+    for (let i = parts.length; i > 0; i--) {
+        const candidatePath = parts.slice(0, i).join('.');
+        const row = table.querySelector(`[data-path="${candidatePath}"]`);
+        if (row && row.classList.contains('group-header')) {
+            const styleJson = row.getAttribute('data-group-style');
+            if (styleJson) return JSON.parse(styleJson);
+        }
+    }
+    return null;
 }
 
 function applyGroupStyles(table, interBarsSpacing) {  
@@ -621,9 +615,11 @@ function renderRows(data, parentPath = "", level = 0, startIndex = 0) {
             '';
         const dataAttrs =
             `data-path="${path}" data-level="${level}" data-id="${item.id}" data-name="${item.cells.name.value}"`;
-        const extraAttrs = hasChildren && item.style
-            ? `data-group-style='${JSON.stringify(item.style)}'`
-            : '';
+        const extraAttrs = item.style
+                ? hasChildren
+                    ? `data-group-style='${JSON.stringify(item.style)}'`
+                    : `data-row-style='${JSON.stringify(item.style)}'`
+                : '';
 
         html += `<tr class="${rowClass.trim()}${extraClasses}" ${dataAttrs} ` +
                      `${clickAttr} ${extraAttrs} ${rowCss}>` +
