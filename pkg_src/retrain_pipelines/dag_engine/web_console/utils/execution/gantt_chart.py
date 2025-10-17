@@ -47,10 +47,14 @@ class Style(dict):
         if args:
             if len(args) == 1 and (isinstance(args[0], dict) or not args[0]):
                 data = args[0] or {}
-            elif len(args) == 3:
+            elif len(args) in [3, 4]:
                 data = {"color": args[0], "background": args[1], "border": args[2]}
+                if len(args) == 4 and args[3]:
+                    data["labelUnderlay"] = args[3]
             else:
-                raise TypeError(f"Expected 3 positional arguments, got {len(args)}")
+                raise TypeError(f"Expected 3 or 4 positional arguments, got {len(args)}")
+            if kwargs:
+                data.update(kwargs)
         else:
             data = kwargs
 
@@ -80,10 +84,17 @@ class StyleValidator(BaseModel):
     color: Optional[str] = None
     background: Optional[str] = None
     border: Optional[str] = None
+    labelUnderlay: Optional[str] = None
 
 
 DEFAULT_GROUP_STYLES = {
+    GroupTypes.NONE:
+        Style("#FFFFFF", "#4d0066", "#FFD700"),
+    GroupTypes.TASKGROUP:
+        Style("#000000", "#4d0066", "#000000"),
     GroupTypes.PARALLEL_LINES:
+        Style("#FFFFFF", "#4d0066", "#FEAFFF"),
+    GroupTypes.PARALLEL_LINE:
         Style("#FFFFFF", "#4d0066", "#FFD700")
 }
 
@@ -95,7 +106,6 @@ def fill_defaults(
     """
     in place
     """
-
     group_style.color = hex_to_rgba(
         (
             group_style.color or
@@ -108,7 +118,7 @@ def fill_defaults(
             group_style.background or
             DEFAULT_GROUP_STYLES[group_type].background
         ),
-        0.25
+        0.65
     )
     group_style["border"] = hex_to_rgba(
         (
@@ -491,7 +501,24 @@ def draw_chart(
     )
 
 
-def task_row(task_ext: TaskExt) -> GroupedRows:
+def task_row(
+    task_ext: TaskExt,
+    labelUnderlay: Optional[str]=None
+) -> GroupedRows:
+    """
+    Params:
+        - task_ext (TaskExt):
+        - labelUnderlay (str):
+            overwrite default. Used for tasks within taskgroups.
+    """
+
+    # fill_defaults, complementing ui_css if need be
+    row_style = Style(
+        task_ext.ui_css,
+        labelUnderlay=labelUnderlay or "#4d0066"
+    )
+    fill_defaults(row_style, GroupTypes.NONE)
+
     result = GroupedRows(
         id=task_ext.id,
         name=task_ext.name,
@@ -500,7 +527,7 @@ def task_row(task_ext: TaskExt) -> GroupedRows:
         callbacks=None,
         extraClasses=None,
         children=None,
-        style=task_ext.ui_css # TODO  -  fill_defaults(task_ext.ui_css, GroupTypes.NONE)  -  TODO
+        style=row_style
     )
 
     return result
@@ -525,6 +552,11 @@ def parallel_grouped_rows(
                 line_rows.append(taskgroup_grouped_rows(element))
             else:
                 line_rows.append(task_row(element))
+
+        # fill_defaults, complementing ui_css if need be
+        group_rows_style = Style(parralel_task_ext.ui_css, labelUnderlay="#4d0066")
+        fill_defaults(group_rows_style, GroupTypes.PARALLEL_LINE)
+
         parallel_lines_list.append(
             GroupedRows(
                 id=f"{parralel_task_ext.name}.{parallel_line_rank}",
@@ -534,7 +566,7 @@ def parallel_grouped_rows(
                 callbacks=["toggleHeaderTimeline('execGanttTimelineObj', this);"],
                 extraClasses=["parallel-line"],
                 children=line_rows,
-                style={"border": "pink"}
+                style=group_rows_style
             )
         )
 
@@ -543,7 +575,7 @@ def parallel_grouped_rows(
         parallel_lines_list.append(task_row(parallel_lines.merging_task))
 
     # fill_defaults, complementing ui_css if need be
-    group_rows_style = Style(parralel_task_ext.ui_css)
+    group_rows_style = Style(parralel_task_ext.ui_css, labelUnderlay="#4d0066")
     fill_defaults(group_rows_style, GroupTypes.PARALLEL_LINES)
 
     return GroupedRows(
@@ -565,6 +597,10 @@ def taskgroup_grouped_rows(
 ) -> GroupedRows:
     taskgroup, taskgroup_elements = taskgroup_tuple
 
+    # fill_defaults, complementing ui_css if need be
+    group_rows_style = Style(taskgroup.ui_css, labelUnderlay="#4d0066")
+    fill_defaults(group_rows_style, GroupTypes.TASKGROUP)
+
     elements = []
     for element in taskgroup_elements:
         if isinstance(element, Tuple):
@@ -572,7 +608,7 @@ def taskgroup_grouped_rows(
         else:
             # standard task (for taskgroup in parallel branch)
             rank = element.rank
-            elements.append(task_row(element))
+            elements.append(task_row(element, labelUnderlay=group_rows_style.background))
 
     return GroupedRows(
         id=str(taskgroup.uuid) + f".{rank}" if rank else "",
@@ -582,6 +618,6 @@ def taskgroup_grouped_rows(
         callbacks=["toggleHeaderTimeline('execGanttTimelineObj', this);"],
         extraClasses=["taskgroup"],
         children=elements,
-        style=taskgroup.ui_css if taskgroup.ui_css else {"border": "#000"}
+        style=group_rows_style
     )
 

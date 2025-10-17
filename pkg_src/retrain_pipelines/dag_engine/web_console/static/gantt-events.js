@@ -38,6 +38,24 @@ function getMaxVisibleLevel(bodyRows) {
 
 ////////////////////////////////////////////////////////
 
+function isHexColor(color) {
+    /* true if color is hex code (#abc, #aabbcc), false otherwise */
+    const yesNo = /^#([0-9A-F]{3}|[0-9A-F]{6})$/i.test(color);
+    return yesNo;
+}
+
+function rgbaToHex(color) {
+    /* from rgba to hex-code (dropping the transparency factor) */
+    const match =
+        color.match(/rgba?\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*([\d.]+))?\s*\)/i);
+    if (!match) {
+        console.error(color, "isn't a recognized rgba string");
+        return null;
+    }
+    let [r, g, b] = [match[1], match[2], match[3]].map(x => parseInt(x, 10));
+    const hexCode = '#' + [r, g, b].map(x => x.toString(16).padStart(2, '0')).join('');
+    return hexCode;
+}
 
 function hexToRgba(hex, alpha) {
     /* ***************************
@@ -50,23 +68,27 @@ function hexToRgba(hex, alpha) {
     return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
-// Helper function to generate gradient
 function generateGradient(backgroundColor) {
     /* **************************************
     * Helper function to generate gradient. *
     ************************************** */
+    if (!isHexColor(backgroundColor))
+        backgroundColor = rgbaToHex(backgroundColor);
+
     return `linear-gradient(180deg, 
-            ${hexToRgba(backgroundColor, 0.48)} 0%,
-            ${hexToRgba(backgroundColor, 0.42)} 20%,
-            ${hexToRgba(backgroundColor, 0.98)} 40%, 
-            ${hexToRgba(backgroundColor, 0.73)} 60%,
-            ${hexToRgba(backgroundColor, 0.59)} 80%,
-            ${hexToRgba(backgroundColor, 0.54)} 100%)`;
+            ${hexToRgba(backgroundColor, 0.52)} 0%,
+            ${hexToRgba(backgroundColor, 0.38)} 10%,
+            ${hexToRgba(backgroundColor, 0.32)} 15%,
+            ${hexToRgba(backgroundColor, 0.52)} 20%,
+            ${hexToRgba(backgroundColor, 0.78)} 40%, 
+            ${hexToRgba(backgroundColor, 0.63)} 60%,
+            ${hexToRgba(backgroundColor, 0.55)} 80%,
+            ${hexToRgba(backgroundColor, 0.44)} 100%)`;
 }
 
 function trapezoidalLabel(
     textContent,
-    color, backgroundColor, borderColor,
+    color, backgroundColor, borderColor, underlayColor,
     flipped = false
 ) {
     /* ******************************************
@@ -121,12 +143,23 @@ function trapezoidalLabel(
                 transform: perspective(200px) ${rotation};
                 z-index: -1;
             "></div>
+            <div style="
+                position: absolute;
+                top: 0;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                background: ${underlayColor};
+                border-radius: ${borderRadius};
+                transform: perspective(200px) ${rotation};
+                z-index: -2;
+            "></div>
         </div>`;
 }
 
 function rectangularLabel(
     textContent,
-    color, backgroundColor, borderColor
+    color, backgroundColor, borderColor, underlayColor
 ) {
     /* ******************************************
     * html for formatted rectangular-shaped div *
@@ -166,6 +199,16 @@ function rectangularLabel(
                   inset 0 -3.75px 5px -2.5px rgba(0,0,0,0.2),
                   0 3.125px 6.25px rgba(0,0,0,0.5);
                 z-index: -1;
+            "></div>
+            <div style="
+                position: absolute;
+                top: 0;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                background: ${underlayColor};
+                border-radius: 8px;
+                z-index: -2;
             "></div>
         </div>`;
 }
@@ -246,13 +289,14 @@ function overrideLabels(ganttTimelineObj, bodyRows) {
             // case "split line of a distributed sub-pipeline"
             trToUpdate = tr;
 
+            const groupStyle = JSON.parse(trToUpdate.dataset.groupStyle);
             shapedLabelHtmlString  = trapezoidalLabel(
                 (
                     (trToUpdate.classList.contains("collapsed") ? "► " : "▼ ") +
                     trToUpdate.dataset.name
                 ),
-                // !!!!  TODO  -  handle group styling and defaults
-                "#EAEAEA", "#00FF0D", "#FFD700"
+                groupStyle.color, groupStyle.background, groupStyle.border,
+                groupStyle.labelUnderlay
             )
 
         } else if (tr.classList.contains("parallel-lines")) {
@@ -264,10 +308,11 @@ function overrideLabels(ganttTimelineObj, bodyRows) {
                 `[data-path="${targetPath}"]`
             );
 
+            const rowStyle = JSON.parse(trToUpdate.dataset.rowStyle);
             shapedLabelHtmlString  = trapezoidalLabel(
                 trToUpdate.dataset.name,
-                // !!!!  TODO  -  handle group styling and defaults
-                "#EAEAEA", "#C80043", "#FFD700",
+                rowStyle.color, rowStyle.background, rowStyle.border,
+                rowStyle.labelUnderlay,
                 true
             )
         } else if (tr.classList.contains("taskgroup")) {
@@ -277,10 +322,11 @@ function overrideLabels(ganttTimelineObj, bodyRows) {
             // or group row that is not the header)
             trToUpdate = tr;
 
+            const rowStyle = JSON.parse(trToUpdate.dataset.rowStyle);
             shapedLabelHtmlString  = rectangularLabel(
                 trToUpdate.dataset.name,
-                // !!!!  TODO  -  handle group styling and defaults
-                "#EAEAEA", "#00FF0D", "#FFD700"
+                rowStyle.color, rowStyle.background, rowStyle.border,
+                rowStyle.labelUnderlay
             )
         }
         if (trToUpdate) {
