@@ -232,6 +232,11 @@ function initFormat(ganttTimelineObjName) {
     tbody.style.setProperty('--max-visible-level', maxLevel);
 
     bodyRows.forEach((tr) => {
+        /* add event listener for timeline add */
+        const timelineCell = tr.cells[ganttTimelineObj.timelineColumnIndex];
+        timelineAddedObserver.observe(timelineCell, { childList: true });
+
+        /* implement custom events init */
         if (tr.classList.contains("group-header")) {
             if (tr.classList.contains("collapsed")) {
                 // header row of a collapsed group =>
@@ -276,6 +281,40 @@ function initFormat(ganttTimelineObjName) {
     ganttTimelineObj.refresh();
 }
 
+const timelineAddedObserver = new MutationObserver((mutationsList) => {
+    for (const mutation of mutationsList) {
+        if (mutation.type === 'childList') {
+            mutation.addedNodes.forEach(node => {
+                if (
+                    node.nodeType === 1 &&
+                    node.classList.contains('gantt-timeline-container')
+                ) {
+                    // timeline added event
+                    const timelineCell = mutation.target;
+
+                    if (timelineCell.dataset.startTimestamp) {
+                        const bar = timelineCell.getElementsByClassName(
+                            "gantt-timeline-bar")[0];
+                        if (bar) {
+                            /* add shine-hover layer */
+                            const el = document.createElement("div");
+                            el.className = "gantt-timeline-bar-hover-shine";
+                            bar.insertBefore(el, bar.firstChild);
+
+                            /* cascade row 'failed' class to timeline bar */
+                            if (
+                                timelineCell.closest('tr').classList.contains("failed")
+                            ) {
+                                bar.classList.add("failed");
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    }
+});
+
 function overrideLabels(ganttTimelineObj, bodyRows) {
     /* *****************************************
     * replaces default textNode                *
@@ -300,13 +339,23 @@ function overrideLabels(ganttTimelineObj, bodyRows) {
             )
 
         } else if (tr.classList.contains("parallel-lines")) {
-            // case of the "merging (last) task of a distributed sub-pipeline"
+            // case of the "merging (last) task
+            // of a distributed sub-pipeline"
             const targetPath = findLastVisibleChildOfGroup(
                 ganttTimelineObj.table, tr.dataset.path
             );
-            trToUpdate = ganttTimelineObj.table.querySelector(
-                `[data-path="${targetPath}"]`
+            const targetIndentLevel =
+                parseInt(
+                    getComputedStyle(tr).getPropertyValue("--indent-level")
+                ) + 1 ;
+            const trToUpdate = ganttTimelineObj.table.querySelector(
+                `[data-path="${targetPath}"]:not(.parallel-line)` +
+                `[style*="--indent-level: ${targetIndentLevel}"]`
             );
+            if (!trToUpdate) {
+                // case "merge task hasn't started yet"
+                return; // skips currently iterated tr
+            }
 
             const rowStyle = JSON.parse(trToUpdate.dataset.rowStyle);
             shapedLabelHtmlString  = trapezoidalLabel(
@@ -371,6 +420,7 @@ function toggleHeaderTimeline(ganttTimelineObjName, groupHeaderRow) {
         const oldTimeline =
             headerTimelineCell.querySelector('.gantt-timeline-container');
         oldTimeline.remove();
+        groupHeaderRow.classList.remove("failed");
     } else {
         // group just collapsed
         addSummaryTimestamps(ganttTimelineObj, groupHeaderRow);
@@ -407,8 +457,9 @@ function addSummaryTimestamps(ganttTimelineObj, groupHeaderRow) {
 
     var startTimestamp = Number.MAX_SAFE_INTEGER;
     var endTimestamp = -1;
+    var anyChildFailed = false;
     allRows.forEach(row => {
-        timelineCell = row.cells[ganttTimelineObj.timelineColumnIndex]
+        const timelineCell = row.cells[ganttTimelineObj.timelineColumnIndex];
         const start = (() => {
             const v = timelineCell.dataset.startTimestamp;
             return v && !isNaN(Number(v)) ? Number(v) : null 
@@ -427,6 +478,8 @@ function addSummaryTimestamps(ganttTimelineObj, groupHeaderRow) {
                     if (end > endTimestamp) {
                         endTimestamp = end;
                     }
+                    if (row.classList.contains("failed"))
+                        anyChildFailed = true;
                 } else {
                     endTimestamp = null;
                 }
@@ -435,7 +488,12 @@ function addSummaryTimestamps(ganttTimelineObj, groupHeaderRow) {
     });
 
     headerTimelineCell.dataset.startTimestamp = startTimestamp;
-    if (endTimestamp)
-        headerTimelineCell.dataset.endTimestamp = endTimestamp;    
+    if (endTimestamp) {
+        headerTimelineCell.dataset.endTimestamp = endTimestamp;
+        if (anyChildFailed) {
+            const tr = headerTimelineCell.closest('tr');
+            tr.classList.add("failed");
+        }
+    }
 }
 

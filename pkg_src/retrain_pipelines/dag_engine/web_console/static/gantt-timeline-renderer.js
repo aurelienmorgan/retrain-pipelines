@@ -209,7 +209,7 @@ class GanttTimeline {
         const showLabel = width > 15;
         const ongoingClass = row.isOngoing ? 'ongoing' : '';
 
-        row.timelineCell.className = 'gantt-timeline-cell';
+        row.timelineCell.classList.add("gantt-timeline-cell");
 
         // remove any timeline from previous rendering
         // (it might need updating, e.g. if major bounds changed)

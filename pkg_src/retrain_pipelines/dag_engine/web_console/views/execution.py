@@ -669,25 +669,6 @@ def register(app, rt, prefix=""):
                         border-radius: 12px;
                         overflow: hidden;
                         box-sizing: border-box; /* ensure padding affects size correctly */
-
-/*
---task-default-color: #
---task-default-background: #
---task-default-border: #
-
---taskgroup-default-color: #
---taskgroup-default-background: #
---taskgroup-default-border: #
-
---parallel-lines-default-color: #
---parallel-lines-default-background: #
---parallel-lines-default-border: #
-
---parallel-line-default-color: #
---parallel-line-default-background: #
---parallel-line-default-border: #
-*/
-
                     }
 
                     .gantt-table thead {
@@ -782,11 +763,6 @@ def register(app, rt, prefix=""):
                     .gantt-timeline-cell {
                         position: relative;
                         min-height: 50px;
-/*
-    background: linear-gradient(to right, #f9f9f9 0%, #f9f9f9 100%);
-    padding: 5px !important;
-    min-width: 250px;
-*/
                         vertical-align: middle;
                     }
 
@@ -810,32 +786,152 @@ def register(app, rt, prefix=""):
                         color: white;
                         font-size: 11px;
                         font-weight: bold;
-                        box-shadow: 0 2px 4px rgba(0,0,0,0.2);
-                        transition: all 0.3s ease;
+                        box-shadow: 
+                            0 2px 4px rgba(0,0,0,0.2),
+                            0 8px 16px rgba(0,0,0,0.1),
+                            inset 0 1px 0 rgba(255,255,255,0.4),
+                            inset 0 -1px 0 rgba(0,0,0,0.2);
+                        transition: box-shadow 0.3s ease, filter 0.3s ease,
+                                    border 0.3s ease, transform 0.3s ease;
                         cursor: pointer;
-                        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                        background: linear-gradient(135deg, #7a00b3 0%, #4d0066 100%);
+                        position: relative;
+                        overflow: hidden;
+                        border: 1px solid rgba(255,255,255,0.2);
                     }
 
-                    .gantt-timeline-bar.ongoing {
-                        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
-                        animation: timeline-bar-pulse 2s ease-in-out infinite;
+                    /* Ice crystal texture overlay */
+                    .gantt-timeline-bar::after {
+                        content: '';
+                        position: absolute;
+                        top: 0;
+                        left: 0;
+                        width: 100%;
+                        height: 100%;
+                        background: 
+                            linear-gradient(180deg, rgba(255,255,255,0.3) 0%,
+                                                    transparent 50%, rgba(0,0,0,0.1) 100%),
+                            radial-gradient(
+                                circle at 20% 30%, rgba(255,255,255,0.4) 0%, transparent 40%),
+                            radial-gradient(
+                                circle at 80% 70%, rgba(255,255,255,0.3) 0%, transparent 40%),
+                            radial-gradient(
+                                circle at 50% 50%, rgba(255,255,255,0.15) 0%, transparent 60%);
+                        pointer-events: none;
+                        z-index: 1;
                     }
 
-                    @keyframes timeline-bar-pulse {
-                        0%, 100% { opacity: 1; }
-                        50% { opacity: 0.8; }
+                    /* Startup shine - runs only once on first load */
+                    .gantt-timeline-bar:not(.ongoing)::before {
+                        content: '';
+                        position: absolute;
+                        top: -50%;
+                        left: -100%;
+                        width: 80%;
+                        height: 200%;
+                        background: linear-gradient(
+                            90deg,
+                            transparent,
+                            rgba(255,215,0,0.6),
+                            rgba(255,215,0,0.8),
+                            rgba(255,215,0,0.6),
+                            transparent
+                        );
+                        transform: skewX(-25deg);
+                        pointer-events: none;
+                        z-index: 100;
+                        animation: timeline-bar-shine-start 1.5s ease-out 0.1s;
+                        animation-fill-mode: forwards;
+                    }
+
+                    /* Hover shine - separate element that only appears on hover */
+                    .gantt-timeline-bar:hover .gantt-timeline-bar-hover-shine {
+                        animation: timeline-bar-shine-hover 0.8s ease-out;
+                        animation-fill-mode: forwards;
                     }
 
                     .gantt-timeline-bar:hover {
-                        box-shadow: 0 3px 6px rgba(0,0,0,0.3);
-                        filter: brightness(1.1);
+                        box-shadow: 
+                            0 4px 12px rgba(0,0,0,0.3),
+                            0 12px 32px rgba(0,0,0,0.15),
+                            inset 0 2px 0 rgba(255,255,255,0.6),
+                            inset 0 -2px 0 rgba(0,0,0,0.3),
+                            inset 0 0 20px rgba(255,255,255,0.2);
+                        filter: brightness(1.15) saturate(1.1);
+                        border: 1px solid rgba(255,255,255,0.4);
+                        transform: translateY(-1px);
                     }
 
-                    .gantt-timeline-controls {
-                        display: flex;
-                        gap: 5px;
-                        margin-top: 8px;
-                        justify-content: center;
+                    .gantt-timeline-bar.ongoing {
+                        background: linear-gradient(135deg, #00b3a3 0%, #006b66 100%);
+                        animation: timeline-bar-pulse 2s ease-in-out infinite;
+                    }
+
+                    .gantt-timeline-bar.failed {
+                        background: linear-gradient(135deg, #cc3333 0%, #800020 100%);
+                    }
+
+                    /* Hover shine element */
+                    .gantt-timeline-bar-hover-shine {
+                        content: '';
+                        position: absolute;
+                        top: -50%;
+                        left: -100%;
+                        width: 80%;
+                        height: 200%;
+                        background: linear-gradient(
+                            90deg,
+                            transparent,
+                            rgba(255,215,0,0.6),
+                            rgba(255,215,0,0.8),
+                            rgba(255,215,0,0.6),
+                            transparent
+                        );
+                        transform: skewX(-25deg);
+                        pointer-events: none;
+                        z-index: 100;
+                        opacity: 0;
+                    }
+
+                    @keyframes timeline-bar-pulse {
+                        0%, 100% {
+                            opacity: 1;
+                            box-shadow: 
+                                0 2px 4px rgba(0,0,0,0.2),
+                                0 8px 16px rgba(0,0,0,0.1),
+                                inset 0 1px 0 rgba(255,255,255,0.4),
+                                inset 0 -1px 0 rgba(0,0,0,0.2);
+                        }
+                        50% {
+                            opacity: 0.85;
+                            box-shadow: 
+                                0 2px 8px rgba(0,107,102,0.4),
+                                0 8px 20px rgba(0,179,163,0.3),
+                                inset 0 1px 0 rgba(255,255,255,0.5),
+                                inset 0 -1px 0 rgba(0,0,0,0.2);
+                        }
+                    }
+
+                    @keyframes timeline-bar-shine-start {
+                        0% {
+                            left: -100%;
+                            opacity: 1;
+                        }
+                        100% {
+                            left: 150%;
+                            opacity: 1;
+                        }
+                    }
+
+                    @keyframes timeline-bar-shine-hover {
+                        0% {
+                            left: -100%;
+                            opacity: 1;
+                        }
+                        100% {
+                            left: 150%;
+                            opacity: 1;
+                        }
                     }
                 """),
                 Div(

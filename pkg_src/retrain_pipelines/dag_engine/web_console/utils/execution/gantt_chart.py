@@ -91,7 +91,7 @@ DEFAULT_GROUP_STYLES = {
     GroupTypes.NONE:
         Style("#FFFFFF", "#4d0066", "#FFD700"),
     GroupTypes.TASKGROUP:
-        Style("#000000", "#4d0066", "#000000"),
+        Style("#FFD700", "#4d0066", "#000000"),
     GroupTypes.PARALLEL_LINES:
         Style("#FFFFFF", "#4d0066", "#FEAFFF"),
     GroupTypes.PARALLEL_LINE:
@@ -525,7 +525,7 @@ def task_row(
         start_timestamp=task_ext.start_timestamp,
         end_timestamp=task_ext.end_timestamp,
         callbacks=None,
-        extraClasses=None,
+        extraClasses=None if not task_ext.failed else ["failed"],
         children=None,
         style=row_style
     )
