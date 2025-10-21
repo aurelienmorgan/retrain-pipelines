@@ -660,13 +660,15 @@ def register(app, rt, prefix=""):
                 Script(src="/collapsible_grouped_table.js"),
                 Script(src="/gantt-timeline-renderer.js"),
                 Script(src="/gantt-events.js"),
-                Style(""" /* Gantt collapsible table */
+                Style(""" /* collapsible table */
                     .gantt-table {
                         border-collapse: collapse;
                         table-layout: fixed;
                         width: calc(100% - 10px); /* left+right margin */
                         margin: 6px 5px 4px 5px; /* extra room on top (vs. bottom) for reflexion effect */
                         border-radius: 12px;
+                        font-size: 14px; font-weight: bold; letter-spacing: 0.375px;
+                        font-family: Robotto, Arial, sans-serif;
                         overflow: hidden;
                         box-sizing: border-box; /* ensure padding affects size correctly */
                     }
@@ -677,13 +679,13 @@ def register(app, rt, prefix=""):
 
                     .gantt-table th,
                     .gantt-table td {
-                        padding: 8px;         <!-- important -->
-                        text-align: left;
-                        overflow: hidden;
-                        text-overflow: ellipsis;
+                        padding: 4px 0;         /* important */
                         white-space: nowrap;
                         border: 1px solid #ddd;
                         position: relative;
+                    }
+                    .gantt-table tr {
+                        height: 36px;
                     }
 
                     /* Remove border on top row cells */
@@ -704,25 +706,31 @@ def register(app, rt, prefix=""):
                     }
 
                     .gantt-table #task-col {
-                        width: 25%;
+                        /* width computed dynamically */
                     }
                     .gantt-table #timeline-col {
-                        width: 75%;
+                        width: auto;
                     }
+
                     .gantt-table tr td:first-child {
-                        padding-left: calc(10px + var(--indent-level) * 5px);
+                        padding-left: calc(5px + var(--indent-level) * 5px);
                         position: relative;
                     }
-                    .gantt-table tr td:last-child {
+                    .gantt-table tr td:last-child { /* timeline col */
+                        padding-left: 3px;
                         padding-right:
-                            calc(8px + var(--max-visible-level, 0) * 5px);
+                            calc(3px + 3px + var(--max-visible-level, 0) * 5px);
                     }
 
                     .gantt-table tr.hidden {
                         display: none;
                     }
 
-                    .element-name {<!-- shaped labels -->
+                    .group-header {
+                        cursor: pointer;
+                    }
+
+                    .element-name {/* shaped labels */
                         align-items: center;
                         justify-content: center;
                         display: flex;
@@ -732,7 +740,7 @@ def register(app, rt, prefix=""):
                         position: absolute;
                         top: 0;
                         bottom: 0;
-                        width: 3px;           <!-- important -->
+                        width: 3px;           /* important */
                         z-index: 0;
                     }
 
@@ -740,21 +748,21 @@ def register(app, rt, prefix=""):
                         position: absolute;
                         top: 0;
                         bottom: 0;
-                        width: 3px;           <!-- important -->
+                        width: 3px;           /* important */
                         z-index: 0;
                         right: 0;
                     }
 
                     .top-nesting-bar {
                         position: absolute;
-                        height: 3px;           <!-- important -->
+                        height: 3px;           /* important */
                         z-index: 0;
                         top: 0;
                     }
 
                     .bottom-nesting-bar {
                         position: absolute;
-                        height: 3px;           <!-- important -->
+                        height: 3px;           /* important */
                         z-index: 0;
                         bottom: 0;
                     }
@@ -769,7 +777,8 @@ def register(app, rt, prefix=""):
                     .gantt-timeline-container {
                         position: relative;
                         width: 100%;
-                        height: 35px;
+                        height: 25px;
+                        line-height: 1em;
                         background: #e8e8e8;
                         border-radius: 4px;
                         overflow: visible;
@@ -785,7 +794,6 @@ def register(app, rt, prefix=""):
                         justify-content: center;
                         color: white;
                         font-size: 11px;
-                        font-weight: bold;
                         box-shadow: 
                             0 2px 4px rgba(0,0,0,0.2),
                             0 8px 16px rgba(0,0,0,0.1),
@@ -793,7 +801,6 @@ def register(app, rt, prefix=""):
                             inset 0 -1px 0 rgba(0,0,0,0.2);
                         transition: box-shadow 0.3s ease, filter 0.3s ease,
                                     border 0.3s ease, transform 0.3s ease;
-                        cursor: pointer;
                         background: linear-gradient(135deg, #7a00b3 0%, #4d0066 100%);
                         position: relative;
                         overflow: hidden;
@@ -840,12 +847,12 @@ def register(app, rt, prefix=""):
                         transform: skewX(-25deg);
                         pointer-events: none;
                         z-index: 100;
-                        animation: timeline-bar-shine-start 1.5s ease-out 0.1s;
+                        animation: timeline-bar-shine-start 0.5s ease-out 0.1s;
                         animation-fill-mode: forwards;
                     }
 
                     /* Hover shine - separate element that only appears on hover */
-                    .gantt-timeline-bar:hover .gantt-timeline-bar-hover-shine {
+                    tr:hover .gantt-timeline-bar .gantt-timeline-bar-hover-shine {
                         animation: timeline-bar-shine-hover 0.8s ease-out;
                         animation-fill-mode: forwards;
                     }

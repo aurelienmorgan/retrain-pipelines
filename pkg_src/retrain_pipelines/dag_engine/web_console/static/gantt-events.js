@@ -96,12 +96,12 @@ function trapezoidalLabel(
     ****************************************** */
     const gradient = generateGradient(backgroundColor);
     const borderRadius = flipped ?
-        '10px 10px 8px 8px' : '8px 8px 10px 10px';
+        '7.5px 7.5px 6px 6px' : '6px 6px 7.5px 7.5px';
     // adjust for 3D tilting leaving
     // empty top and bottom space
     const correctionMargin = flipped ?
-        '-5px 0 -8px' :
-        '-8px 0 -2px'; 
+        '-3.75px 0 -4px' :
+        '-4px 0 -1.5px'; 
     const rotation = flipped ?
         'rotateX(-35deg)' : 'rotateX(35deg)';
     const justifyContent = flipped ?
@@ -110,19 +110,18 @@ function trapezoidalLabel(
     return "" +
         `<div class="shaped-label" style="
             position: relative;
-            min-width: 125px;
+            min-width: 93.75px;
             width: fit-content;
-            padding: 0 8px 0 6px;
-            height: 40px;
+            padding: 0 6px 0 4.5px;
+            height: 30px;
             display: flex;
             align-items: center;
             ${justifyContent}
             line-height: normal;
             color: ${color};
-            font-size: 16px;
-            font-family: Robotto, Arial, sans-serif;
-            letter-spacing: 0.5px;
-            text-shadow: 0 0.75px 2px rgba(0,0,0,0.5);
+            font-size: 12px;
+            font-weight: normal;
+            text-shadow: 0 0.5625px 1.5px rgba(0,0,0,0.5);
             margin: ${correctionMargin};
             z-index: 0;
         ">
@@ -135,12 +134,12 @@ function trapezoidalLabel(
                 bottom: 0;
                 background: ${gradient};
                 border-radius: ${borderRadius};
-                border: 2px solid ${borderColor};
+                border: 1.5px solid ${borderColor};
                 box-shadow: 
-                  inset 0 6.25px 5px -3.75px rgba(255,255,255,0.6),
-                  inset 0 -3.75px 5px -2.5px rgba(0,0,0,0.2),
-                  0 3.125px 6.25px rgba(0,0,0,0.5);
-                transform: perspective(200px) ${rotation};
+                  inset 0 4.6875px 3.75px -2.8125px rgba(255,255,255,0.6),
+                  inset 0 -2.8125px 3.75px -1.875px rgba(0,0,0,0.2),
+                  0 2.34375px 4.6875px rgba(0,0,0,0.5);
+                transform: perspective(150px) ${rotation};
                 z-index: -1;
             "></div>
             <div style="
@@ -151,7 +150,7 @@ function trapezoidalLabel(
                 bottom: 0;
                 background: ${underlayColor};
                 border-radius: ${borderRadius};
-                transform: perspective(200px) ${rotation};
+                transform: perspective(150px) ${rotation};
                 z-index: -2;
             "></div>
         </div>`;
@@ -169,19 +168,18 @@ function rectangularLabel(
     return "" +
         `<div class="shaped-label" style="
             position: relative;
-            min-width: 125px;
+            min-width: 93.75px;
             width: fit-content;
-            padding: 0 8px 0 6px;
-            height: 34px;
+            padding: 0 6px 0 4.5px;
+            height: 25.5px;
             display: flex;
             align-items: center;
             justify-content: center;
             line-height: normal;
             color: ${color};
-            font-size: 16px;
-            font-family: Robotto, Arial, sans-serif;
-            letter-spacing: 0.5px;
-            text-shadow: 0 0.75px 2px rgba(0,0,0,0.5);
+            font-size: 12px;
+            font-weight: normal;
+            text-shadow: 0 0.5625px 1.5px rgba(0,0,0,0.5);
             z-index: 0;
         ">
             ${textContent}
@@ -192,12 +190,12 @@ function rectangularLabel(
                 right: 0;
                 bottom: 0;
                 background: ${gradient};
-                border-radius: 8px;
-                border: 2px solid ${borderColor};
+                border-radius: 6px;
+                border: 1.5px solid ${borderColor};
                 box-shadow: 
-                  inset 0 6.25px 5px -3.75px rgba(255,255,255,0.6),
-                  inset 0 -3.75px 5px -2.5px rgba(0,0,0,0.2),
-                  0 3.125px 6.25px rgba(0,0,0,0.5);
+                  inset 0 4.6875px 3.75px -2.8125px rgba(255,255,255,0.6),
+                  inset 0 -2.8125px 3.75px -1.875px rgba(0,0,0,0.2),
+                  0 2.34375px 4.6875px rgba(0,0,0,0.5);
                 z-index: -1;
             "></div>
             <div style="
@@ -207,7 +205,7 @@ function rectangularLabel(
                 right: 0;
                 bottom: 0;
                 background: ${underlayColor};
-                border-radius: 8px;
+                border-radius: 6px;
                 z-index: -2;
             "></div>
         </div>`;
@@ -225,6 +223,7 @@ function initFormat(ganttTimelineObjName) {
     const ganttTimelineObj = getGlobalObjByName(ganttTimelineObjName);
     const tbody = ganttTimelineObj.table.querySelector('tbody');
     if (!tbody) return;
+
     const bodyRows = Array.from(tbody.querySelectorAll('tr'));
 
     // update right padding (based on max visible depth level)
@@ -279,6 +278,11 @@ function initFormat(ganttTimelineObjName) {
 
     overrideLabels(ganttTimelineObj, bodyRows);
     ganttTimelineObj.refresh();
+
+    /* set label-column length (table-layout: fixed) */
+    const maxLabelLength = getLongestFirstColumnWidth(ganttTimelineObj.table);
+    const firstCol = ganttTimelineObj.table.querySelector('colgroup col:first-child');
+    firstCol.style.width = maxLabelLength + "px";
 }
 
 const timelineAddedObserver = new MutationObserver((mutationsList) => {
@@ -348,7 +352,7 @@ function overrideLabels(ganttTimelineObj, bodyRows) {
                 parseInt(
                     getComputedStyle(tr).getPropertyValue("--indent-level")
                 ) + 1 ;
-            const trToUpdate = ganttTimelineObj.table.querySelector(
+            trToUpdate = ganttTimelineObj.table.querySelector(
                 `[data-path="${targetPath}"]:not(.parallel-line)` +
                 `[style*="--indent-level: ${targetIndentLevel}"]`
             );
@@ -432,7 +436,7 @@ function toggleHeaderTimeline(ganttTimelineObjName, groupHeaderRow) {
     overrideLabels(ganttTimelineObj, [groupHeaderRow]);
 
     /* ************************************
-    * update right padding                *
+    * update whole-table right padding    *
     * (based on max visible depth level). *
     ************************************ */
     const tbody = ganttTimelineObj.table.querySelector('tbody');
@@ -495,5 +499,49 @@ function addSummaryTimestamps(ganttTimelineObj, groupHeaderRow) {
             tr.classList.add("failed");
         }
     }
+}
+
+function getLongestFirstColumnWidth(table) {
+    const rows = table.rows;
+    let maxWidth = 0;
+    const canvas = document.createElement('canvas');
+    const context = canvas.getContext('2d');
+
+    for (let i = 0; i < rows.length; i++) {
+        const firstCell = rows[i].cells[0];
+        const firstLevelDiv = firstCell.querySelector('div.shaped-label');
+            const textContent = (firstCell.textContent || firstCell.innerText).trim();
+        if (firstLevelDiv) {
+            const style = getComputedStyle(firstLevelDiv);
+            context.font =  style.font;
+
+            // Measure width (incl. padding)
+            // and add letter spacing per character
+            const baseWidth =
+                context.measureText(textContent).width
+                + (Number(style.paddingLeft.toString().replace('px', '')) | 0)
+                + (Number(style.paddingRight.toString().replace('px', '')) | 0);
+            const letterSpacing = parseFloat(style.letterSpacing) || 0;
+            const lsWidth = letterSpacing * Math.max(0, textContent.length - 1);
+
+            width = baseWidth + lsWidth +
+                    (parseFloat(getComputedStyle(firstCell).paddingLeft) || 0)
+                    + 10;
+        } else {
+            // pure (non-shaped) text label (e.g. taskgroup name)
+            const style = getComputedStyle(firstCell);
+            context.font =  style.font;
+            // Measure width and add letter spacing per character
+            const baseWidth = context.measureText(textContent).width;
+            const letterSpacing = parseFloat(style.letterSpacing) || 0;
+            const lsWidth = letterSpacing * Math.max(0, textContent.length - 1);
+            width = baseWidth + lsWidth +
+                    (parseFloat(style.paddingLeft) || 0)
+                    + 5;
+        }
+        maxWidth = Math.max(maxWidth, width);
+    }
+
+    return maxWidth;
 }
 

@@ -174,22 +174,40 @@ function toggleRow(table, path) {
     // (i.e. cleaning header
     //       if init state was collapsed,
     //       lastChild if it was expanded)
-    var rowToClean;
+    var rowsToClean = [];
+
     if (!isInitiallyCollapsed) {
+        // Was expanded: clean the last visible child only
         const lastChildPath = findLastVisibleChildOfGroup(table, path);
-        rowToClean =
-            table.querySelector(`[data-path="${lastChildPath}"]`);
+        const lastChildRow = table.querySelector(`[data-path="${lastChildPath}"]`);
+        rowsToClean.push(lastChildRow);
     } else {
-        rowToClean = row;
+        // Was collapsed: clean the header
+        rowsToClean.push(row);
+
+        // Additionally, if last child is a collapsed header, clean it as well
+        const lastChildPath = findLastVisibleChildOfGroup(table, path);
+        const lastChildRow = table.querySelector(`[data-path="${lastChildPath}"]`);
+        if (
+            lastChildRow.classList.contains("group-header") &&
+            lastChildRow.classList.contains("collapsed")
+        ) {
+            rowsToClean.push(lastChildRow);
+        }
     }
-    for (let i = 0; i < rowToClean.cells.length; i++) {
-        const cell = rowToClean.cells[i];
-        cell.querySelectorAll('.bottom-nesting-bar').forEach(bar => {
-            bar.remove();
-        });
-        // force reset bottom padding to CSS default
-        // (avoid webbrowser rounding issues)
-        cell.style.paddingBottom = null;
+
+    // Loop over all rows to clean
+    // remove bottom bars + reset bottom padding
+    for (const rowToClean of rowsToClean) {
+        for (let i = 0; i < rowToClean.cells.length; i++) {
+            const cell = rowToClean.cells[i];
+            cell.querySelectorAll('.bottom-nesting-bar').forEach(bar => {
+                bar.remove();
+            });
+            // force reset bottom padding to CSS default
+            // (avoid webbrowser rounding issues)
+            cell.style.paddingBottom = null;
+        }
     }
     /* ************************** */
 
@@ -215,16 +233,17 @@ function toggleRow(table, path) {
     }
     /* *************************************** */
 
-    /* ***************************
-    * top bars  and header arrow *
-    *************************** */
-    const existingTopBars = row.cells[0].querySelectorAll('.top-nesting-bar');
+    /* **************************
+    * top bars and header arrow *
+    ************************** */
+    const firstCell = row.cells[0];
+    const existingTopBars = firstCell.querySelectorAll('.top-nesting-bar');
 
-    row.cells[0].textContent =
+    firstCell.textContent =
         (!isInitiallyCollapsed ? '► ' : '▼ ') + row.getAttribute('data-name');
 
-    existingTopBars.forEach(bar => row.cells[0].appendChild(bar));
-    /* ************************ */
+    existingTopBars.forEach(bar => firstCell.appendChild(bar));
+    /* *********************** */
 
     /* **************************************
     * adding bottom bars for the            *
@@ -260,6 +279,17 @@ function toggleRow(table, path) {
     // Add bottom bar for the deepest child itself if it's a group
     if (targetRow.classList.contains('group-header')) {
         addBottomBar(targetRow, interBarsSpacing);
+    } else {
+        // adjust bottom padding against 1 extra "interBarsSpacing"
+        for (let i = 0; i < targetRow.cells.length; i++) {
+            const cell = targetRow.cells[i];
+            cell.style.paddingBottom = (
+                    (Number(getComputedStyle(cell)
+                              .paddingBottom.toString().replace('px', ''))
+                     | 0)
+                    - interBarsSpacing
+                ) + "px";
+        }
     }
     /* *********************************** */
 
@@ -375,12 +405,16 @@ function applyGroupStyles(table, interBarsSpacing) {
             const currentGroupStyle = getGroupStyleForPath(table, path);
             if (currentGroupStyle) {
                 const level = parseInt(row.getAttribute('data-level'));
-                const offset = barThickness + interBarsSpacing;
                 const leftOffset = level * offset;
                 const rightOffset = level * offset;
 
                 for (let i = 0; i < row.cells.length; i++) {
                     const cell = row.cells[i];
+                    cell.style.paddingTop = (
+                            (Number(getComputedStyle(cell)
+                                      .paddingTop.toString().replace('px', '')) | 0)
+                            + barThickness
+                        ) + "px";
                     const topBar = document.createElement('div');
                     topBar.className = 'top-nesting-bar';
                     topBar.style.backgroundColor = currentGroupStyle.border;
@@ -409,8 +443,27 @@ function applyGroupStyles(table, interBarsSpacing) {
     /* ****************************
     * bottom bars for each group. *
     **************************** */
-    table.querySelectorAll('tbody tr.group-header').forEach(
-        row => addBottomBar(row, interBarsSpacing));;
+    table.querySelectorAll('tbody tr.group-header').forEach(row => {
+        addBottomBar(row, interBarsSpacing);
+
+        if (!row.classList.contains("collapsed")) {
+            // adjust (once only, for deepest group with that target row as its last)
+            // bottom padding of last child against 1 extra "interBarsSpacing"
+            const lastChildPath = findLastVisibleChildOfGroup(table, row.dataset.path);
+            const targetLevel = parseInt(row.dataset.level) + 1;
+            targetRow = table.querySelector(
+                `[data-path="${lastChildPath}"][data-level="${targetLevel}"]`);
+            if (!targetRow) return;
+            for (let i = 0; i < targetRow.cells.length; i++) {
+                const cell = targetRow.cells[i];
+                cell.style.paddingBottom = (
+                        (Number(getComputedStyle(cell)
+                                  .paddingBottom.toString().replace('px', '')) | 0)
+                        - interBarsSpacing
+                    ) + "px";
+            }
+        }
+    });
 }
 
 function addLeftRightBars(row, interBarsSpacing) {
@@ -470,7 +523,6 @@ function addLeftRightBars(row, interBarsSpacing) {
 }
 
 function addBottomBar(row, interBarsSpacing) {
-//console.log("addBottomBar ENTER", row);
     /* *********************************************************
     * header row of the group for which to add a bottom line   *
     * the last row at which to add the bottom bar.             *
@@ -491,7 +543,7 @@ function addBottomBar(row, interBarsSpacing) {
     const leftOffset = level * offset;
     const rightOffset = level * offset;
 
-    const endingGroups = countParentGroupsEndingAt(row);
+    const endingParentGroups = countParentGroupsEndingAt(row);
 
     if (isCollapsed) {
         if (groupStyle) {
@@ -501,7 +553,7 @@ function addBottomBar(row, interBarsSpacing) {
                 bar.className = 'bottom-nesting-bar';
                 bar.style.backgroundColor = groupStyle.border;
                 bar.style.zIndex = MAX_Z_INDEX - level;
-                bar.style.bottom = `${endingGroups * offset}px`;
+                bar.style.bottom = `${endingParentGroups * offset}px`;
                 
                 if (i === 0) {
                     bar.style.left = `${leftOffset}px`;
@@ -516,10 +568,9 @@ function addBottomBar(row, interBarsSpacing) {
 
                 // add padding
                 cell.style.paddingBottom = (
-                        Number(getComputedStyle(cell)
-                                  .paddingBottom.toString().replace('px', ''))
-                        + endingGroups * (offset/2)
-                        // no idea why this is the best value here
+                        (Number(getComputedStyle(cell)
+                                  .paddingBottom.toString().replace('px', '')) | 0)
+                        + barThickness + (endingParentGroups * offset)
                     ) + "px";
 
                 cell.appendChild(bar);
@@ -539,7 +590,7 @@ function addBottomBar(row, interBarsSpacing) {
                 bar.className = 'bottom-nesting-bar';
                 bar.style.backgroundColor = groupStyle.border;
                 bar.style.zIndex = MAX_Z_INDEX - level;
-                bar.style.bottom = `${endingGroups * offset}px`;
+                bar.style.bottom = `${endingParentGroups * offset}px`;
                 
                 if (i === 0) {
                     bar.style.left = `${leftOffset}px`;
@@ -553,13 +604,16 @@ function addBottomBar(row, interBarsSpacing) {
                 }
 
                 // add padding
-                cell.style.paddingBottom = (
-                        Number(getComputedStyle(cell)
-                                  .paddingBottom.toString().replace('px', ''))
-                        + endingGroups * (offset/2)
-                        // no idea why this is the best value here
-                    ) + "px";
-
+                if (!(
+                    lastChildRow.classList.contains("group-header") &&
+                    lastChildRow.classList.contains("collapsed")
+                )) {
+                    cell.style.paddingBottom = (
+                            (Number(getComputedStyle(cell)
+                                      .paddingBottom.toString().replace('px', '')) | 0)
+                            + offset // one "interBarsSpacing" too many, needs adjusting by the caller
+                        ) + "px";
+                }
                 cell.appendChild(bar);
             }
         }
