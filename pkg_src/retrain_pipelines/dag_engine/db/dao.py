@@ -614,13 +614,12 @@ def after_insert_listener(mapper, connection, target):
 execution_ended_api_endpoint = \
     f"{os.environ['RP_WEB_SERVER_URL']}/api/v1/execution_end_event"
 
-
 @event.listens_for(Execution._end_timestamp, "set", retval=False)
 def after_end_timestamp_change(target, newValue, oldvalue, initiator):
     """DAG-engine notifies WebConsole server.
 
     This fires when Execution's _end_timestamp changes.
-    Emits an ExecutionEnd dict.
+    Emits an ExecutionExt dict.
     """
     if newValue != oldvalue and newValue is not None:
         # Check if any Tasks have failed=True
@@ -649,4 +648,39 @@ def after_end_timestamp_change(target, newValue, oldvalue, initiator):
             )
         except Exception as ex:
             logger.warn(ex)
+
+
+new_task_api_endpoint = \
+    f"{os.environ['RP_WEB_SERVER_URL']}/api/v1/new_task_event"
+
+@event.listens_for(Task, "after_insert")
+def after_insert_listener(mapper, connection, target):
+    """DAG-engine notifies WebConsole server.
+
+    This fires when Task is created.
+    Emits a Task dict.
+    """
+    data_snapshot = {}
+    for col in target.__table__.columns:
+        value = getattr(target, col.name)
+        if value is None:
+            data_snapshot[col.name] = None
+        elif isinstance(value, (datetime, date)):
+            data_snapshot[col.name] = value.isoformat()
+        elif isinstance(value, UUID):
+            data_snapshot[col.name] = str(value)
+        else:
+            data_snapshot[col.name] = value
+
+    # logger.info(f"Task after_insert {data_snapshot}")
+
+    try:
+        requests.post(new_task_api_endpoint, json=data_snapshot)
+    except requests.exceptions.ConnectionError as ce:
+        logger.info(
+            "WebConsole apparently not running " +
+            f"({os.environ['RP_WEB_SERVER_URL']})"
+        )
+    except Exception as ex:
+        logger.warn(ex)
 

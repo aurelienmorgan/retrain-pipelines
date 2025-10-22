@@ -308,9 +308,6 @@ class Task(Base):
         if data:
             kwargs = {**data, **kwargs}
             kwargs["id"] = int(kwargs["id"])
-            kwargs["docstring"] = \
-                str(kwargs["docstring"]) if "docstring" in kwargs \
-                else None
             kwargs["_start_timestamp"] = \
                 parse_datetime(kwargs["start_timestamp"])
             kwargs["_end_timestamp"] = (

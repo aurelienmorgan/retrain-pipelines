@@ -1,6 +1,7 @@
 
 import os
 import json
+import copy
 import asyncio
 import logging
 
@@ -15,6 +16,10 @@ from .. import ClientInfo
 # Global lists of subscriber queues
 new_exec_subscribers = []
 exec_end_subscribers = []
+
+new_task_subscribers = []
+task_end_subscribers = []
+
 
 uvicorn_logger = logging.getLogger("uvicorn.access")
 
@@ -43,12 +48,19 @@ async def execution_number(
 async def multiplexed_event_generator(client_info: ClientInfo):
     queues = {
         "newExecution": asyncio.Queue(),
-        "executionEnded": asyncio.Queue()
+        "executionEnded": asyncio.Queue(),
+
+        "newTask": asyncio.Queue(),
+        "taskEnded": asyncio.Queue()
     }
 
     new_exec_subscribers.append((queues["newExecution"], client_info))
     exec_end_subscribers.append((queues["executionEnded"], client_info))
     print(f"execution subscribers [{len(new_exec_subscribers)}] : {new_exec_subscribers}")
+
+    new_task_subscribers.append((queues["newTask"], client_info))
+    task_end_subscribers.append((queues["taskEnded"], client_info))
+    print(f"task subscribers [{len(new_task_subscribers)}] : {task_end_subscribers}")
 
     try:
         # Initial get asyncio tasks
@@ -67,9 +79,20 @@ async def multiplexed_event_generator(client_info: ClientInfo):
                 if key in ["newExecution", "executionEnded"]:
                     execution_number_response = await execution_number(execution_id)
                     data = execution_number_response.body.decode("utf-8")
-                    event_type = key
+                elif key == "newTask":
+                    # TODO
+                    data = json.dumps(finished.result())
+                    # print(f"newTask - {data}")
+                elif key == "taskEnded":
+                    # TODO
+                    data = copy.copy(finished.result())
+                    print(f"taskEnded - {data}")
+                else:
+                    raise Exception(f"handling of SSE event '{key}' not implemented.")
 
-                # Replace only the finished task
+                event_type = key
+
+                # Replace only the finished asyncio task
                 get_tasks[key] = asyncio.create_task(queues[key].get())
 
                 uvicorn_logger.info(
@@ -91,5 +114,8 @@ async def multiplexed_event_generator(client_info: ClientInfo):
     finally:
         new_exec_subscribers.remove((queues["newExecution"], client_info))
         exec_end_subscribers.remove((queues["executionEnded"], client_info))
+        print(f"execution subscribers [{len(new_exec_subscribers)}] : {new_exec_subscribers}")
+        new_task_subscribers.remove((queues["newTask"], client_info))
+        task_end_subscribers.remove((queues["taskEnded"], client_info))
         print(f"execution subscribers [{len(new_exec_subscribers)}] : {new_exec_subscribers}")
 

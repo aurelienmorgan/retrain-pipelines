@@ -16,7 +16,6 @@ from ...db.model import TaskExt, TaskGroup
 
 from ..utils import ClientInfo
 from ..utils.execution.events import \
-    new_exec_subscribers, exec_end_subscribers, \
     multiplexed_event_generator, execution_number
 from ..utils.execution.gantt_chart import draw_chart
 
@@ -394,66 +393,91 @@ def register(app, rt, prefix=""):
                     });
                 """),
                 Script(f"""// SSE events : retraining-pipeline execution events
-                    let executionEventSource;
-                    function registerExecEventSrc() {{
-                        executionEventSource = new EventSource(
+                    let executionEventsSource;
+
+                    // add some logging convenience to event-source
+                    EventSource.prototype._listenerStore = [];
+                    const origAddEventListener =
+                        EventSource.prototype.addEventListener;
+                    EventSource.prototype.addEventListener =
+                        function(type, listener, options) {{
+                            this._listenerStore.push({{type, listener, options}});
+                            origAddEventListener.call(this, type, listener, options);
+                        }};
+                    function listEventSourceListeners(es) {{
+                        return es._listenerStore;
+                    }}
+
+                    function registerExecEventsSrc() {{
+                        executionEventsSource = new EventSource(
                             `{prefix}/execution_events`
                         );
 
-                        executionEventSource.onerror = (err) => {{
+                        executionEventsSource.onerror = (err) => {{
                             console.error('SSE error:', err);
                         }};
                         // Force close EventSource when leaving the page
                         window.addEventListener('pagehide', () => {{
-                            executionEventSource.close();
+                            executionEventsSource.close();
                         }});
 
                         /* ************************
                         * "new execution started" *
                         ************************ */
                         // update executions count label
-                        executionEventSource.addEventListener('newExecution', (event) => {{
+                        executionEventsSource.addEventListener('newExecution', (event) => {{
                             let payload;
                             try {{
                                 // Parse the server data, assuming it's JSON
                                 payload = JSON.parse(event.data);
                             }} catch (e) {{
-                                console.error('Error parsing SSE message data:', event.data);
+                                console.error('Error parsing SSE message data:',
+                                              event.data);
                                 console.error(e);
                                 return;
                             }}
-                            //console.log("executionEventSource 'newExecution'", payload);
-                            if (payload.name === document.getElementById("execution-name").innerText) {{
+                            //console.log("executionEventsSource 'newExecution'", payload);
+                            if (
+                                payload.name ===
+                                    document.getElementById("execution-name").innerText
+                            ) {{
                                 executionNumberJson = payload;
-                                executionNumberJson.number = document.getElementById("execution-number").innerText;
+                                executionNumberJson.number =
+                                    document.getElementById("execution-number").innerText;
                                 updateExecutionNumber(executionNumberJson);
                             }}
                         }});
+                        /* ********************* */
 
                         /* *********************
                         * "an execution ended" *
                         ********************** */
                         // update executions count label and tooltip
-                        executionEventSource.addEventListener('executionEnded', (event) => {{
+                        executionEventsSource.addEventListener('executionEnded', (event) => {{
                             let payload;
                             try {{
                                 // Parse the server data, assuming it's JSON
                                 payload = JSON.parse(event.data);
                             }} catch (e) {{
-                                console.error('Error parsing SSE message data:', event.data);
+                                console.error('Error parsing SSE message data:',
+                                              event.data);
                                 console.error(e);
                                 return;
                             }}
-                            //console.log("executionEventSource 'executionEnded'", payload);
-                            if (payload.name === document.getElementById("execution-name").innerText) {{
+                            //console.log("executionEventsSource 'executionEnded'", payload);
+                            if (
+                                payload.name ===
+                                    document.getElementById("execution-name").innerText
+                            ) {{
                                 executionNumberJson = payload;
-                                executionNumberJson.number = document.getElementById("execution-number").innerText;
+                                executionNumberJson.number =
+                                    document.getElementById("execution-number").innerText;
                                 updateExecutionNumber(executionNumberJson);
                             }}
                         }});
-
+                        /* ******************* */
                     }}
-                    registerExecEventSrc();
+                    registerExecEventsSrc();
                 """),
                 Script("""// re-register SSE source on window history.back()
                     window.addEventListener('pageshow', function(event) {
@@ -479,13 +503,13 @@ def register(app, rt, prefix=""):
                                     !previousClasses.includes('disconnected')
                                 ) {
                                     console.log("disconnected");
-                                    executionEventSource.close();
+                                    executionEventsSource.close();
                                 } else if (
                                     newClasses.includes('connected') &&
                                     !previousClasses.includes('connected')
                                 ) {
                                     console.log("reconnected");
-                                    registerExecEventSrc();
+                                    registerExecEventsSrc();
                                     document.dispatchEvent(
                                         new Event("DOMContentLoaded", { bubbles: true, cancelable: true }));
                                 }
@@ -645,8 +669,9 @@ def register(app, rt, prefix=""):
                 """),
                 Button("Save Page", onclick="savePageAsSingleFile()"),
 
-                ## TODO, add stuff here (live-streamed Gantt diagram of tasks, etc.)
-                H1( # timeline
+                ## TODO, add stuff here (pipeline-card sections)
+
+                H1(# timeline
                     "Execution Timeline",
                     style="""
                         color: #6082B6;
@@ -941,9 +966,9 @@ def register(app, rt, prefix=""):
                         }
                     }
                 """),
-                Div(
+                Div(# Gantt diagram
                     Div(
-                        Table(# Gantt diagram
+                        Table(
                             Colgroup(
                                 Col(id="task-col"),
                                 Col(id="timeline-col"),
@@ -989,6 +1014,46 @@ def register(app, rt, prefix=""):
                     hx_trigger="load",
                     hx_swap="innerHTML"
                 ),
+                Script(f"""// SSE events : retraining-pipeline task events
+                    function registerTaskEvents() {{
+                        /* *****************
+                        * "a task started" *
+                        ***************** */
+                        executionEventsSource.addEventListener('newTask', (event) => {{
+                            let payload;
+                            try {{
+                                // Parse the server data, assuming it's JSON
+                                payload = JSON.parse(event.data);
+                            }} catch (e) {{
+                                console.error('Error parsing SSE message data:', event.data);
+                                console.error(e);
+                                return;
+                            }}
+console.log("executionEventsSource 'newTask'", payload);
+                        }});
+                        /* ************** */
+
+                        /* *****************
+                        * "a task ended" *
+                        ***************** */
+                        executionEventsSource.addEventListener('taskEnded', (event) => {{
+                            let payload;
+                            try {{
+                                // Parse the server data, assuming it's JSON
+                                payload = JSON.parse(event.data);
+                            }} catch (e) {{
+                                console.error('Error parsing SSE message data:', event.data);
+                                console.error(e);
+                                return;
+                            }}
+console.log("executionEventsSource 'taskEnded'", payload);
+                        }});
+                        /* ************** */
+
+                    }}
+                    registerTaskEvents();
+console.log("event-source listeners", listEventSourceListeners(executionEventsSource));
+                """),
 
                 H1(# DAG
                     "Execution DAG",

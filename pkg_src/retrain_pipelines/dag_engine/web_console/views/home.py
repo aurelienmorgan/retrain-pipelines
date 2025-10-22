@@ -17,7 +17,6 @@ from .page_template import page_layout
 from ..utils.executions import get_users, \
     get_pipeline_names, get_executions_ext
 from ..utils.executions.events import \
-    new_exec_subscribers, exec_end_subscribers, \
     multiplexed_event_generator
 from ..utils import ClientInfo
 
