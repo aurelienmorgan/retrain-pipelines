@@ -62,9 +62,16 @@ function hexToRgba(hex, alpha) {
     * Helper function to convert *
     * hex to rgba with alpha.    *
     *************************** */
-    const r = parseInt(hex.slice(1, 3), 16);
-    const g = parseInt(hex.slice(3, 5), 16);
-    const b = parseInt(hex.slice(5, 7), 16);
+    hex = hex.replace(/^#/, '');
+    if (hex.length === 3) {
+        hex = hex.split('').map(c => c + c).join('');
+    }
+    if (hex.length !== 6) {
+        throw new Error('Invalid hex color length');
+    }
+    const r = parseInt(hex.slice(0, 2), 16);
+    const g = parseInt(hex.slice(2, 4), 16);
+    const b = parseInt(hex.slice(4, 6), 16);
     return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
@@ -230,51 +237,7 @@ function initFormat(ganttTimelineObjName) {
     const maxLevel = getMaxVisibleLevel(bodyRows);
     tbody.style.setProperty('--max-visible-level', maxLevel);
 
-    bodyRows.forEach((tr) => {
-        /* add event listener for timeline add */
-        const timelineCell = tr.cells[ganttTimelineObj.timelineColumnIndex];
-        timelineAddedObserver.observe(timelineCell, { childList: true });
-
-        /* implement custom events init */
-        if (tr.classList.contains("group-header")) {
-            if (tr.classList.contains("collapsed")) {
-                // header row of a collapsed group =>
-                // set the start-timestamp/end-timestamp dataset attrs
-                addSummaryTimestamps(ganttTimelineObj, tr);
-            }
-
-            if (tr.classList.contains("parallel-line")) {
-                // header row of one of the spilt sub-DAG lines =>
-                // apply odd/even backgroupd overlay to group
-                const index = tr.dataset.path.split(".").at(-1);
-                if (index%2) {
-                    tbody.querySelectorAll(
-                        `tr[data-path="${tr.dataset.path}"], ` +
-                        `tr[data-path^="${tr.dataset.path}."]`
-                    ).forEach(row => {
-                        [...row.children].forEach(td => {
-                            const bg = window.getComputedStyle(td).backgroundImage;
-                            td.style.backgroundImage = (
-                                'linear-gradient(135deg,' +
-                                                'rgba(255,255,255,0.3) 0%, ' +
-                                                'rgba(248,249,250,0.3) 100%), ' +
-                                `${bg !== 'none' ? bg : ''}`
-                            ).replace(/,\s*$/, '');
-                        });
-                    });
-                }
-            }
-        } else if (tr.dataset.level === "0") {
-            // top-level row (not part of a group)
-            // we remove row-styling (set by collapsible-grouped-table
-            // as the default behavior)
-            tr.style.color = "";
-            tr.style.background = "";
-            tr.style.borderColor = "";
-        } else {
-            // non-header row (group row that is not the header)
-        }
-    });
+    bodyRows.forEach((tr) => initTrFormat(ganttTimelineObj, tr));
 
     overrideLabels(ganttTimelineObj, bodyRows);
     ganttTimelineObj.refresh();
@@ -283,6 +246,52 @@ function initFormat(ganttTimelineObjName) {
     const maxLabelLength = getLongestFirstColumnWidth(ganttTimelineObj.table);
     const firstCol = ganttTimelineObj.table.querySelector('colgroup col:first-child');
     firstCol.style.width = maxLabelLength + "px";
+}
+
+function initTrFormat(ganttTimelineObj, tr) {
+    /* add event listener for timeline add */
+    const timelineCell = tr.cells[ganttTimelineObj.timelineColumnIndex];
+    timelineAddedObserver.observe(timelineCell, { childList: true });
+
+    /* implement custom events init */
+    if (tr.classList.contains("group-header")) {
+        if (tr.classList.contains("collapsed")) {
+            // header row of a collapsed group =>
+            // set the start-timestamp/end-timestamp dataset attrs
+            addSummaryTimestamps(ganttTimelineObj, tr);
+        }
+
+        if (tr.classList.contains("parallel-line")) {
+            // header row of one of the spilt sub-DAG lines =>
+            // apply odd/even backgroupd overlay to group
+            const index = tr.dataset.path.split(".").at(-1);
+            if (index%2) {
+                ganttTimelineObj.table.querySelectorAll(
+                    `tr[data-path="${tr.dataset.path}"], ` +
+                    `tr[data-path^="${tr.dataset.path}."]`
+                ).forEach(row => {
+                    [...row.children].forEach(td => {
+                        const bg = window.getComputedStyle(td).backgroundImage;
+                        td.style.backgroundImage = (
+                            'linear-gradient(135deg,' +
+                                            'rgba(255,255,255,0.3) 0%, ' +
+                                            'rgba(248,249,250,0.3) 100%), ' +
+                            `${bg !== 'none' ? bg : ''}`
+                        ).replace(/,\s*$/, '');
+                    });
+                });
+            }
+        }
+    } else if (tr.dataset.level === "0") {
+        // top-level row (not part of a group)
+        // we remove row-styling (set by collapsible-grouped-table
+        // as the default behavior)
+        tr.style.color = "";
+        tr.style.background = "";
+        tr.style.borderColor = "";
+    } else {
+        // non-header row (group row that is not the header)
+    }
 }
 
 const timelineAddedObserver = new MutationObserver((mutationsList) => {
@@ -509,10 +518,10 @@ function getLongestFirstColumnWidth(table) {
 
     for (let i = 0; i < rows.length; i++) {
         const firstCell = rows[i].cells[0];
-        const firstLevelDiv = firstCell.querySelector('div.shaped-label');
+        const shapedLabelDiv = firstCell.querySelector('div.shaped-label');
             const textContent = (firstCell.textContent || firstCell.innerText).trim();
-        if (firstLevelDiv) {
-            const style = getComputedStyle(firstLevelDiv);
+        if (shapedLabelDiv) {
+            const style = getComputedStyle(shapedLabelDiv);
             context.font =  style.font;
 
             // Measure width (incl. padding)
@@ -524,9 +533,11 @@ function getLongestFirstColumnWidth(table) {
             const letterSpacing = parseFloat(style.letterSpacing) || 0;
             const lsWidth = letterSpacing * Math.max(0, textContent.length - 1);
 
-            width = baseWidth + lsWidth +
-                    (parseFloat(getComputedStyle(firstCell).paddingLeft) || 0)
-                    + 10;
+            width = Math.max(
+                baseWidth + lsWidth +
+                (parseFloat(getComputedStyle(firstCell).paddingLeft) || 0),
+                (Number(style.minWidth.toString().replace('px', '')) | 0)
+            ) + 10;
         } else {
             // pure (non-shaped) text label (e.g. taskgroup name)
             const style = getComputedStyle(firstCell);
@@ -543,5 +554,56 @@ function getLongestFirstColumnWidth(table) {
     }
 
     return maxWidth;
+}
+
+
+////////////////////////////////////////////////////////
+
+
+function ganttInsert(ganttTimelineObjName, payload, interBarsSpacing) {
+    /* *
+    *
+    ** */
+    const ganttTimelineObj = getGlobalObjByName(ganttTimelineObjName);
+    const table_id = ganttTimelineObj.table.id;
+
+    const group_header_row_id = null;
+    const group_index = -1;
+
+    const insertData = [
+        {
+            id: payload.id,
+            cells: {
+                name: {
+                    value: payload.name,
+                    attributes: {}
+                },
+                timeline: {
+                    value: null,
+                    attributes: {
+                        "start_timestamp": new Date(payload.start_timestamp).getTime()
+                    }
+                }
+            },
+            style: payload.ui_css
+        }
+    ]
+
+    // call collapsible-grouped-table insertAt method
+    insertAt(
+        table_id, group_header_row_id, group_index,
+        insertData,
+        interBarsSpacing
+    )
+    const tr = ganttTimelineObj.table.querySelector(`tr[data-id="${payload.id}"]`);
+    initTrFormat(ganttTimelineObj, tr);
+
+    overrideLabels(ganttTimelineObj, [tr]);
+    ganttTimelineObj.refresh();
+
+    /* update label-column length (table-layout: fixed) */
+    const maxLabelLength = getLongestFirstColumnWidth(ganttTimelineObj.table);
+    const firstCol = ganttTimelineObj.table.querySelector('colgroup col:first-child');
+    firstCol.style.width = maxLabelLength + "px";
 }
 

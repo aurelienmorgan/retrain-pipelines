@@ -658,8 +658,9 @@ def after_insert_listener(mapper, connection, target):
     """DAG-engine notifies WebConsole server.
 
     This fires when Task is created.
-    Emits a Task dict.
+    Emits a TaskExt dict.
     """
+    # --- retrieve Task fields ---
     data_snapshot = {}
     for col in target.__table__.columns:
         value = getattr(target, col.name)
@@ -673,6 +674,24 @@ def after_insert_listener(mapper, connection, target):
             data_snapshot[col.name] = value
 
     # logger.info(f"Task after_insert {data_snapshot}")
+
+    # --- inject TaskType fields ---
+    # The session is available via connection.engine (sync)
+    Session = scoped_session(sessionmaker(bind=connection.engine))
+    session = Session()
+    tasktype = session.get(TaskType, (target.exec_id, target.tasktype_uuid))
+    # Add TaskType fields for TaskExt
+    data_snapshot["docstring"] = tasktype.docstring
+    data_snapshot["name"] = tasktype.name
+    data_snapshot["ui_css"] = tasktype.ui_css
+    data_snapshot["order"] = tasktype.order
+    data_snapshot["is_parallel"] = tasktype.is_parallel
+    data_snapshot["merge_func"] = tasktype.merge_func
+    data_snapshot["taskgroup_uuid"] = str(getattr(tasktype, "taskgroup_uuid", "")) \
+        if getattr(tasktype, "taskgroup_uuid", None) is not None else None
+    session.close()
+
+    # logger.info(f"TaskExt after_insert {data_snapshot}")
 
     try:
         requests.post(new_task_api_endpoint, json=data_snapshot)

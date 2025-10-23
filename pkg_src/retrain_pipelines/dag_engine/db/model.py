@@ -362,8 +362,21 @@ class TaskExt(Task):
         "polymorphic_identity": "task_ext"
     }
 
-    def __init__(self, **kwargs):
+    def __init__(self, *args, **kwargs):
+        # Support dict as the ONLY positional argument
+        data = None
+        if len(args) == 1 and isinstance(args[0], dict):
+            data = args[0]
+        elif len(args) > 0:
+            raise TypeError(
+                "TaskExt accepts a dict or keyword arguments")
+
+        if data:
+            kwargs = {**data, **kwargs}
+
         name = kwargs.pop("name", None)
+        order = kwargs.pop("order", None)
+        docstring = kwargs.pop("docstring", None)
         ui_css = kwargs.pop("ui_css", None)
         is_parallel = kwargs.pop("is_parallel", None)
         merge_func = kwargs.pop("merge_func", None)
@@ -373,6 +386,8 @@ class TaskExt(Task):
 
         super().__init__(**kwargs)
         self.name = name
+        self.order = order
+        self.docstring = docstring
         self.ui_css = ui_css
         self.is_parallel = is_parallel
         self.merge_func = merge_func

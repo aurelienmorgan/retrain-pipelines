@@ -131,6 +131,7 @@ def register(app, rt, prefix=""):
 
         return rendering_content
 
+
     @rt(f"{prefix}/exec_current_progress", methods=["GET"])
     async def exec_current_progress(request: Request):
         """Progress of the execution.
@@ -1029,7 +1030,11 @@ def register(app, rt, prefix=""):
                                 console.error(e);
                                 return;
                             }}
+
+                            if (payload.exec_id == {execution_id}) {{
 console.log("executionEventsSource 'newTask'", payload);
+ganttInsert('execGanttTimelineObj', payload, interBarsSpacing);
+                            }}
                         }});
                         /* ************** */
 
