@@ -5,12 +5,17 @@ import copy
 import asyncio
 import logging
 
+from uuid import UUID
+from functools import lru_cache
+
 from typing import Union
 from fasthtml.common import Response, JSONResponse
 
 from ....db.model import Execution, ExecutionExt
 from ....db.dao import AsyncDAO
 from .. import ClientInfo
+from .gantt_chart import fill_defaults, Style, \
+    GroupTypes
 
 
 # Global lists of subscriber queues
@@ -27,12 +32,7 @@ uvicorn_logger = logging.getLogger("uvicorn.access")
 async def execution_number(
     execution_id: int
 ) -> Union[Response, JSONResponse]:
-    try:
-        execution_id = int(execution_id)
-    except (TypeError, ValueError):
-        return Response(
-            f"Invalid execution ID {execution_id}", 500)
-
+    """ Living counts - DO NOT USE CACHE """
     dao = AsyncDAO(
         db_url=os.environ["RP_METADATASTORE_ASYNC_URL"]
     )
@@ -43,6 +43,21 @@ async def execution_number(
     # print(f"execution_number_dict : {execution_number_dict}")
 
     return JSONResponse(execution_number_dict)
+
+
+async def taskgroups_hierarchy(
+    taskgroup_uuid: UUID
+) -> Union[Response, JSONResponse]:
+    dao = AsyncDAO(
+        db_url=os.environ["RP_METADATASTORE_ASYNC_URL"]
+    )
+    taskgroups_list = await dao.get_taskgroups_hierarchy(taskgroup_uuid)
+    if taskgroups_list is None:
+        return Response(
+            f"Invalid TaskType UUID {str(taskgroup_uuid)}", 500)
+    # print(f"taskgroups_list : {taskgroups_list}")
+
+    return JSONResponse(taskgroups_list)
 
 
 async def multiplexed_event_generator(client_info: ClientInfo):
@@ -75,13 +90,50 @@ async def multiplexed_event_generator(client_info: ClientInfo):
             for finished in done:
                 # Identify which queue/task finished
                 key = next(k for k, v in get_tasks.items() if v == finished)
-                execution_id = finished.result()['id']
+
+                execution_id = finished.result()["id"]
                 if key in ["newExecution", "executionEnded"]:
                     execution_number_response = await execution_number(execution_id)
                     data = execution_number_response.body.decode("utf-8")
+
                 elif key == "newTask":
-                    # TODO
-                    data = json.dumps(finished.result())
+                    # dispatches a TaskExt object dict, augmented with
+                    # "taskgroups_hierarchy_list" key with ordered list
+                    # of taskgroup nesting
+                    data = copy.copy(finished.result())
+
+                    # if task_ext belongs to a TaskGroup
+                    taskgroup_uuid = data["taskgroup_uuid"]
+                    if taskgroup_uuid:
+                        taskgroups_hierarchy_response = \
+                            await taskgroups_hierarchy(UUID(taskgroup_uuid))
+                        if taskgroups_hierarchy_response.status_code == 200:
+                            taskgroups_hierarchy_list = \
+                                json.loads(
+                                    taskgroups_hierarchy_response.body.decode("utf-8")
+                                )
+                            for taskgroup_dict in taskgroups_hierarchy_list:
+                                # taskgroup styling, fill defaults
+                                taskgroup_style = Style(taskgroup_dict["ui_css"])
+                                fill_defaults(taskgroup_style, GroupTypes.TASKGROUP)
+                                taskgroup_dict["ui_css"] = taskgroup_style
+                            # task styling, adapt labelUnderlay color
+                            data["ui_css"]["labelUnderlay"] = \
+                                taskgroups_hierarchy_list[0]["ui_css"]["background"]
+                        else:
+                            logging.getLogger().warn(
+                                taskgroups_hierarchy_response.body.decode("utf-8"))
+                            taskgroups_hierarchy_list = []
+                    else:
+                        taskgroups_hierarchy_list = []
+                    data["taskgroups_hierarchy"] =  taskgroups_hierarchy_list
+
+                    # if task_ext belongs to a distributed sub-DAG line
+                    if data["rank"]:
+                        # TODO
+                        pass
+
+                    data = json.dumps(data)
                     # print(f"newTask - {data}")
                 elif key == "taskEnded":
                     # TODO

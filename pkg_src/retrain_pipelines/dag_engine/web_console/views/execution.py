@@ -236,7 +236,7 @@ def register(app, rt, prefix=""):
                         Div(
                             id="executions-count"
                         ),
-                        " -\u00A0",
+                        "\u00A0-\u00A0",
                         Div(
                             id="utc-start-date-time-str"
                         ),
@@ -484,6 +484,7 @@ def register(app, rt, prefix=""):
                     window.addEventListener('pageshow', function(event) {
                         if (event.persisted) {
                             registerExecEventSrc();
+                            registerTaskEvents();
                         }
                     });
                 """),
@@ -511,6 +512,7 @@ def register(app, rt, prefix=""):
                                 ) {
                                     console.log("reconnected");
                                     registerExecEventsSrc();
+                                    registerTaskEvents();
                                     document.dispatchEvent(
                                         new Event("DOMContentLoaded", { bubbles: true, cancelable: true }));
                                 }

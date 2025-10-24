@@ -120,7 +120,7 @@ def fill_defaults(
         ),
         0.65
     )
-    group_style["border"] = hex_to_rgba(
+    group_style.border = hex_to_rgba(
         (
             group_style.border or
             DEFAULT_GROUP_STYLES[group_type].border

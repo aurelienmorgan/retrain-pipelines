@@ -1022,8 +1022,8 @@ function checkUnicityOfAllDepthsItems(table, data) {
     function traverse(items) {
         for (const item of items) {
             // Check if this item's id already exists in the table
-            if (existingIds.has(item.id)) {
-                duplicates.push(item.id);
+            if (existingIds.has(item.id.toString())) {
+                duplicates.push(item.id.toString());
             }
             // If item has children, traverse them recursively
             if (item.children && Array.isArray(item.children)) {

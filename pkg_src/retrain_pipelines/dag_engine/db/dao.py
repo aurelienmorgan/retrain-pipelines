@@ -1,5 +1,6 @@
 
 import os
+import json
 import logging
 import asyncio
 import requests
@@ -10,7 +11,8 @@ from typing import List, Optional
 from datetime import datetime, date
 
 from sqlalchemy import create_engine, Uuid, \
-    select, and_, desc, case, func, event
+    select, and_, desc, case, func, event, \
+    text
 from sqlalchemy.orm import scoped_session, \
     sessionmaker, aliased
 from sqlalchemy.ext.asyncio import create_async_engine, \
@@ -99,7 +101,7 @@ class DAOBase:
                 except Exception as e:
                     # database lock
                     if attempt < 2:
-                        logging.getLogger().debug(
+                        logger.debug(
                             f"_sync_update_entity - retry {attempt+1})"
                         )
                         continue
@@ -575,6 +577,57 @@ class AsyncDAO(DAOBase):
                 "completed": row.completed,
                 "failed": row.failed,
             }
+
+    @lru_cache
+    async def get_taskgroups_hierarchy(
+        self, taskgroup_uuid: UUID
+    ) -> Optional[List[dict]]:
+        """Returns a hierarchical list of nested taskgroups.
+
+        Upward, starting from the one passed as argument.
+        Deepest first.
+        """
+        recursive_sql = """
+        WITH RECURSIVE parent_chain AS (
+            SELECT *
+            FROM taskgroups
+            WHERE uuid = :start_uuid
+
+            UNION ALL
+
+            SELECT tg.*
+            FROM taskgroups tg
+            JOIN parent_chain pc ON EXISTS (
+                SELECT 1
+                FROM json_each(tg.elements)
+                WHERE REPLACE(json_each.value, '-', '') = pc.uuid
+            )
+        )
+        SELECT * FROM parent_chain ORDER BY "order";
+        """
+        async with self._get_session() as session:
+            result = await session.execute(
+                                text(recursive_sql),
+                                {"start_uuid": taskgroup_uuid.hex})
+            rows = result.fetchall()
+            if not rows:
+                logger.warn(f"TaskGroup {taskgroup_uuid} not found.")
+                return None
+
+            out = []
+            for row in rows:
+                mapping = row._mapping
+                out.append({
+                    "uuid": (
+                        # bring back dashes
+                        str(UUID(hex=mapping["uuid"]))
+                    ),
+                    "name": mapping.get("name"),
+                    "ui_css": json.loads(mapping.get("ui_css")) \
+                              if mapping.get("ui_css") else None
+                })
+
+            return out
 
 
 #////////////////////////////////////////////////////////////////////////////
