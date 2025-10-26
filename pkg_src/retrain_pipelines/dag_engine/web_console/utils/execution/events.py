@@ -131,6 +131,7 @@ async def multiplexed_event_generator(client_info: ClientInfo):
                     # if task_ext belongs to a distributed sub-DAG line
                     if data["rank"]:
                         # TODO
+                        # print(f"data['rank'] : {data['rank']}")
                         pass
 
                     data = json.dumps(data)

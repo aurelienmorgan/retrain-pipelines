@@ -312,18 +312,31 @@ def _organize_tasks(
         takgroup_rank = None
 
         children = []
-        for element in children_map[tg_uuid]:
-            if element in task_by_id:
-                if (
-                    element not in emitted and (
-                        rank is None or rank == task_by_id[element].rank
-                    )
-                ):
-                    emitted.add(element)
-                    children.append(task_by_id[element])
-            elif element in taskgroup_by_uuid:
-                if f"{rank or []}-{element}" not in emitted:
-                    children.append(emit_taskgroup(element, rank))
+
+        # First, collect all child taskgroup UUIDs for this taskgroup
+        child_taskgroup_uuids = set()
+        if tg_uuid in children_map:
+            for element in children_map[tg_uuid]:
+                if element in taskgroup_by_uuid:
+                    child_taskgroup_uuids.add(element)
+
+        # Iterate over tasks_list to maintain chronological order
+        for task_ext in tasks_list:
+            # Check if this task belongs to the current taskgroup
+            if (str(task_ext.taskgroup_uuid) == tg_uuid and
+                task_ext.id not in emitted and
+                (rank is None or rank == task_ext.rank)):
+                emitted.add(task_ext.id)
+                children.append(task_ext)
+            # Check if we need to emit a nested taskgroup at this position
+            # This happens when we encounter the first task of a child taskgroup
+            elif (str(task_ext.taskgroup_uuid) in child_taskgroup_uuids and
+                  parent_of_taskgroup.get(str(task_ext.taskgroup_uuid)) == tg_uuid):
+                child_tg_uuid = str(task_ext.taskgroup_uuid)
+                if f"{rank or []}-{child_tg_uuid}" not in emitted:
+                    child_tg_struct = emit_taskgroup(child_tg_uuid, rank)
+                    children.append(child_tg_struct)
+                    # Note: the nested emit_taskgroup will mark individual tasks as emitted
 
         emitted.add(f"{rank or []}-{tg_uuid}")
 
@@ -464,39 +477,40 @@ def draw_chart(
     js_rows = "[" + ", ".join(r.to_js_literal() for r in rows) + "]"
     return (
         Script(f"""
-            const tableData = {js_rows};
+            (function refreshScript() {{
+                const tableData = {js_rows};
 
-            function countAllDepthsItems(data) {{
-                let count = 0;
+                function countAllDepthsItems(data) {{
+                    let count = 0;
 
-                function traverse(items) {{
-                    for (const item of items) {{
-                        count++; // Count the current item
+                    function traverse(items) {{
+                        for (const item of items) {{
+                            count++; // Count the current item
 
-                        // If item has children, traverse them recursively
-                        if (item.children && Array.isArray(item.children)) {{
-                            traverse(item.children);
+                            // If item has children, traverse them recursively
+                            if (item.children && Array.isArray(item.children)) {{
+                                traverse(item.children);
+                            }}
                         }}
                     }}
+
+                    traverse(data);
+                    return count;
                 }}
+                console.log(`${{countAllDepthsItems(tableData)}} total rows ` +
+                            'in tableData array.');
 
-                traverse(data);
-                return count;
-            }}
-            console.log(`${{countAllDepthsItems(tableData)}} total rows ` +
-                        'in tableData array.');
+                /* load gantt-chart data */
+                init('gantt-{execution_id}', tableData, interBarsSpacing);
 
-            /* load gantt-chart data */
-            const interBarsSpacing = 2;     /* in px */
-            init('gantt-{execution_id}', tableData, interBarsSpacing);
+                /* instantiate timelines renderer */
+                window.execGanttTimelineObj =
+                    new GanttTimeline('gantt-{execution_id}', 'timeline');
 
-            /* instantiate timelines renderer */
-            window.execGanttTimelineObj =
-                new GanttTimeline('gantt-{execution_id}', 'timeline');
-
-            /* handle collapsed group-header rows *
-            *  for summary timeline timestamps    */
-            initFormat('execGanttTimelineObj');
+                /* handle collapsed group-header rows *
+                *  for summary timeline timestamps    */
+                initFormat('execGanttTimelineObj');
+            }})();
         """)
     )
 

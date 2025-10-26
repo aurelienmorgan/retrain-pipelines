@@ -480,51 +480,88 @@ def register(app, rt, prefix=""):
                     }}
                     registerExecEventsSrc();
                 """),
-                Script("""// re-register SSE source on window history.back()
-                    window.addEventListener('pageshow', function(event) {
-                        if (event.persisted) {
+                Script(f"""// re-register SSE source on window history.back()
+                    window.addEventListener('pageshow', function(event) {{
+                        if (event.persisted) {{
+                            // inject up-to-date Gantt chart
+                            const targetDiv = document.getElementById("gantt-script-placeholder");
+                            fetch("{prefix}/exec_current_progress?id={execution_id}",
+                                  {{
+                                        method: 'GET',
+                                        headers: {{ "HX-Request": "true" }}
+                                  }}
+                                ).then(response => response.text())
+                                 .then(html =>
+                                {{
+                                    targetDiv.innerHTML = "";
+                                    const script = document.createElement("script");
+                                    const inlineCode = html.replace(/<script[\s\S]*?>|<\/script>/gi, '');
+                                    script.textContent = inlineCode;
+                                    targetDiv.appendChild(script);
+                                }}
+                            );
+
                             registerExecEventSrc();
                             registerTaskEvents();
-                        }
-                    });
+                        }}
+                    }});
                 """),
-                Script("""// handling & recovering from server-loss
+                Script(f"""// handling & recovering from server-loss
                     const statusCircle = document.getElementById('status-circle');
                     let previousClasses =
                         Array.from(statusCircle.classList); // remember initial classes
-                    function onClassChange(mutationsList) {
-                        for (let mutation of mutationsList) {
+                    function onClassChange(mutationsList) {{
+                        for (let mutation of mutationsList) {{
                             if (
                                 mutation.type === 'attributes' &&
                                 mutation.attributeName === 'class'
-                            ) {
+                            ) {{
                                 const newClasses = Array.from(statusCircle.classList);
 
                                 if (
                                     newClasses.includes('disconnected') &&
                                     !previousClasses.includes('disconnected')
-                                ) {
+                                ) {{
                                     console.log("disconnected");
                                     executionEventsSource.close();
-                                } else if (
+                                }} else if (
                                     newClasses.includes('connected') &&
                                     !previousClasses.includes('connected')
-                                ) {
+                                ) {{
                                     console.log("reconnected");
+
+                                    // inject up-to-date Gantt chart
+                                    const targetDiv = document.getElementById("gantt-script-placeholder");
+                                    fetch("{prefix}/exec_current_progress?id={execution_id}",
+                                          {{
+                                                method: 'GET',
+                                                headers: {{ "HX-Request": "true" }}
+                                          }}
+                                        ).then(response => response.text())
+                                         .then(html =>
+                                        {{
+                                            targetDiv.innerHTML = "";
+                                            const script = document.createElement("script");
+                                            const inlineCode = html.replace(/<script[\s\S]*?>|<\/script>/gi, '');
+                                            script.textContent = inlineCode;
+                                            targetDiv.appendChild(script);
+                                        }}
+                                    );
+
                                     registerExecEventsSrc();
                                     registerTaskEvents();
                                     document.dispatchEvent(
-                                        new Event("DOMContentLoaded", { bubbles: true, cancelable: true }));
-                                }
+                                        new Event("DOMContentLoaded", {{ bubbles: true, cancelable: true }}));
+                                }}
 
                                 // Update previousClasses for next mutation check
                                 previousClasses = newClasses;
-                            }
-                        }
-                    }
+                            }}
+                        }}
+                    }}
 
                     const observer = new MutationObserver(onClassChange);
-                    observer.observe(statusCircle, { attributes: true });
+                    observer.observe(statusCircle, {{ attributes: true }});
                 """),
                 Style(""" /* header and body */
                     .shiny-gold-text {
@@ -685,6 +722,7 @@ def register(app, rt, prefix=""):
                         text-align: center;
                     """
                 ),
+                Script("const interBarsSpacing = 2;     /* in px */"),
                 Script(src="/collapsible_grouped_table.js"),
                 Script(src="/gantt-timeline-renderer.js"),
                 Script(src="/gantt-events.js"),

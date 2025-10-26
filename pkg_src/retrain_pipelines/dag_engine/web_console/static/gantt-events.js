@@ -567,9 +567,10 @@ function ganttInsert(ganttTimelineObjName, payload, interBarsSpacing) {
     const ganttTimelineObj = getGlobalObjByName(ganttTimelineObjName);
     const table_id = ganttTimelineObj.table.id;
 
-    const group_header_row_id = null;
-    const group_index = -1;
+    let group_header_row_id = null;
+    let group_index = -1;
 
+    const payloadStartTimestamp = new Date(payload.start_timestamp).getTime();
     const insertData = [
         {
             id: payload.id,
@@ -581,13 +582,61 @@ function ganttInsert(ganttTimelineObjName, payload, interBarsSpacing) {
                 timeline: {
                     value: null,
                     attributes: {
-                        "start_timestamp": new Date(payload.start_timestamp).getTime()
+                        "start_timestamp": payloadStartTimestamp
                     }
                 }
             },
             style: payload.ui_css
         }
     ]
+
+    // handle (potentially nested) parent taskgroup
+    for (let taskgroup of payload.taskgroups_hierarchy) {
+        const taskgroup_group_header_id = taskgroup.uuid + (
+            payload.rank ? "." + JSON.stringify(payload.rank) : ""
+        );
+        const taskgroup_group_header_row =
+            ganttTimelineObj.table.querySelector(`tr[data-id="${taskgroup_group_header_id}"]`);
+
+        if (taskgroup_group_header_row) {
+            // case "taskgroup has already been inserted"
+            group_header_row_id = taskgroup_group_header_id;
+
+            // determine insert index
+            const groupRows = ganttTimelineObj.table.querySelectorAll(
+                `tr[data-path^="${taskgroup_group_header_row.dataset.path}."]`
+            );
+            group_index = groupRows.length - 1;
+            for (const groupRow of groupRows) {
+                const timelineCell = groupRow.cells[ganttTimelineObj.timelineColumnIndex];
+                console.log("timelineCell.dataset.startTimestamp", timelineCell.dataset.startTimestamp);
+                if (timelineCell.dataset.startTimestamp > payloadStartTimestamp) {
+                    break;
+                }
+                group_index -= 1;
+            }
+
+            break;
+        } else {
+            // case "need to insert taskgroup row and payload"
+            const payloadItem = insertData[0];
+            insertData[0] = {
+                  id: taskgroup_group_header_id,
+                  cells: {
+                      name: {
+                          value: taskgroup.name,
+                          attributes: {}
+                      },
+                      timeline: {
+                          value: null,
+                          attributes: {}
+                      }
+                  },
+                  style: taskgroup.ui_css,
+                  children: [payloadItem]
+              }
+        }
+    }
 
     // call collapsible-grouped-table insertAt method
     insertAt(
@@ -597,8 +646,7 @@ function ganttInsert(ganttTimelineObjName, payload, interBarsSpacing) {
     )
     const tr = ganttTimelineObj.table.querySelector(`tr[data-id="${payload.id}"]`);
     initTrFormat(ganttTimelineObj, tr);
-
-    overrideLabels(ganttTimelineObj, [tr]);
+    overrideLabels(ganttTimelineObj, [tr]); // custom Gantt-chart
     ganttTimelineObj.refresh();
 
     /* update label-column length (table-layout: fixed) */

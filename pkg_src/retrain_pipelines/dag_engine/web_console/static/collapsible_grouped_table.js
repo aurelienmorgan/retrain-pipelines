@@ -992,6 +992,7 @@ function insertAt(
             // force reset bottom padding to CSS default
             // (avoid webbrowser rounding issues)
             cell.style.paddingBottom = null;
+            cell.style.paddingTop = null;
         }
     }
 

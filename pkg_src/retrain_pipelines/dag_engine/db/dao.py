@@ -368,7 +368,7 @@ class AsyncDAO(DAOBase):
                 Task
             )
             .where(Task.tasktype_uuid == tasktype_subq.c.uuid)
-            .order_by(tasktype_subq.c.order, Task._start_timestamp)
+            .order_by(Task._start_timestamp)
         )
 
         async with self._get_session() as session:
