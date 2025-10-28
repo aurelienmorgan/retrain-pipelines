@@ -571,10 +571,12 @@ def parallel_grouped_rows(
         group_rows_style = Style(parralel_task_ext.ui_css, labelUnderlay="#4d0066")
         fill_defaults(group_rows_style, GroupTypes.PARALLEL_LINE)
 
+        parallel_line_rank_suffix = \
+            f".[{','.join(map(str, parallel_line_rank))}]"
         parallel_lines_list.append(
             GroupedRows(
-                id=f"{parralel_task_ext.name}.{parallel_line_rank}",
-                name=f"{parralel_task_ext.name}.{parallel_line_rank}",
+                id=f"{parralel_task_ext.name}{parallel_line_rank_suffix}",
+                name=f"{parralel_task_ext.name}{parallel_line_rank_suffix}",
                 start_timestamp=None,
                 end_timestamp=None,
                 callbacks=["toggleHeaderTimeline('execGanttTimelineObj', this);"],
@@ -593,8 +595,10 @@ def parallel_grouped_rows(
     fill_defaults(group_rows_style, GroupTypes.PARALLEL_LINES)
 
     return GroupedRows(
-        id=parralel_task_ext.name + \
-           str(parralel_task_ext.rank[:-1]) if len(parralel_task_ext.rank) > 1 else "",
+        id=parralel_task_ext.name + (
+            f".[{','.join(map(str, parralel_task_ext.rank[:-1]))}]"
+            if len(parralel_task_ext.rank) > 1 else ""
+        ),
         name="Distributed sub-pipeline",
         start_timestamp=None,
         end_timestamp=None,
@@ -625,7 +629,10 @@ def taskgroup_grouped_rows(
             elements.append(task_row(element, labelUnderlay=group_rows_style.background))
 
     return GroupedRows(
-        id=str(taskgroup.uuid) + f".{rank}" if rank else "",
+        id=str(taskgroup.uuid) + (
+            f".[{','.join(map(str, rank))}]"
+            if rank else ""
+        ),
         name=taskgroup.name,
         start_timestamp=None,
         end_timestamp=None,

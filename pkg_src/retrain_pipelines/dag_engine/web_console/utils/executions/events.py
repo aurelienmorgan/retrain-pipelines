@@ -40,7 +40,7 @@ async def multiplexed_event_generator(client_info: ClientInfo):
             done, _ = await asyncio.wait(get_tasks.values(),
                                          return_when=asyncio.FIRST_COMPLETED)
             for finished in done:
-                # Identify which queue/task finished
+                # Identify which asyncio queue/task finished
                 key = next(k for k, v in get_tasks.items() if v == finished)
                 data = copy.copy(finished.result())
                 if key == "newExecution":
@@ -53,7 +53,7 @@ async def multiplexed_event_generator(client_info: ClientInfo):
                     data = execution_ext.to_dict()
                     data["html"] = execution_to_html(execution_ext)
 
-                # Replace only the finished task
+                # Replace only the finished asyncio task
                 get_tasks[key] = asyncio.create_task(queues[key].get())
 
                 uvicorn_logger.info(
@@ -70,7 +70,7 @@ async def multiplexed_event_generator(client_info: ClientInfo):
             task.cancel()
         await asyncio.gather(*get_tasks.values(), return_exceptions=True)
         # re-raise the CancelledError so it propagates
-        # (ensuring the task is cancelled)
+        # (ensuring the asyncio task is cancelled)
         raise
     finally:
         new_exec_subscribers.remove((queues["newExecution"], client_info))

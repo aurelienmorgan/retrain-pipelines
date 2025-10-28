@@ -589,18 +589,20 @@ function ganttInsert(ganttTimelineObjName, payload, interBarsSpacing) {
             style: payload.ui_css
         }
     ]
+    const rowToStyleIds = [payload.id];
 
     // handle (potentially nested) parent taskgroup
     for (let taskgroup of payload.taskgroups_hierarchy) {
-        const taskgroup_group_header_id = taskgroup.uuid + (
+        const taskgroupGroupHeaderId = taskgroup.uuid + (
             payload.rank ? "." + JSON.stringify(payload.rank) : ""
         );
         const taskgroup_group_header_row =
-            ganttTimelineObj.table.querySelector(`tr[data-id="${taskgroup_group_header_id}"]`);
+            ganttTimelineObj.table.querySelector(
+                `tr[data-id="${taskgroupGroupHeaderId}"]`);
 
         if (taskgroup_group_header_row) {
             // case "taskgroup has already been inserted"
-            group_header_row_id = taskgroup_group_header_id;
+            group_header_row_id = taskgroupGroupHeaderId;
 
             // determine insert index
             const groupRows = ganttTimelineObj.table.querySelectorAll(
@@ -608,8 +610,8 @@ function ganttInsert(ganttTimelineObjName, payload, interBarsSpacing) {
             );
             group_index = groupRows.length - 1;
             for (const groupRow of groupRows) {
-                const timelineCell = groupRow.cells[ganttTimelineObj.timelineColumnIndex];
-                console.log("timelineCell.dataset.startTimestamp", timelineCell.dataset.startTimestamp);
+                const timelineCell =
+                    groupRow.cells[ganttTimelineObj.timelineColumnIndex];
                 if (timelineCell.dataset.startTimestamp > payloadStartTimestamp) {
                     break;
                 }
@@ -618,24 +620,129 @@ function ganttInsert(ganttTimelineObjName, payload, interBarsSpacing) {
 
             break;
         } else {
-            // case "need to insert taskgroup row and payload"
+            // case "need to insert taskgroup row in addition to payload"
             const payloadItem = insertData[0];
             insertData[0] = {
-                  id: taskgroup_group_header_id,
-                  cells: {
-                      name: {
-                          value: taskgroup.name,
-                          attributes: {}
-                      },
-                      timeline: {
-                          value: null,
-                          attributes: {}
-                      }
-                  },
-                  style: taskgroup.ui_css,
-                  children: [payloadItem]
-              }
+                    id: taskgroupGroupHeaderId,
+                    cells: {
+                        name: {
+                            value: taskgroup.name,
+                            attributes: {}
+                        },
+                        timeline: {
+                            value: null,
+                            attributes: {}
+                        }
+                    },
+                    callbacks: ["toggleHeaderTimeline('execGanttTimelineObj', this);"],
+                    extraClasses: ["taskgroup"],
+                    children: [payloadItem],
+                    style: taskgroup.ui_css
+                }
         }
+    }
+
+    // handle (potentially deep) distributed sub-DAG
+    if (payload.rank && !payload.merge_func) {
+        if (payload.is_parallel) {
+            // case "start of a new split line"
+            const payloadItem = insertData[0];
+            const payloadRankStr = JSON.stringify(payload.rank);
+            insertData[0] = {
+                    id: payload.name + "." + payloadRankStr,
+                    cells: {
+                        name: {
+                            value: payload.name + "." + payloadRankStr,
+                            attributes: {}
+                        },
+                        timeline: {
+                            value: null,
+                            attributes: {}
+                        }
+                    },
+                    callbacks: [
+                        "toggleHeaderTimeline('execGanttTimelineObj', this);"
+                    ],
+                    extraClasses: ["parallel-line"],
+                    children: [payloadItem],
+                    style: payload.parent_ui_css.parallel_line
+                }
+            rowToStyleIds.push(payload.name + "." + payloadRankStr);
+
+            const subDagRankSuffix =
+                payload.rank.length > 1 ?
+                "." + JSON.stringify(
+                          payload.rank.slice(0, payload.rank.length - 1)) :
+                "";
+            const subDagGroupHeaderRowId = 
+                payload.name + subDagRankSuffix;
+            const subDagGroupHeaderRow =
+                ganttTimelineObj.table.querySelector(
+                    `tr[data-id="${subDagGroupHeaderRowId}"]`);
+            if (!subDagGroupHeaderRow) {
+                // case "first line of a new distributed sub-DAG"
+                const firstLineItem = insertData[0];
+                insertData[0] = {
+                        id: subDagGroupHeaderRowId,
+                        cells: {
+                            name: {
+                                value: "Distributed sub-pipeline",
+                                attributes: {}
+                            },
+                            timeline: {
+                                value: null,
+                                attributes: {}
+                            }
+                        },
+                        callbacks: [
+                            "toggleHeaderTimeline('execGanttTimelineObj', this);"
+                        ],
+                        extraClasses: ["parallel-lines"],
+                        children: [firstLineItem],
+                        style: payload.parent_ui_css.parallel_lines
+                    }
+                if (payload.rank.length > 1) {
+                    // case "new sub-DAG is a deep sub-DAG"
+                    const groupHeaderRow = [...document.querySelectorAll(
+                            `.group-header.parallel-line[data-id$="${subDagRankSuffix}"]`
+                        )].at(-1);
+                    group_header_row_id = groupHeaderRow.dataset.id;
+                    // TODO  -  determine insert index
+                }
+            } else {
+                // case "append split-line to distributed sub-DAG"
+                group_header_row_id = subDagGroupHeaderRowId;
+            }
+        } else if (!group_header_row_id) {
+            // case "not a task of an existing taskgroup"
+            //  => split-line header is the last row with 'payload.rank' as id suffix
+            const groupHeaderRow = [...document.querySelectorAll(
+                    `.group-header.parallel-line[data-id$=".${JSON.stringify(payload.rank)}"]`
+                )].at(-1);
+            group_header_row_id = groupHeaderRow.dataset.id;
+            // TODO  -  determine insert index
+        }
+
+    } else if (payload.merge_func) {
+        // sub-DAG header is last row with below 2 conditions met :
+        //  (1) => header 'level' equal to 'payload.rank' length
+        const subDAGlevel = 2 * (
+            payload.rank ? payload.rank.length : 0
+        );
+        //  (2) => header 'id' suffixed with 'payload.rank'
+        const subDagRankCondition =
+            payload.rank ? `[data-id$=".${JSON.stringify(payload.rank)}"]` : ""
+        ;
+        const groupHeaderRow = [...document.querySelectorAll(
+                `.group-header.parallel-lines[data-level="${subDAGlevel}"]${subDagRankCondition}`
+            )].at(-1);
+        group_header_row_id = groupHeaderRow.dataset.id;
+        // insert index remains the default "-1" here
+
+        // trapezoidal shaped label to group tail
+        rowToStyleIds.length = 0; // clear it
+        rowToStyleIds.push(group_header_row_id);
+
     }
 
     // call collapsible-grouped-table insertAt method
@@ -646,7 +753,11 @@ function ganttInsert(ganttTimelineObjName, payload, interBarsSpacing) {
     )
     const tr = ganttTimelineObj.table.querySelector(`tr[data-id="${payload.id}"]`);
     initTrFormat(ganttTimelineObj, tr);
-    overrideLabels(ganttTimelineObj, [tr]); // custom Gantt-chart
+    // custom Gantt-chart
+    const rowsToStyle = rowToStyleIds.map(rowId => 
+        ganttTimelineObj.table.querySelector(`tr[data-id="${rowId}"]`)
+    );
+    overrideLabels(ganttTimelineObj, rowsToStyle);
     ganttTimelineObj.refresh();
 
     /* update label-column length (table-layout: fixed) */

@@ -88,7 +88,7 @@ async def multiplexed_event_generator(client_info: ClientInfo):
             done, _ = await asyncio.wait(get_tasks.values(),
                                          return_when=asyncio.FIRST_COMPLETED)
             for finished in done:
-                # Identify which queue/task finished
+                # Identify which asyncio queue/task finished
                 key = next(k for k, v in get_tasks.items() if v == finished)
 
                 execution_id = finished.result()["id"]
@@ -97,10 +97,39 @@ async def multiplexed_event_generator(client_info: ClientInfo):
                     data = execution_number_response.body.decode("utf-8")
 
                 elif key == "newTask":
-                    # dispatches a TaskExt object dict, augmented with
-                    # "taskgroups_hierarchy_list" key with ordered list
-                    # of taskgroup nesting
+                    # dispatches a TaskExt object dict, augmented with :
+                    #   - "parent_ui_css" key for parallel tasks
+                    #     parents styling (distributed sub-DAG & split-line)
+                    #   - filled-in default styling
+                    #   - "taskgroups_hierarchy_list" key with ordered list
+                    #     of taskgroup nesting
                     data = copy.copy(finished.result())
+
+                    # if task_ext is the head of a distributed sub-DAG split-line
+                    if data["is_parallel"]:
+                        parallel_lines_style = Style(data["ui_css"],
+                                                     labelUnderlay="#4d0066")
+                        fill_defaults(parallel_lines_style,
+                                      GroupTypes.PARALLEL_LINES)
+                        parallel_line_style = Style(data["ui_css"],
+                                                    labelUnderlay="#4d0066")
+                        fill_defaults(parallel_line_style,
+                                      GroupTypes.PARALLEL_LINE)
+                        data["parent_ui_css"] = {
+                            "parallel_lines": parallel_lines_style,
+                            "parallel_line": parallel_line_style
+                        }
+
+                    # task_ext styling, fill defaults
+                    print(f"data['ui_css'] BEFORE : {data['ui_css']}")
+                    task_ext_style = Style(
+                        data["ui_css"],
+                        labelUnderlay="#4d0066" # will be overridden
+                                                # for taskgroup tasks
+                    )
+                    fill_defaults(task_ext_style, GroupTypes.NONE)
+                    data["ui_css"] = task_ext_style
+                    print(f"data['ui_css'] AFTER : {data['ui_css']}")
 
                     # if task_ext belongs to a TaskGroup
                     taskgroup_uuid = data["taskgroup_uuid"]
@@ -128,18 +157,14 @@ async def multiplexed_event_generator(client_info: ClientInfo):
                         taskgroups_hierarchy_list = []
                     data["taskgroups_hierarchy"] =  taskgroups_hierarchy_list
 
-                    # if task_ext belongs to a distributed sub-DAG line
-                    if data["rank"]:
-                        # TODO
-                        # print(f"data['rank'] : {data['rank']}")
-                        pass
-
                     data = json.dumps(data)
                     # print(f"newTask - {data}")
+
                 elif key == "taskEnded":
                     # TODO
                     data = copy.copy(finished.result())
                     print(f"taskEnded - {data}")
+
                 else:
                     raise Exception(f"handling of SSE event '{key}' not implemented.")
 
@@ -162,7 +187,7 @@ async def multiplexed_event_generator(client_info: ClientInfo):
             task.cancel()
         await asyncio.gather(*get_tasks.values(), return_exceptions=True)
         # re-raise the CancelledError so it propagates
-        # (ensuring the task is cancelled)
+        # (ensuring the asyncio task is cancelled)
         raise
     finally:
         new_exec_subscribers.remove((queues["newExecution"], client_info))

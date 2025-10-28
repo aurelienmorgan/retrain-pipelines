@@ -6,8 +6,6 @@ from fasthtml.common import Request, Response
 from .open_api import rt_api
 from ...db.model import TaskExt
 from ..utils.execution import events as execution_events
-from ..utils.execution.gantt_chart import fill_defaults, \
-    Style, GroupTypes
 
 
 def register(app, rt, prefix=""):
@@ -105,15 +103,6 @@ def register(app, rt, prefix=""):
             logging.getLogger().warn(e)
             return Response(status_code=422,
                             content=f"Invalid input: {str(e)}")
-
-        # styling, fill defaults
-        task_ext_style = Style(
-            task_ext.ui_css,
-            labelUnderlay="#4d0066" # will be overridden
-                                    # for non-standalone tasks
-        )
-        fill_defaults(task_ext_style, GroupTypes.NONE)
-        task_ext.ui_css = task_ext_style
 
         # make payload serializable
         task_ext_dict = task_ext.__dict__
