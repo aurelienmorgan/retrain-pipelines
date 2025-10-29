@@ -919,12 +919,9 @@ function insertAt(
     ) {
         // case "row before is a subgroup" =>
         // offset in table by rows-count (may have deep children)
-        const subgroup_path =
-            groupRows[0].dataset.path.lastIndexOf('.') === -1
-                ? groupRows[0].dataset.path
-                : groupRows[0].dataset.path.substring(
-                    0, groupRows[0].dataset.path.lastIndexOf('.'));
-        insertAfterRowPath = findLastVisibleChildOfGroup(table, subgroup_path);
+        insertAfterRowPath = findLastVisibleChildOfGroup(
+            table, groupRows[group_index - 1].path
+        );
         if (!insertAfterRowPath) {
             // if top-level insert
             insertAfterRowPath = groupRows[group_index-1].dataset.path;

@@ -263,7 +263,7 @@ function initTrFormat(ganttTimelineObj, tr) {
 
         if (tr.classList.contains("parallel-line")) {
             // header row of one of the spilt sub-DAG lines =>
-            // apply odd/even backgroupd overlay to group
+            // apply odd/even background overlay to group
             const index = tr.dataset.path.split(".").at(-1);
             if (index%2) {
                 ganttTimelineObj.table.querySelectorAll(
@@ -272,6 +272,12 @@ function initTrFormat(ganttTimelineObj, tr) {
                 ).forEach(row => {
                     [...row.children].forEach(td => {
                         const bg = window.getComputedStyle(td).backgroundImage;
+
+                        // Store original (i.e. if first pass on that cell)
+                        if (!('storedBg' in td.dataset)) {
+                            td.dataset.storedBg = td.style.backgroundImage || '';
+                        }
+
                         td.style.backgroundImage = (
                             'linear-gradient(135deg,' +
                                             'rgba(255,255,255,0.3) 0%, ' +
@@ -285,7 +291,7 @@ function initTrFormat(ganttTimelineObj, tr) {
     } else if (tr.dataset.level === "0") {
         // top-level row (not part of a group)
         // we remove row-styling (set by collapsible-grouped-table
-        // as the default behavior)
+        // by default)
         tr.style.color = "";
         tr.style.background = "";
         tr.style.borderColor = "";
@@ -562,7 +568,8 @@ function getLongestFirstColumnWidth(table) {
 
 function ganttInsert(ganttTimelineObjName, payload, interBarsSpacing) {
     /* *
-    *
+    * Insert a task in the Gantt chart component.
+    * Takes care of group-header creations as needed.
     ** */
     const ganttTimelineObj = getGlobalObjByName(ganttTimelineObjName);
     const table_id = ganttTimelineObj.table.id;
@@ -605,17 +612,30 @@ function ganttInsert(ganttTimelineObjName, payload, interBarsSpacing) {
             group_header_row_id = taskgroupGroupHeaderId;
 
             // determine insert index
-            const groupRows = ganttTimelineObj.table.querySelectorAll(
-                `tr[data-path^="${taskgroup_group_header_row.dataset.path}."]`
-            );
-            group_index = groupRows.length - 1;
-            for (const groupRow of groupRows) {
+            // within list of first-level child rows
+            const prefix = taskgroup_group_header_row.dataset.path + ".";
+            const groupRows = Array.from(
+                    ganttTimelineObj.table.querySelectorAll(
+                        `tr[data-path^="${prefix}"]`
+                    )
+                ).filter(
+                    row => {
+                        const suffix = row.dataset.path.substring(prefix.length);
+                        // Accept only if suffix has no dots at all
+                        return suffix.indexOf('.') === -1;
+                    }
+                );
+
+            for (let i = 0; i < groupRows.length; i++) {
                 const timelineCell =
-                    groupRow.cells[ganttTimelineObj.timelineColumnIndex];
-                if (timelineCell.dataset.startTimestamp > payloadStartTimestamp) {
+                    groupRows[i].classList.contains("group-header") ?
+                    groupRows[i].nextElementSibling.cells[ganttTimelineObj.timelineColumnIndex] :
+                    groupRows[i].cells[ganttTimelineObj.timelineColumnIndex];
+
+                if (Number(timelineCell.dataset.startTimestamp) > payloadStartTimestamp) {
+                    group_index = i;
                     break;
                 }
-                group_index -= 1;
             }
 
             break;
@@ -647,12 +667,12 @@ function ganttInsert(ganttTimelineObjName, payload, interBarsSpacing) {
         if (payload.is_parallel) {
             // case "start of a new split line"
             const payloadItem = insertData[0];
-            const payloadRankStr = JSON.stringify(payload.rank);
+            const payloadRankSuffix = "." + JSON.stringify(payload.rank);
             insertData[0] = {
-                    id: payload.name + "." + payloadRankStr,
+                    id: payload.name + payloadRankSuffix,
                     cells: {
                         name: {
-                            value: payload.name + "." + payloadRankStr,
+                            value: payload.name + payloadRankSuffix,
                             attributes: {}
                         },
                         timeline: {
@@ -667,7 +687,7 @@ function ganttInsert(ganttTimelineObjName, payload, interBarsSpacing) {
                     children: [payloadItem],
                     style: payload.parent_ui_css.parallel_line
                 }
-            rowToStyleIds.push(payload.name + "." + payloadRankStr);
+            rowToStyleIds.push(payload.name + payloadRankSuffix);
 
             const subDagRankSuffix =
                 payload.rank.length > 1 ?
@@ -703,7 +723,7 @@ function ganttInsert(ganttTimelineObjName, payload, interBarsSpacing) {
                     }
                 if (payload.rank.length > 1) {
                     // case "new sub-DAG is a deep sub-DAG"
-                    const groupHeaderRow = [...document.querySelectorAll(
+                    const groupHeaderRow = [...ganttTimelineObj.table.querySelectorAll(
                             `.group-header.parallel-line[data-id$="${subDagRankSuffix}"]`
                         )].at(-1);
                     group_header_row_id = groupHeaderRow.dataset.id;
@@ -712,6 +732,24 @@ function ganttInsert(ganttTimelineObjName, payload, interBarsSpacing) {
             } else {
                 // case "append split-line to distributed sub-DAG"
                 group_header_row_id = subDagGroupHeaderRowId;
+                // determine insert index
+                const existingSplitLinesArr =
+                    [...ganttTimelineObj.table.querySelectorAll(
+                        `tr.group-header.parallel-line[data-path^="${subDagGroupHeaderRow.dataset.path}."]`
+                    )];
+
+                for (let i = 0; i < existingSplitLinesArr.length; i++) {
+                    const groupRow = existingSplitLinesArr[i];
+
+                    const parallelTaskRow = groupRow.nextElementSibling;
+                    const timelineCell =
+                        parallelTaskRow.cells[ganttTimelineObj.timelineColumnIndex];
+
+                    if (Number(timelineCell.dataset.startTimestamp) > payloadStartTimestamp) {
+                        group_index = i;
+                        break;
+                    }
+                }
             }
         } else if (!group_header_row_id) {
             // case "not a task of an existing taskgroup"
@@ -751,18 +789,60 @@ function ganttInsert(ganttTimelineObjName, payload, interBarsSpacing) {
         insertData,
         interBarsSpacing
     )
+
     const tr = ganttTimelineObj.table.querySelector(`tr[data-id="${payload.id}"]`);
-    initTrFormat(ganttTimelineObj, tr);
-    // custom Gantt-chart
+
+    // reset prior odd/even background overlay on groups
+    // and apply back
+    // (as inserts break prior odd/even distribution)
+    if (
+        (payload.rank && group_header_row_id)
+        || payload.merge_func
+    ) {
+        // case "any element of not a first-level entirely new sub-DAG"
+        // => get top-level path (path of parent element with level=0)
+        const groupHeaderRow = ganttTimelineObj.table.querySelector(
+                `.group-header[data-id$="${group_header_row_id}"]`
+            );
+        const allRelatedRows =
+            ganttTimelineObj.table.querySelectorAll(
+                `tr[data-path^="${groupHeaderRow.dataset.path.split('.')[0]}."]`
+            );
+
+        removeBgEvenOddOverlay(allRelatedRows);
+        allRelatedRows.forEach((tr) => initTrFormat(ganttTimelineObj, tr));
+
+    } else {
+        initTrFormat(ganttTimelineObj, tr);
+    }
+
+    const tbody = ganttTimelineObj.table.querySelector('tbody');
+    const bodyRows = Array.from(tbody.querySelectorAll('tr'));
+    const maxLevel = getMaxVisibleLevel(bodyRows);
+    tbody.style.setProperty('--max-visible-level', maxLevel);
+
+    // custom Gantt-chart shaped-label
     const rowsToStyle = rowToStyleIds.map(rowId => 
         ganttTimelineObj.table.querySelector(`tr[data-id="${rowId}"]`)
     );
     overrideLabels(ganttTimelineObj, rowsToStyle);
+
     ganttTimelineObj.refresh();
 
     /* update label-column length (table-layout: fixed) */
     const maxLabelLength = getLongestFirstColumnWidth(ganttTimelineObj.table);
     const firstCol = ganttTimelineObj.table.querySelector('colgroup col:first-child');
     firstCol.style.width = maxLabelLength + "px";
+}
+
+function removeBgEvenOddOverlay(rows) {
+    [...rows].forEach(row => {
+        [...row.children].forEach(td => {
+            if ('storedBg' in td.dataset) {
+                td.style.backgroundImage = td.dataset.storedBg;
+                delete td.dataset.storedBg;
+            }
+        });
+    });
 }
 
