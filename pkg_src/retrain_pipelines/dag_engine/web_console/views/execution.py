@@ -1072,8 +1072,8 @@ def register(app, rt, prefix=""):
                             }}
 
                             if (payload.exec_id == {execution_id}) {{
-console.log("executionEventsSource 'newTask'", payload);
-ganttInsert('execGanttTimelineObj', payload, interBarsSpacing);
+                                //console.log("executionEventsSource 'newTask'", payload);
+                                ganttInsert('execGanttTimelineObj', payload, interBarsSpacing);
                             }}
                         }});
                         /* ************** */
@@ -1091,13 +1091,17 @@ ganttInsert('execGanttTimelineObj', payload, interBarsSpacing);
                                 console.error(e);
                                 return;
                             }}
-console.log("executionEventsSource 'taskEnded'", payload);
+
+                            if (payload.exec_id == {execution_id}) {{
+                                //console.log("executionEventsSource 'taskEnded'", payload);
+                                ganttUpdate('execGanttTimelineObj', payload, interBarsSpacing);
+                            }}
                         }});
                         /* ************** */
 
                     }}
                     registerTaskEvents();
-console.log("event-source listeners", listEventSourceListeners(executionEventsSource));
+                    console.log("event-source listeners", listEventSourceListeners(executionEventsSource));
                 """),
 
                 H1(# DAG

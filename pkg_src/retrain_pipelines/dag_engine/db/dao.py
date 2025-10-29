@@ -14,7 +14,7 @@ from sqlalchemy import create_engine, Uuid, \
     select, and_, desc, case, func, event, \
     text
 from sqlalchemy.orm import scoped_session, \
-    sessionmaker, aliased
+    sessionmaker, aliased, object_session
 from sqlalchemy.ext.asyncio import create_async_engine, \
     AsyncSession
 
@@ -755,4 +755,62 @@ def after_insert_listener(mapper, connection, target):
         )
     except Exception as ex:
         logger.warn(ex)
+
+
+task_ended_api_endpoint = \
+    f"{os.environ['RP_WEB_SERVER_URL']}/api/v1/task_end_event"
+
+@event.listens_for(Task._end_timestamp, "set", retval=False)
+def after_end_timestamp_change(target, newValue, oldvalue, initiator):
+    """DAG-engine notifies WebConsole server.
+
+    This fires when Task's _end_timestamp changes.
+    Emits a TaskExt dict.
+    """
+    if newValue != oldvalue and newValue is not None:
+        # --- retrieve Task fields ---
+        data_snapshot = {}
+        for col in target.__table__.columns:
+            value = getattr(target, col.name)
+            if value is None:
+                data_snapshot[col.name] = None
+            elif isinstance(value, (datetime, date)):
+                data_snapshot[col.name] = value.isoformat()
+            elif isinstance(value, UUID):
+                data_snapshot[col.name] = str(value)
+            else:
+                data_snapshot[col.name] = value
+        data_snapshot["end_timestamp"] = newValue.isoformat()
+
+        # logger.info(f"Task after_end_timestamp_change {data_snapshot}")
+
+        # --- inject TaskType fields ---
+        # The session is available via connection.engine (sync)
+        session = object_session(target)
+        if session is None:
+            logger.warn("No active session for Task; skipping notification.")
+            return
+        tasktype = session.get(TaskType, (target.exec_id, target.tasktype_uuid))
+        # Add TaskType fields for TaskExt
+        data_snapshot["docstring"] = tasktype.docstring
+        data_snapshot["name"] = tasktype.name
+        data_snapshot["ui_css"] = tasktype.ui_css
+        data_snapshot["order"] = tasktype.order
+        data_snapshot["is_parallel"] = tasktype.is_parallel
+        data_snapshot["merge_func"] = tasktype.merge_func
+        data_snapshot["taskgroup_uuid"] = str(getattr(tasktype, "taskgroup_uuid", "")) \
+            if getattr(tasktype, "taskgroup_uuid", None) is not None else None
+        # DO NOT close the object session we conveniently take advantage of !!
+
+        # logger.info(f"TaskExt after_end_timestamp_change {data_snapshot}")
+
+        try:
+            requests.post(task_ended_api_endpoint, json=data_snapshot)
+        except requests.exceptions.ConnectionError as ce:
+            logger.info(
+                "WebConsole apparently not running " +
+                f"({os.environ['RP_WEB_SERVER_URL']})"
+            )
+        except Exception as ex:
+            logger.warn(ex)
 

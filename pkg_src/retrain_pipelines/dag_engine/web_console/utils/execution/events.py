@@ -60,6 +60,58 @@ async def taskgroups_hierarchy(
     return JSONResponse(taskgroups_list)
 
 
+async def augment_new_task(task_ext_dict: dict) -> dict:
+    # if task_ext is the head of a distributed sub-DAG split-line
+    if task_ext_dict["is_parallel"]:
+        parallel_lines_style = Style(task_ext_dict["ui_css"],
+                                     labelUnderlay="#4d0066")
+        fill_defaults(parallel_lines_style,
+                      GroupTypes.PARALLEL_LINES)
+        parallel_line_style = Style(task_ext_dict["ui_css"],
+                                    labelUnderlay="#4d0066")
+        fill_defaults(parallel_line_style,
+                      GroupTypes.PARALLEL_LINE)
+        task_ext_dict["parent_ui_css"] = {
+            "parallel_lines": parallel_lines_style,
+            "parallel_line": parallel_line_style
+        }
+
+    # task_ext styling, fill defaults
+    task_ext_style = Style(
+        task_ext_dict["ui_css"],
+        labelUnderlay="#4d0066" # will be overridden
+                                # for taskgroup tasks
+    )
+    fill_defaults(task_ext_style, GroupTypes.NONE)
+    task_ext_dict["ui_css"] = task_ext_style
+
+    # if task_ext belongs to a TaskGroup
+    taskgroup_uuid = task_ext_dict["taskgroup_uuid"]
+    if taskgroup_uuid:
+        taskgroups_hierarchy_response = \
+            await taskgroups_hierarchy(UUID(taskgroup_uuid))
+        if taskgroups_hierarchy_response.status_code == 200:
+            taskgroups_hierarchy_list = \
+                json.loads(
+                    taskgroups_hierarchy_response.body.decode("utf-8")
+                )
+            for taskgroup_dict in taskgroups_hierarchy_list:
+                # taskgroup styling, fill defaults
+                taskgroup_style = Style(taskgroup_dict["ui_css"])
+                fill_defaults(taskgroup_style, GroupTypes.TASKGROUP)
+                taskgroup_dict["ui_css"] = taskgroup_style
+            # task styling, adapt labelUnderlay color
+            task_ext_dict["ui_css"]["labelUnderlay"] = \
+                taskgroups_hierarchy_list[0]["ui_css"]["background"]
+        else:
+            logging.getLogger().warn(
+                taskgroups_hierarchy_response.body.decode("utf-8"))
+            taskgroups_hierarchy_list = []
+    else:
+        taskgroups_hierarchy_list = []
+    task_ext_dict["taskgroups_hierarchy"] =  taskgroups_hierarchy_list
+
+
 async def multiplexed_event_generator(client_info: ClientInfo):
     queues = {
         "newExecution": asyncio.Queue(),
@@ -96,7 +148,7 @@ async def multiplexed_event_generator(client_info: ClientInfo):
                     execution_number_response = await execution_number(execution_id)
                     data = execution_number_response.body.decode("utf-8")
 
-                elif key == "newTask":
+                elif key in ["newTask", "taskEnded"]:
                     # dispatches a TaskExt object dict, augmented with :
                     #   - "parent_ui_css" key for parallel tasks
                     #     parents styling (distributed sub-DAG & split-line)
@@ -104,66 +156,9 @@ async def multiplexed_event_generator(client_info: ClientInfo):
                     #   - "taskgroups_hierarchy_list" key with ordered list
                     #     of taskgroup nesting
                     data = copy.copy(finished.result())
-
-                    # if task_ext is the head of a distributed sub-DAG split-line
-                    if data["is_parallel"]:
-                        parallel_lines_style = Style(data["ui_css"],
-                                                     labelUnderlay="#4d0066")
-                        fill_defaults(parallel_lines_style,
-                                      GroupTypes.PARALLEL_LINES)
-                        parallel_line_style = Style(data["ui_css"],
-                                                    labelUnderlay="#4d0066")
-                        fill_defaults(parallel_line_style,
-                                      GroupTypes.PARALLEL_LINE)
-                        data["parent_ui_css"] = {
-                            "parallel_lines": parallel_lines_style,
-                            "parallel_line": parallel_line_style
-                        }
-
-                    # task_ext styling, fill defaults
-                    print(f"data['ui_css'] BEFORE : {data['ui_css']}")
-                    task_ext_style = Style(
-                        data["ui_css"],
-                        labelUnderlay="#4d0066" # will be overridden
-                                                # for taskgroup tasks
-                    )
-                    fill_defaults(task_ext_style, GroupTypes.NONE)
-                    data["ui_css"] = task_ext_style
-                    print(f"data['ui_css'] AFTER : {data['ui_css']}")
-
-                    # if task_ext belongs to a TaskGroup
-                    taskgroup_uuid = data["taskgroup_uuid"]
-                    if taskgroup_uuid:
-                        taskgroups_hierarchy_response = \
-                            await taskgroups_hierarchy(UUID(taskgroup_uuid))
-                        if taskgroups_hierarchy_response.status_code == 200:
-                            taskgroups_hierarchy_list = \
-                                json.loads(
-                                    taskgroups_hierarchy_response.body.decode("utf-8")
-                                )
-                            for taskgroup_dict in taskgroups_hierarchy_list:
-                                # taskgroup styling, fill defaults
-                                taskgroup_style = Style(taskgroup_dict["ui_css"])
-                                fill_defaults(taskgroup_style, GroupTypes.TASKGROUP)
-                                taskgroup_dict["ui_css"] = taskgroup_style
-                            # task styling, adapt labelUnderlay color
-                            data["ui_css"]["labelUnderlay"] = \
-                                taskgroups_hierarchy_list[0]["ui_css"]["background"]
-                        else:
-                            logging.getLogger().warn(
-                                taskgroups_hierarchy_response.body.decode("utf-8"))
-                            taskgroups_hierarchy_list = []
-                    else:
-                        taskgroups_hierarchy_list = []
-                    data["taskgroups_hierarchy"] =  taskgroups_hierarchy_list
-
+                    await augment_new_task(data)
                     data = json.dumps(data)
-                    # print(f"newTask - {data}")
-
-                elif key == "taskEnded":
-                    # TODO
-                    data = copy.copy(finished.result())
-                    print(f"taskEnded - {data}")
+                    # print(f"{key} - {data}")
 
                 else:
                     raise Exception(f"handling of SSE event '{key}' not implemented.")

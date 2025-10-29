@@ -846,3 +846,36 @@ function removeBgEvenOddOverlay(rows) {
     });
 }
 
+function ganttUpdate(ganttTimelineObjName, payload, interBarsSpacing, counter = 0) {
+    /* *
+    * for tasks end-timestamp propagation.
+    ** */
+    const ganttTimelineObj = getGlobalObjByName(ganttTimelineObjName);
+
+    const taskRow = ganttTimelineObj.table.querySelector(
+        `tr[data-id="${payload.id}"]`);
+
+    if (!taskRow) {
+        // start by inserting payload in Gantt-chart component
+        // if for any abnormal reason "newTask" hadn't fired on it
+        if (counter > 0) {
+            // if we tried before and it's still not there,
+            // avoid infinite loop, give up
+            return;
+        }
+        counter += 1;
+        try {
+            ganttInsert(ganttTimelineObjName, payload, interBarsSpacing);
+        } catch (error) {
+            console.error("Couldn't insert payload", payload);
+            console.error(error);
+            return;
+        }
+    }
+
+    // actual update of end_timestamp
+    const timelineCell = taskRow.cells[ganttTimelineObj.timelineColumnIndex];
+    timelineCell.dataset.endTimestamp = new Date(payload.end_timestamp).getTime();
+    ganttTimelineObj.refresh();
+}
+
