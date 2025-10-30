@@ -4,14 +4,14 @@ import sys
 
 from .utils import animate_wave
 from .__version__ import __version__
-from .local_launcher import retrain_pipelines_local \
-                                as _retrain_pipelines_local
+from .legacy_launcher import retrain_pipelines_legacy \
+                                as _retrain_pipelines_legacy
 
 from IPython.core.magic import register_line_magic
 
 
 @register_line_magic
-def retrain_pipelines_local(
+def retrain_pipelines_legacy(
     command
 ):
     animate_wave(f"retrain-pipelines {__version__}",
@@ -33,7 +33,7 @@ def retrain_pipelines_local(
     ############################################
     env['launched_from_magic'] = 'True'
 
-    _ = _retrain_pipelines_local(command, env)
+    _ = _retrain_pipelines_legacy(command, env)
 
 
 # register magic with running IPython.
@@ -46,5 +46,5 @@ def load_ipython_extension(ipython):
     by IPython at startup time.
     """
     ipython.register_magic_function(
-                retrain_pipelines_local, 'line')
+                retrain_pipelines_legacy, 'line')
 

@@ -50,6 +50,7 @@ htmlcov/
 .cache
 .pytest_cache
 pytest-debug.log
+_unsloth_temporary_saved_buffers/
 
 # mypy
 .mypy_cache/

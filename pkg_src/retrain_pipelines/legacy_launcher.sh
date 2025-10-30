@@ -151,5 +151,5 @@ COMMAND="${COMMAND} ${OPTIONAL_ARGS[@]}"
 # echo $COMMAND
 eval $COMMAND
 
-# sed -i 's/\r//' local_launcher.sh
-# chmod +x local_launcher.sh
+# sed -i 's/\r//' legacy_launcher.sh
+# chmod +x legacy_launcher.sh

@@ -112,7 +112,8 @@ lint.preview = true
 
 # alias / entrypoint for CLI utility
 [project.scripts]
-retrain_pipelines_local = "retrain_pipelines.local_launcher:cli_utility"
+retrain_pipelines_legacy = "retrain_pipelines.legacy_launcher:cli_utility"
+retrain_pipelines = "retrain_pipelines.launcher:cli_utility"
 
 [project.urls]
 "Repository" = "https://github.com/aurelienmorgan/retrain-pipelines"

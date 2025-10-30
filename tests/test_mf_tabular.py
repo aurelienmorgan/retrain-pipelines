@@ -13,8 +13,8 @@ from retrain_pipelines.utils.pytest_utils import \
         get_venv
 from retrain_pipelines.utils import \
         as_env_var
-from retrain_pipelines.local_launcher import \
-        retrain_pipelines_local
+from retrain_pipelines.legacy_launcher import \
+        retrain_pipelines_legacy
 
 
 ##################################################
@@ -50,7 +50,7 @@ def test_mf_lightgbm_regress_tempo():
         os.path.join(
             os.path.dirname(os.path.dirname(__file__)),
             "sample_pipelines", "LightGBM_hp_cv_WandB",
-            "retraining_pipeline.py"
+            "legacy", "retraining_pipeline.py"
         ), "run",
         "--data_file", data_file_path,
         "--buckets_param", '{"num_feature1": 100, "num_feature2": 50}',
@@ -59,7 +59,7 @@ def test_mf_lightgbm_regress_tempo():
         "--wandb_run_mode", "offline"
     ]
 
-    success = retrain_pipelines_local(
+    success = retrain_pipelines_legacy(
         command = " ".join(command),
         env=env
     )
@@ -116,7 +116,7 @@ def test_mf_tabnet_classif_torchserve():
         os.path.join(
             os.path.dirname(os.path.dirname(__file__)),
             "sample_pipelines", "TabNet_hp_cv_WandB",
-            "retraining_pipeline.py"
+            "legacy", "retraining_pipeline.py"
         ), "run",
         "--data_file", data_file_path,
         "--buckets_param", '{"num_feature1": 100, "num_feature2": 50}',
@@ -125,7 +125,7 @@ def test_mf_tabnet_classif_torchserve():
         "--wandb_run_mode", "offline"
     ]
 
-    success = retrain_pipelines_local(
+    success = retrain_pipelines_legacy(
         command = " ".join(command),
         env=env
     )

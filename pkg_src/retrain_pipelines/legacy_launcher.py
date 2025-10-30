@@ -43,7 +43,7 @@ def _split_preserve_dict(s):
     return tokens
 
 
-def retrain_pipelines_local(
+def retrain_pipelines_legacy(
     command: str,
     env: os._Environ
 ) -> bool:
@@ -54,7 +54,7 @@ def retrain_pipelines_local(
     command = [
         os.path.join(
             os.path.dirname(os.path.abspath(__file__)),
-            "local_launcher.sh")
+            "legacy_launcher.sh")
         ] + command
 
     if len(command) > 1:
@@ -121,7 +121,7 @@ def cli_utility():
 
     env = os.environ.copy()
     env['launched_from_cli'] = 'True'
-    return retrain_pipelines_local(
+    return retrain_pipelines_legacy(
                command=" ".join(args),
                env=env
            )

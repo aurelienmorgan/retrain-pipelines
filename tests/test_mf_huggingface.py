@@ -13,8 +13,8 @@ from retrain_pipelines.utils.pytest_utils import \
         get_venv
 from retrain_pipelines.utils import \
         as_env_var
-from retrain_pipelines.local_launcher import \
-        retrain_pipelines_local
+from retrain_pipelines.legacy_launcher import \
+        retrain_pipelines_legacy
 
 
 def delete_repo_safe_if_exists(
@@ -117,7 +117,7 @@ def test_mf_unsloth_func_call_litserve():
         os.path.join(
             os.path.dirname(os.path.dirname(__file__)),
             "sample_pipelines", "Unsloth_Qwen_FuncCall",
-            "retraining_pipeline.py"
+            "legacy", "retraining_pipeline.py"
         ), "run",
         "--dataset_repo_id", pytest_dataset_repo_id, \
         "--cpt_training_args", "{cpt_training_args}",
@@ -125,7 +125,7 @@ def test_mf_unsloth_func_call_litserve():
         "--model_repo_id", pytest_model_repo_id \
     ]
 
-    success = retrain_pipelines_local(
+    success = retrain_pipelines_legacy(
         command = " ".join(command),
         env=env
     )
