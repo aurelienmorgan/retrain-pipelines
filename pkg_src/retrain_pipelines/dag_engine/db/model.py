@@ -13,8 +13,8 @@ from sqlalchemy import ForeignKey, Column, \
     ForeignKeyConstraint, CheckConstraint, \
     UniqueConstraint
 
-from sqlalchemy.orm import relationship
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import relationship, \
+    declarative_base
 
 from retrain_pipelines.utils import parse_datetime
 

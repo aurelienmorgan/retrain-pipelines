@@ -7,20 +7,20 @@ from collections import defaultdict, deque
 from typing import List, Optional, Union, \
     Any
 
-from .core import Task, TaskGroup, TaskPayload, \
+from .core import TaskType, TaskGroup, TaskPayload, \
     TaskFuncException, DAG
 
 
 def _topological_sort(
-    tasks: List[Task]
-) -> List[Union[Task, TaskGroup]]:
+    tasks: List[TaskType]
+) -> List[Union[TaskType, TaskGroup]]:
     """Topological sort of first-level elements of DAG.
 
     i.e. elements of task-groups are not referenced,
     just the top-level task-groups themselves
 
     Params:
-        - tasks (List[Task]):
+        - tasks (List[TaskType]):
             roots of the DAG to be considered.
 
     Results:
@@ -29,13 +29,13 @@ def _topological_sort(
     in_degree = defaultdict(int)
     children_map = defaultdict(list)
     all_tasks = set()
-    
+
     # Stack-based traversal to gather tasks
     # and build in-degree graph
     stack = list(tasks)
     while stack:
         node = stack.pop()
-        if not isinstance(node, Task):
+        if not isinstance(node, TaskType):
             continue
         if node in all_tasks:
             continue
@@ -103,7 +103,7 @@ def _find_subdag_end(task_order, start_idx):
 
 
 def _collect_parent_results(
-    elmt: Union[Task, TaskGroup],
+    elmt: Union[TaskType, TaskGroup],
     results: TaskPayload
 ) -> TaskPayload:
     """
@@ -111,7 +111,7 @@ def _collect_parent_results(
     for a given task or taskgroup.
 
     Params:
-        - t (Union[Task, TaskGroup]):
+        - t (Union[TaskType, TaskGroup]):
             The current task or taskgroup.
         - results (TaskPayload):
             The dictionary of previously computed results.
@@ -122,7 +122,7 @@ def _collect_parent_results(
             the results from all available parent tasks.
     """
     parent_results = TaskPayload({})
-    if isinstance(elmt, Task):
+    if isinstance(elmt, TaskType):
         for p in elmt.parents:
             if p.name in results:
                 parent_results[p.name] = results[p.name]
@@ -153,23 +153,26 @@ def _parallel_input_count(parent_results):
     return len(first) if isinstance(first, list) else 1
 
 
-def _run_parallel_branches(
-    subdag_elements: List[Union[Task, TaskGroup]],
+def _execute_parallel_branches(
+    subdag_elements: List[Union[TaskType, TaskGroup]],
     parent_results: TaskPayload,
     count: int,
+    exec_id: int,
     rank: Optional[List[int]] = None
 ) -> List[TaskPayload]:
     """
     Executes a subdag in parallel across multiple input branches.
 
     Params:
-        - subdag_elements (List[Union[Task, TaskGroup]]):
+        - subdag_elements (List[Union[TaskType, TaskGroup]]):
             The first-level tasks and taskgroups
             forming the parallel subdag.
         - parent_results (TaskPayload):
             Input values for the branches.
         - count (int):
             Number of parallel executions to perform.
+        - exec_id (int):
+            The execution ID for this DAG run.
         - rank (List[int], optional):
             Index path for nested branches.
             Indices of branches if branch inside a parallel lane.
@@ -189,14 +192,16 @@ def _run_parallel_branches(
                 _execute_branch,
                 subdag_elements,
                 branch_input,
+                exec_id,
                 (rank or []) + [idx]
             ))
         return [f.result() for f in futures]
 
 
-def _run_regular_task(
-    t: Task,
+def _execute_regular_task(
+    t: TaskType,
     parent_results: TaskPayload,
+    exec_id: int,
     rank: Optional[List[int]] = None
 ) -> TaskPayload:
     """
@@ -204,10 +209,12 @@ def _run_regular_task(
     optionally applying a merge function.
 
     Params:
-        - t (Task):
+        - t (TaskType):
             The task to execute.
         - parent_results (TaskPayload):
             Input values from parent tasks.
+        - exec_id (int):
+            The execution ID for this DAG run.
         - rank (List[int], optional):
             Index path for nested branches.
             Indices of branches if inside a parallel lane.
@@ -216,8 +223,9 @@ def _run_regular_task(
         - TaskPayload:
             The result produced by the task.
     """
+    task_id = None
     if t.merge_func:
-        merged = t.merge_func(list(parent_results.values())[0])
+        task_id, merged = t.merge_func(list(parent_results.values())[0], rank=rank, exec_id=exec_id)
         parent_results = TaskPayload({t.parents[0].name: merged})
 
         t.log.info(
@@ -228,16 +236,19 @@ def _run_regular_task(
         )
 
     if parent_results._data:
-        return t.func(parent_results, rank=rank) \
+        _, result = t.func(parent_results, rank=rank, exec_id=exec_id, task_id=task_id) \
                if rank \
-               else t.func(parent_results)
+               else t.func(parent_results, exec_id=exec_id, task_id=task_id)
     else:
-        return t.func(rank=rank) if rank else t.func()
+        _, result = t.func(rank=rank, exec_id=exec_id, task_id=task_id) if rank else t.func(exec_id=exec_id, task_id=task_id)
+
+    return result
 
 
-def _run_regular_taskgroup(
+def _execute_regular_taskgroup(
     tg: TaskGroup,
     parent_results: TaskPayload,
+    exec_id: int,
     rank: Optional[List[int]] = None
 ) -> TaskPayload:
     """Executes tasks (and potential nested taskgroups) asynchronously.
@@ -256,6 +267,8 @@ def _run_regular_taskgroup(
             The taskgroup to execute.
         - parent_results (TaskPayload):
             Input values from parent tasks.
+        - exec_id (int):
+            The execution ID for this DAG run.
         - rank (List[int], optional):
             Index path for nested branches.
             Indices of branches
@@ -272,20 +285,22 @@ def _run_regular_taskgroup(
         futures = {}
         for elmt in tg.elements:
             result[elmt.name] = None  # to preserve keys ordering
-            if isinstance(elmt, Task):
+            if isinstance(elmt, TaskType):
                 future = executor.submit(
-                    _run_regular_task,
+                    _execute_regular_task,
                     elmt,
                     parent_results,
+                    exec_id,
                     (rank or [])
                 )
                 futures[future] = elmt.name
             else:
                 # Submit nested taskgroups to executor as well
                 future = executor.submit(
-                    _run_regular_taskgroup,
+                    _execute_regular_taskgroup,
                     elmt,
                     parent_results,
+                    exec_id,
                     rank
                 )
                 futures[future] = elmt.name
@@ -322,7 +337,7 @@ def execute(
     and merges results as needed.
 
     Params:
-        - task (Task):
+        - task (TaskType):
             A task from the DAG to be executed.
         - dag_params (Any)
             Parameters for this DAG execution.
@@ -343,11 +358,11 @@ def execute(
     i = 0
     while i < len(order):
         elmt = order[i]
-
         parent_results = _collect_parent_results(elmt, results)
 
-        if isinstance(elmt, Task):
-            elmt.log.info("Executing task: " +
+        if isinstance(elmt, TaskType):
+            task_type = "merge task" if elmt.merge_func else "task"
+            elmt.log.info(f"Executing {task_type}: " +
                        f"[rgb(0,255,255) on #af00ff]{elmt.name}[/]")
 
             if elmt.is_parallel:
@@ -357,12 +372,12 @@ def execute(
                 subdag_end = _find_subdag_end(order, i)
                 subdag_tasks = order[i:subdag_end]
                 elmt.log.info("subdag_tasks [red on yellow]{}[/]".format(
-                    [elmt.name for elmt in subdag_tasks]))
+                    [t.name for t in subdag_tasks]))
 
                 # Execute parallel subdag for each input
                 input_count = _parallel_input_count(parent_results)
-                sub_results = _run_parallel_branches(
-                    subdag_tasks, parent_results, input_count)
+                sub_results = _execute_parallel_branches(
+                    subdag_tasks, parent_results, input_count, dag.exec_id)
 
                 # Store results for the last task in subdag
                 results[subdag_tasks[-1].name] = sub_results
@@ -371,12 +386,13 @@ def execute(
                 i = subdag_end
                 continue
             else:
-                result = _run_regular_task(elmt, parent_results)
+                # This includes merge tasks at the top level
+                result = _execute_regular_task(elmt, parent_results, dag.exec_id)
                 results[elmt.name] = result
         else:
             elmt.log.info("Executing taskgroup: " +
                        f"[rgb(0,255,255) on #af00ff]{elmt.name}[/]")
-            tg_results = _run_regular_taskgroup(elmt, parent_results)
+            tg_results = _execute_regular_taskgroup(elmt, parent_results, dag.exec_id)
             for task_name, task_result in tg_results.items():
                 results[task_name] = task_result
 
@@ -386,8 +402,9 @@ def execute(
 
 
 def _execute_branch(
-    branch_elements: List[Union[Task, TaskGroup]],
+    branch_elements: List[Union[TaskType, TaskGroup]],
     branch_input: TaskPayload,
+    exec_id: int,
     rank: List[int]
 ) -> TaskPayload:
     """Execute a single parallel branch with recursive subdag handling.
@@ -396,6 +413,8 @@ def _execute_branch(
         - branch_elements
         - branch_input: (TaskPayload):
             outputs from task parents
+        - exec_id (int):
+            The execution ID for this DAG run.
         - rank: List[int]:
             Index path for nested branches.
             Indices of branches if inside a parallel lane.
@@ -411,8 +430,7 @@ def _execute_branch(
         elmt = branch_elements[i]
         parent_results = _collect_parent_results(elmt, branch_results)
 
-        if isinstance(elmt, Task):
-            elmt.rank = rank
+        if isinstance(elmt, TaskType):
             if elmt.is_parallel and i > 0:
                 # Nested Parallelism
                 elmt.log.info(f"nested sub-DAG parent_results: {parent_results}")
@@ -421,32 +439,32 @@ def _execute_branch(
                 nested_subdag_end = _find_subdag_end(branch_elements, i)
                 nested_subdag_tasks = branch_elements[i:nested_subdag_end]
                 elmt.log.info("nested_subdag_tasks [red on yellow]{}{}[/]".format(
-                    rank, [elmt.name for t in nested_subdag_tasks]))
+                    rank, [elmt.name for elmt in nested_subdag_tasks]))
 
                 # Execute nested parallel subdag
                 parent_value = list(parent_results.values())[0]
                 if isinstance(parent_value, list):
-                    nested_results = _run_parallel_branches(
+                    nested_results = _execute_parallel_branches(
                         nested_subdag_tasks, parent_results,
-                        len(parent_value), rank)
+                        len(parent_value), exec_id, rank)
                 else:
                     nested_results = _execute_branch(
-                        nested_subdag_tasks, parent_results, rank)
+                        nested_subdag_tasks, parent_results, exec_id, rank)
 
                 branch_results[nested_subdag_tasks[-1].name] = nested_results
                 i = nested_subdag_end
                 continue
             else:
-                # Regular task
-                elmt.log.info("Executing task: " +
-                              f"[rgb(0,255,255) on #af00ff]{elmt.name}{rank}[/]")
-                result = _run_regular_task(elmt, parent_results, rank)
+                task_type = "merge task" if elmt.merge_func else "task"
+                elmt.log.info(f"Executing {task_type}: " +
+                            f"[rgb(0,255,255) on #af00ff]{elmt.name}{rank}[/]")
+                result = _execute_regular_task(elmt, parent_results, exec_id, rank)
                 branch_results[elmt.name] = result
         else:
             # TaskGroup
             elmt.log.info("Executing taskgroup: " +
-                          f"[rgb(0,255,255) on #af00ff]{elmt.name}{rank}[/]")
-            result = _run_regular_taskgroup(elmt, parent_results, rank)
+                        f"[rgb(0,255,255) on #af00ff]{elmt.name}{rank}[/]")
+            result = _execute_regular_taskgroup(elmt, parent_results, exec_id, rank)
             for task_name, task_result in result.items():
                 branch_results[task_name] = task_result
 

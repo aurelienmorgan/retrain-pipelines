@@ -41,13 +41,18 @@ class TaskGroupException(Exception):
         super().__init__(message)
 
 
-class Task(BaseModel):
+class TaskType(BaseModel):
     """Represents a node in the DAG.
 
     Note: The class is instantiated at DAG declaration time.
-          Attributes related to DAG execution
-          (such as `exec_id` and `task_id` and `rank`)
-          are populated at execution time.
+          Attributes related to DAG execution.
+          `task_id`, `exec_id` and `rank` are passed
+          at runtime but not stored.
+    Note: at runtime, rank serves to track sub-DAG
+          split line depth and indices.
+          In case of a task part of a parallel lane,
+          indice n corresponds to the rank to which the task belongs
+          after parallel task n in the chain of nested parallelism.
     """
     func: Callable
     is_parallel: bool = False
@@ -58,22 +63,11 @@ class Task(BaseModel):
 
     tasktype_uuid: UUID = Field(default_factory=uuid4,
                                 description="Unique ID for graph rendering")
-    exec_id: Optional[int] = Field(default=None)
-    task_id: Optional[int] = Field(default=None)
-
-    rank: Optional[List[int]] = Field(
-        default=None,
-        description=(
-            "In case of a task part of a parallel lane (can be nested): "
-            "indice n corresponds to the rank to which the task belongs "
-            "after parallel task n in the chain of nested parallelism."
-        )
-    )
 
     # Private attributes (not validated or included in .dict())
     _log: logging.Logger = PrivateAttr(default_factory=logging.getLogger)
-    _parents: List["Task"] = PrivateAttr(default_factory=list)
-    _children: List["Task"] = PrivateAttr(default_factory=list)
+    _parents: List["TaskType"] = PrivateAttr(default_factory=list)
+    _children: List["TaskType"] = PrivateAttr(default_factory=list)
     # in case of a task part of a taskgroup
     _task_group: Optional["TaskGroup"] = PrivateAttr(default=None)
 
@@ -102,12 +96,12 @@ class Task(BaseModel):
 
 
     @property
-    def parents(self) -> List["Task"]:
+    def parents(self) -> List["TaskType"]:
         return self._parents
 
 
     @property
-    def children(self) -> List["Task"]:
+    def children(self) -> List["TaskType"]:
         return self._children
 
 
@@ -119,15 +113,20 @@ class Task(BaseModel):
     def _wrap_merge_func(self, merge_func):
         """Wrap the function
 
-        with logging and Exception handling."""
+        with logging and Exception handling.
+
+        Returns: task_id for use by the main func wrapper
+        """
 
         @functools.wraps(merge_func)
         def wrapper(*args, **kwargs):
+            rank = kwargs.pop("rank", None)
+            exec_id = kwargs.pop("exec_id", None)
             dao = DAO(os.environ["RP_METADATASTORE_URL"])
-            self.task_id = dao.add_task(
-                exec_id=self.exec_id,
+            task_id = dao.add_task(
+                exec_id=exec_id,
                 tasktype_uuid=self.tasktype_uuid,
-                rank=self.rank,
+                rank=rank,
                 start_timestamp=datetime.now(timezone.utc)
             )
 
@@ -135,8 +134,8 @@ class Task(BaseModel):
                 framed_rich_log_str(
                     f"\N{wrench} Executing Merge "
                     f"[#D2691E]`{self.merge_func.__name__}`[/] of task "
-                    f"[#D2691E]`{self.name}[{self.task_id}]"
-                    f"{f'[{self.rank}]' if self.rank is not None else ''}`[/]:\n"
+                    f"[#D2691E]`{self.name}[{task_id}]"
+                    f"{f'[{rank}]' if rank is not None else ''}`[/]:\n"
                     f"Inputs :\n"
                     f"  \N{BULLET} Positional: {args}\n"
                     f"  \N{BULLET} Keyword   : {kwargs}",
@@ -149,12 +148,12 @@ class Task(BaseModel):
             except Exception as ex:
                 end_timestamp = datetime.now(timezone.utc)
                 dao.update_task(
-                    id=self.task_id,
+                    id=task_id,
                     end_timestamp=end_timestamp,
                     failed=True
                 )
                 dao.update_execution(
-                    id=self.exec_id,
+                    id=exec_id,
                     end_timestamp=end_timestamp
                 )
                 raise TaskMergeFuncException(
@@ -162,7 +161,7 @@ class Task(BaseModel):
                         f"of task `{self.name}` failed"
                     ) from ex
 
-            return result
+            return task_id, result
 
         return wrapper
 
@@ -170,16 +169,22 @@ class Task(BaseModel):
     def _wrap_func(self, func):
         """Wrap the function
 
-        with logging and Exception handling."""
+        with logging and Exception handling.
+
+        Returns: tuple of (task_id, result)
+        """
 
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
             rank = kwargs.pop("rank", None)
+            exec_id = kwargs.pop("exec_id", None)
+            task_id = kwargs.pop("task_id", None)  # Get task_id from merge_func if it exists
             dao = DAO(os.environ["RP_METADATASTORE_URL"])
 
-            if self.merge_func is None :
-                self.task_id = dao.add_task(
-                    exec_id=self.exec_id,
+            if task_id is None:
+                # Only create task_id if merge_func didn't create it
+                task_id = dao.add_task(
+                    exec_id=exec_id,
                     tasktype_uuid=self.tasktype_uuid,
                     rank=rank,
                     start_timestamp=datetime.now(timezone.utc)
@@ -198,7 +203,7 @@ class Task(BaseModel):
             self.log.info(
                 framed_rich_log_str(
                     f"\N{wrench} Executing Task "
-                    f"[#D2691E]`{self.name}[{self.task_id}]"
+                    f"[#D2691E]`{self.name}[{task_id}]"
                     f"{f'[{rank}]' if rank is not None else ''}`[/]:\n"
                     f"Inputs :\n"
                     f"  \N{BULLET} Positional: {args}\n"
@@ -212,7 +217,7 @@ class Task(BaseModel):
             try:
                 result = func(*args, **kwargs)
                 self.log.info(
-                    f"\n\N{WHITE HEAVY CHECK MARK} Completed Task [#D2691E]`{self.name}[{self.task_id}]{f'[{rank}]' if rank is not None else ''}`[/]:\n"
+                    f"\n\N{WHITE HEAVY CHECK MARK} Completed Task [#D2691E]`{self.name}[{task_id}]{f'[{rank}]' if rank is not None else ''}`[/]:\n"
                     f"Results :\n" +
                     f"  \N{BULLET} {result} {f'({type(result).__name__})' if result is not None else ''}\n"
                 )
@@ -223,17 +228,17 @@ class Task(BaseModel):
             finally:
                 end_timestamp = datetime.now(timezone.utc)
                 dao.update_task(
-                    id=self.task_id,
+                    id=task_id,
                     end_timestamp=end_timestamp,
                     failed=task_failed
                 )
                 if task_failed or (len(self.children) == 0):
                     dao.update_execution(
-                        id=self.exec_id,
+                        id=exec_id,
                         end_timestamp=end_timestamp
                     )
 
-            return result
+            return task_id, result
 
         return wrapper
 
@@ -243,7 +248,7 @@ class Task(BaseModel):
 
         Allows chaining: a >> b >> c or a >> TaskGroup(b, c).
         """
-        if isinstance(other, Task):
+        if isinstance(other, TaskType):
             self.children.append(other)
             other.parents.append(self)
             return other
@@ -252,16 +257,15 @@ class Task(BaseModel):
                 self._add_child(element)
             return other
         else:
-            raise TypeError("The right-hand side of '>>' must be a Task object, or a TaskGroup object.")
+            raise TypeError(
+                "The right-hand side of '>>' must be a TaskType object, or a TaskGroup object.")
 
 
     def _add_child(self, child):
         """Recursively add children to the task."""
-        if isinstance(child, Task):
+        if isinstance(child, TaskType):
             self.children.append(child)
             child.parents.append(self)
-            if child.exec_id is None:
-                child.exec_id = self.exec_id
         elif isinstance(child, TaskGroup):
             for child_element in child.elements:
                 self._add_child(child_element)
@@ -270,15 +274,15 @@ class Task(BaseModel):
         return hash(self.tasktype_uuid)
 
     def __eq__(self, other):
-        if isinstance(other, Task):
+        if isinstance(other, TaskType):
             return self.tasktype_uuid == other.tasktype_uuid
         return False
 
     def __str__(self):
+        merge_name = self.merge_func.__name__ if self.merge_func else None
         return (f"Task({self.name!r}, is_parallel={self.is_parallel}, "
-                f"merge_func={{self.merge_func.__name__!r if self.merge_func else None}}, "
-                f"tasktype_uuid={self.tasktype_uuid!r}, exec_id={self.exec_id!r}, "
-                f"task_id={self.task_id!r}, rank={self.rank!r})")
+                f"merge_func={merge_name!r}, "
+                f"tasktype_uuid={self.tasktype_uuid!r})")
 
     def __repr__(self):
         return f"{self.__str__()}"
@@ -306,7 +310,7 @@ class TaskGroup(BaseModel):
     docstring: Optional[str] = Field(default=None)
     ui_css: Optional["UiCss"] = Field(default=None)
 
-    elements: List[Union["Task", "TaskGroup"]] = Field(
+    elements: List[Union["TaskType", "TaskGroup"]] = Field(
         default_factory=list,
         description="List of consituent items: tasks and/or taskgroups"
     )
@@ -316,8 +320,8 @@ class TaskGroup(BaseModel):
 
     # Private attributes (not validated or included in .dict())
     _log: logging.Logger = PrivateAttr(default_factory=logging.getLogger)
-    _parents: List["Task"] = PrivateAttr(default_factory=list)
-    _children: List["Task"] = PrivateAttr(default_factory=list)
+    _parents: List["TaskType"] = PrivateAttr(default_factory=list)
+    _children: List["TaskType"] = PrivateAttr(default_factory=list)
     # in case of a taskgroup itself part of a taskgroup
     _task_group: Optional["TaskGroup"] = PrivateAttr(default = None)
 
@@ -371,7 +375,7 @@ class TaskGroup(BaseModel):
 
         Allows chaining: a >> b >> c or a >> TaskGroup(b, c).
         """
-        if isinstance(other, Task):
+        if isinstance(other, TaskType):
             if other.merge_func:
                 # Note: TODO, implement support for that someday (or not)
                 raise MergeNotSupportedError(
@@ -384,20 +388,20 @@ class TaskGroup(BaseModel):
             return other
         else:
             raise TypeError(
-                "The right-hand side of '>>' must be a Task object, or a TaskGroup object.")
+                "The right-hand side of '>>' must be a TaskType object, or a TaskGroup object.")
 
     def _add_child(self, child):
         """Recursively add children to the task or task group."""
-        if isinstance(child, Task):
+        if isinstance(child, TaskType):
             for element in self.elements:
-                if isinstance(element, Task):
+                if isinstance(element, TaskType):
                     element.children.append(child)
                     child.parents.append(element)
                 elif isinstance(element, TaskGroup):
                     element._add_child(child)
         elif isinstance(child, TaskGroup):
             for element in self.elements:
-                if isinstance(element, Task):
+                if isinstance(element, TaskType):
                     for sub_child in child.elements:
                         element.children.append(sub_child)
                         sub_child.parents.append(element)
@@ -430,7 +434,7 @@ class DAG(BaseModel):
           (such as `exec_id` and `exec_params`)
           are populated at execution time.
     """
-    roots: List["Task"] = Field(...)
+    roots: List["TaskType"] = Field(...)
     docstring: Optional[str] = Field(default=None)
     ui_css: Optional["UiCss"] = Field(default=None)
 
@@ -470,11 +474,6 @@ class DAG(BaseModel):
         for i, taskgroup in enumerate(taskgroups_list):
             dao.add_taskgroup(exec_id=self.exec_id, order=i,
                              **taskgroup)
-
-        for root in self.roots:
-            root.exec_id = self.exec_id
-            for child in root.children:
-                DAG._cascade_exec_id(self.exec_id, child)
 
 
     def to_elements_lists(
@@ -541,7 +540,7 @@ class DAG(BaseModel):
                         "docstring": task.task_group.docstring,
                         "ui_css": task.task_group.ui_css.to_dict() if task.task_group.ui_css else None,
                         "elements": [
-                            str(e.tasktype_uuid) if isinstance(e, Task)
+                            str(e.tasktype_uuid) if isinstance(e, TaskType)
                             else str(e.uuid) # inner TaskGroup
                             for e in task.task_group.elements
                         ]
@@ -556,7 +555,7 @@ class DAG(BaseModel):
 
 
     @staticmethod
-    def _find_root_tasks(task: Task) -> list[Task]:
+    def _find_root_tasks(task: TaskType) -> list[TaskType]:
         """Find all root tasks in the DAG starting from the given task."""
         all_tasks = set()
         stack = [task]
@@ -566,17 +565,6 @@ class DAG(BaseModel):
                 all_tasks.add(current)
                 stack.extend(current.parents)
         return [t for t in all_tasks if not t.parents]
-
-
-    @staticmethod
-    def _cascade_exec_id(exec_id, element):
-        element.exec_id = exec_id
-        if isinstance(element, TaskGroup):
-            for sub_element in element.elements:
-                DAG._cascade_exec_id(exec_id, sub_element)
-        else:
-            for child in element.children:
-                DAG._cascade_exec_id(exec_id, child)
 
 
 # ---- Decorators for Task Declaration ----
@@ -589,7 +577,7 @@ def task(func=None, *, merge_func=None, ui_css=None):
     """
 
     def decorator(f):
-        t = Task(
+        t = TaskType(
             func=f,
             is_parallel=False,
             merge_func=merge_func,
@@ -602,7 +590,7 @@ def task(func=None, *, merge_func=None, ui_css=None):
             return f(*args, **kwargs)
 
         wrapper._task = t
-        return t  # Return the Task object instead of the wrapper
+        return t  # Return the TaskType object instead of the wrapper
 
     return decorator(func) if func else decorator
 
@@ -611,7 +599,7 @@ def parallel_task(func=None, ui_css=None):
     """Decorator for parallel tasks."""
 
     def decorator(f):
-        t = Task(
+        t = TaskType(
             func=f,
             is_parallel=True,
             merge_func=None,
@@ -624,7 +612,7 @@ def parallel_task(func=None, ui_css=None):
             return f(*args, **kwargs)
 
         wrapper._task = t
-        return t  # Return the Task object instead of the wrapper
+        return t  # Return the TaskType object instead of the wrapper
 
     return decorator(func) if func else decorator
 
