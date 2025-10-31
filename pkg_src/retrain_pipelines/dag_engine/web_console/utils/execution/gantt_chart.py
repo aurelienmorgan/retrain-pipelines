@@ -390,18 +390,18 @@ def _organize_tasks(
                     .lines[tuple(task_ext.rank)].append(task_ext)
 
             elif task_ext.merge_func is not None:
-                try:
-                    parallel_lines[
-                            f"""{branching_number_in_series[
-                                    tuple(task_ext.rank) if task_ext.rank is not None else ()
-                              ]}-{task_ext.rank if task_ext.rank is not None else []}"""
-                        ].merging_task = task_ext
-                except Exception as ex:
-                    # TODO - bug in the DAG engine where merge tasks
-                    # sometimes (TBC, but probably a mishandeled async "future" issue)
-                    # get a wrong rank
-                    logging.getLogger().error(f"{task_ext} rank={task_ext.rank}?")
-                    logging.getLogger().error(ex)
+                # try:
+                parallel_lines[
+                        f"""{branching_number_in_series[
+                                tuple(task_ext.rank) if task_ext.rank is not None else ()
+                          ]}-{task_ext.rank if task_ext.rank is not None else []}"""
+                    ].merging_task = task_ext
+                # except Exception as ex:
+                    # # TODO - bug in the DAG engine where merge tasks
+                    # # sometimes (TBC, but probably a mishandeled async "future" issue)
+                    # # get a wrong rank
+                    # logging.getLogger().error(f"{task_ext} rank={task_ext.rank}?")
+                    # logging.getLogger().error(ex)
 
                 branching_number_in_series[
                         tuple(task_ext.rank) if task_ext.rank is not None else ()

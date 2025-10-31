@@ -979,7 +979,7 @@ def register(app, rt, prefix=""):
                             """),
                             Script(f"""// SSE multiplexed events : new retraining-pipeline execution
                                 let executionEventSource;
-                                function registerExecEventSrc() {{
+                                function registerExecEventsSrc() {{
                                     executionEventSource = new EventSource(
                                         `{prefix}/executions_events`
                                     );
@@ -1171,13 +1171,13 @@ def register(app, rt, prefix=""):
                                         }}
                                     }});
                                 }}
-                                registerExecEventSrc();
+                                registerExecEventsSrc();
                             """),
                             Script("""// executions list reload on window history.back()
                                 window.addEventListener('pageshow', function(event) {
                                     if (event.persisted) {
                                         loadExecs();
-                                        registerExecEventSrc();
+                                        registerExecEventsSrc();
                                     }
                                 });
                             """),
@@ -1205,7 +1205,7 @@ def register(app, rt, prefix=""):
                                             ) {
                                                 console.log("reconnected");
                                                 loadExecs();
-                                                registerExecEventSrc();
+                                                registerExecEventsSrc();
                                             }
 
                                             // Update previousClasses for next mutation check

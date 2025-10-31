@@ -501,7 +501,7 @@ def register(app, rt, prefix=""):
                                 }}
                             );
 
-                            registerExecEventSrc();
+                            registerExecEventsSrc();
                             registerTaskEvents();
                         }}
                     }});
@@ -1073,14 +1073,36 @@ def register(app, rt, prefix=""):
 
                             if (payload.exec_id == {execution_id}) {{
                                 //console.log("executionEventsSource 'newTask'", payload);
-                                ganttInsert('execGanttTimelineObj', payload, interBarsSpacing);
+
+                                function checkAndInsert() {{
+                                    /* ***************************************
+                                    * Ensure the init table state is         *
+                                    * loaded before handling new events.     *
+                                    *                                        *
+                                    * BEWARE :                               *
+                                    *   This will lead to                    *
+                                    *   treating events twice                *
+                                    *   if they occur in the middle of the   *
+                                    *   initial response.                    *
+                                    *   (but if we don't wait,               *
+                                    *    the gantt object may not exists yet *
+                                    *    here)                               *
+                                    *************************************** */
+                                    if (window.execGanttTimelineObj) {{
+                                        ganttInsert('execGanttTimelineObj', payload, interBarsSpacing);
+                                    }} else {{
+                                        requestAnimationFrame(checkAndInsert);
+                                    }}
+                                }}
+                                requestAnimationFrame(checkAndInsert);
+
                             }}
                         }});
                         /* ************** */
 
-                        /* *****************
+                        /* ***************
                         * "a task ended" *
-                        ***************** */
+                        *************** */
                         executionEventsSource.addEventListener('taskEnded', (event) => {{
                             let payload;
                             try {{
@@ -1094,10 +1116,32 @@ def register(app, rt, prefix=""):
 
                             if (payload.exec_id == {execution_id}) {{
                                 //console.log("executionEventsSource 'taskEnded'", payload);
-                                ganttUpdate('execGanttTimelineObj', payload, interBarsSpacing);
+
+                                function checkAndUpdate() {{
+                                    /* ***************************************
+                                    * Ensure the init table state is         *
+                                    * loaded before handling new events.     *
+                                    *                                        *
+                                    * BEWARE :                               *
+                                    *   This will lead to                    *
+                                    *   treating events twice                *
+                                    *   if they occur in the middle of the   *
+                                    *   initial response.                    *
+                                    *   (but if we don't wait,               *
+                                    *    the gantt object may not exists yet *
+                                    *    here)                               *
+                                    *************************************** */
+                                    if (window.execGanttTimelineObj) {{
+                                        ganttUpdate('execGanttTimelineObj', payload, interBarsSpacing);
+                                    }} else {{
+                                        requestAnimationFrame(checkAndUpdate);
+                                    }}
+                                }}
+                                requestAnimationFrame(checkAndUpdate);
+
                             }}
                         }});
-                        /* ************** */
+                        /* ************ */
 
                     }}
                     registerTaskEvents();
