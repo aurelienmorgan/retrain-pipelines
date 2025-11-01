@@ -5,7 +5,7 @@ from typing import List, Union
 
 from retrain_pipelines.dag_engine.core import \
     TaskPayload, task, parallel_task, \
-    dag, UiCss
+    dag, UiCss, DagParam, ctx
 from retrain_pipelines.dag_engine.runtime import \
     execute
 from retrain_pipelines.dag_engine.renderer import \
@@ -20,7 +20,20 @@ def start():
     """Root task: produces a list of numbers."""
 
     # Do whatever you want
-    # e.g. you could handle pipeline parameters here
+
+    ################################
+    # Access DAG execution-context #
+    #      (parameters, etc.)      #
+    ################################
+    print(f"execution param 1: {ctx.dummy_param_1}")
+    print(f"execution param 2: {ctx.dummy_param_2}")
+
+    from datetime import datetime, timezone
+    ctx.added_entry = \
+        datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S') + \
+        " UTC - execution-context, task dynamically added entry"
+    print(f"ctx addon: {ctx.added_entry}")
+    ################################
 
     #################################
     # Return must be an enumerator, #
@@ -73,6 +86,17 @@ def end(payload: TaskPayload):
 
 @dag(ui_css=UiCss(background="#000", color="#ffd700", border="#ffd700"))
 def retrain_pipeline():
+
+    # Declare DAG parameters (will be used in tasks via ctx)
+    dummy_param_1 = DagParam(
+        description="a dummy param for that dag execution",
+        default="dummy param default value"
+    )
+    dummy_param_2 = DagParam(
+        description="another dummy param for that dag execution",
+        default="dummy param default value 2"
+    )
+
     # Compose the DAG using operator overloading (>>)
     return start >> parallel >> merge >> end
 
@@ -82,8 +106,15 @@ if __name__ == "__main__":
     # Render the DAG
     svg_fullname = os.path.join(os.environ["RP_ARTIFACTS_STORE"], "dag.html")
     render_svg(retrain_pipeline, svg_fullname)
-    # Run the DAG
-    print("Final result:", execute(retrain_pipeline, dag_params=None))
+
+    print(retrain_pipeline.help()) # help string (parameters definitions and defaults)
+
+    # Execute with parameter overrides
+    import random
+    print("Final result:", execute(retrain_pipeline, params={
+        "dummy_param_1": f"{random.randint(1, 10)} - override default for that execution"
+    }))
+
     print(f"execution {os.path.splitext(os.path.basename(__file__))[0]}[{retrain_pipeline.exec_id}]")
     print(f"DAG SVG written to {svg_fullname}")
 

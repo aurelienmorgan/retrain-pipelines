@@ -2,11 +2,13 @@
 import os
 import re
 import sys
+import ast
 import getpass
 import inspect
 import logging
 import textwrap
 import functools
+import contextvars
 import concurrent.futures
 
 from uuid import UUID, uuid4
@@ -122,6 +124,7 @@ class TaskType(BaseModel):
         def wrapper(*args, **kwargs):
             rank = kwargs.pop("rank", None)
             exec_id = kwargs.pop("exec_id", None)
+
             dao = DAO(os.environ["RP_METADATASTORE_URL"])
             task_id = dao.add_task(
                 exec_id=exec_id,
@@ -178,9 +181,10 @@ class TaskType(BaseModel):
         def wrapper(*args, **kwargs):
             rank = kwargs.pop("rank", None)
             exec_id = kwargs.pop("exec_id", None)
-            task_id = kwargs.pop("task_id", None)  # Get task_id from merge_func if it exists
-            dao = DAO(os.environ["RP_METADATASTORE_URL"])
+            task_id = kwargs.pop("task_id", None)  # Get task_id from merge_func
+                                                   # if it exists
 
+            dao = DAO(os.environ["RP_METADATASTORE_URL"])
             if task_id is None:
                 # Only create task_id if merge_func didn't create it
                 task_id = dao.add_task(
@@ -439,7 +443,7 @@ class DAG(BaseModel):
     ui_css: Optional["UiCss"] = Field(default=None)
 
     exec_id: Optional[int] = Field(default=None)
-    exec_params: Optional[Dict[str, Any]] = Field(default_factory=dict)
+    params: Dict[str, "DagParam"] = Field(default_factory=dict)
 
 
     def __init__(self, *args, **kwargs):
@@ -567,6 +571,18 @@ class DAG(BaseModel):
         return [t for t in all_tasks if not t.parents]
 
 
+    def help(self) -> str:
+        """Generate help text for DAG parameters."""
+        if not self.params:
+            return "No parameters defined for this DAG."
+
+        lines = ["DAG Parameter definitions:"]
+        for name, param in self.params.items():
+            default = f" [default: {param.default}]" if param.default is not None else ""
+            lines.append(f"  {name}: {param.description}{default}")
+        return "\n".join(lines)
+
+
 # ---- Decorators for Task Declaration ----
 
 
@@ -651,14 +667,92 @@ def taskgroup(func=None, *, ui_css=None):
         return decorator(func)
 
 
+def _get_dag_params(dag_fun: Callable):
+    """Executes the function so params get instanciated."""
+    # Get source and parse it
+    source = inspect.getsource(dag_fun)
+    tree = ast.parse(source)
+
+    # Extract just the function body lines
+    func_node = None
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef):
+            func_node = node
+            break
+
+    if not func_node:
+        raise ValueError("Could not find function definition")
+
+    # Execute statements line by line to build up locals
+    func_globals = dag_fun.__globals__.copy()
+    func_locals = {}
+
+    for stmt in func_node.body:
+        # Skip return statements
+        if isinstance(stmt, ast.Return):
+            continue
+        # Execute each statement to build up locals
+        try:
+            stmt_module = ast.Module(body=[stmt], type_ignores=[])
+            code = compile(stmt_module, '<string>', 'exec')
+            exec(code, func_globals, func_locals)
+        except:
+            # If a statement fails, continue anyway
+            pass
+
+    params_dict = {}
+    # Combine globals and locals
+    eval_context = {**func_globals, **func_locals}
+    # Now parse DagParam assignments
+    for stmt in func_node.body:
+        if isinstance(stmt, ast.Assign):
+            # Check if this is a DagParam assignment
+            if isinstance(stmt.value, ast.Call):
+                # Check if it's calling DagParam
+                call_name = None
+                if isinstance(stmt.value.func, ast.Name):
+                    call_name = stmt.value.func.id
+
+                if call_name == 'DagParam':
+                    # Get the variable name being assigned
+                    for target in stmt.targets:
+                        if isinstance(target, ast.Name):
+                            param_name = target.id
+                            # Extract the arguments to DagParam()
+                            param_kwargs = {}
+                            for keyword in stmt.value.keywords:
+                                arg_name = keyword.arg
+                                try:
+                                    # First try literal_eval
+                                    value = ast.literal_eval(keyword.value)
+                                    param_kwargs[arg_name] = value
+                                except:
+                                    # If that fails, eval with combined context
+                                    try:
+                                        expr = ast.Expression(body=keyword.value)
+                                        code = compile(expr, '<string>', 'eval')
+                                        value = eval(code, eval_context)
+                                        param_kwargs[arg_name] = value
+                                    except:
+                                        # If all else fails, skip
+                                        continue
+
+                            params_dict[param_name] = DagParam(**param_kwargs)
+
+    return params_dict
+
+
 def dag(func=None, *, ui_css=None):
     """Decorator factory for a DAG."""
     def decorator(f):
+        params_dict = _get_dag_params(f)
+
         task_anchor = f()
         pipeline = DAG(
             task_anchor=task_anchor,
             docstring=f.__doc__,
-            ui_css=ui_css
+            ui_css=ui_css,
+            params=params_dict
         )
         return pipeline
 
@@ -825,4 +919,36 @@ class UiCss(BaseModel):
         # Filter out None values before serializing
         data = {k: v for k, v in self.dict().items() if v is not None}
         return data
+
+
+class DagParam(BaseModel):
+    """Represents a parameter for DAG execution."""
+    description: str
+    default: Any = None
+
+# only to be called in the runtime module.
+_dag_execution_context_var = \
+    contextvars.ContextVar('dag_execution_context', default=None)
+
+class DagExecutionContext:
+    """Container for DAG execution parameters accessible within tasks."""
+    def __init__(self, params: Dict[str, Any]):
+        self._params = params
+
+    def __getattr__(self, name: str) -> Any:
+        if name.startswith('_'):
+            return object.__getattribute__(self, name)
+        return self._params.get(name)
+
+class _ContextProxy:
+    """Proxy that automatically calls .get() on the ContextVar"""
+    def __getattr__(self, name: str):
+        ctx = _dag_execution_context_var.get()
+        if ctx is None:
+            raise RuntimeError(
+                "DAG execution context not set. " +
+                "Are you calling this outside of a DAG execution?")
+        return getattr(ctx, name)
+
+ctx = _ContextProxy()
 
