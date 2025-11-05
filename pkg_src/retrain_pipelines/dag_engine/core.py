@@ -13,12 +13,21 @@ import concurrent.futures
 
 from uuid import UUID, uuid4
 from collections import deque
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date
 
 from typing import Callable, List, Optional, Union, \
     Dict, Any, Tuple
-from pydantic import BaseModel, Field, PrivateAttr, \
-    field_validator
+
+try:
+    from pydantic import BaseModel, Field, PrivateAttr, \
+        field_validator, ValidationInfo
+    IS_PYDANTIC_V2 = True
+except ImportError:
+    # maintain backward compatibility here
+    # for sample_pipeline using Seldon Tempo
+    from pydantic import BaseModel, Field, PrivateAttr, \
+        validator
+    IS_PYDANTIC_V2 = False
 
 from .db.dao import DAO
 from ..utils.rich_logging import framed_rich_log_str
@@ -157,7 +166,8 @@ class TaskType(BaseModel):
                 )
                 dao.update_execution(
                     id=exec_id,
-                    end_timestamp=end_timestamp
+                    end_timestamp=end_timestamp,
+                    context_dump=serialize(ctx._params)
                 )
                 raise TaskMergeFuncException(
                         f"merge `{merge_func.__name__}` " +
@@ -239,7 +249,8 @@ class TaskType(BaseModel):
                 if task_failed or (len(self.children) == 0):
                     dao.update_execution(
                         id=exec_id,
-                        end_timestamp=end_timestamp
+                        end_timestamp=end_timestamp,
+                        context_dump=serialize(ctx._params)
                     )
 
             return task_id, result
@@ -442,7 +453,6 @@ class DAG(BaseModel):
     docstring: Optional[str] = Field(default=None)
     ui_css: Optional["UiCss"] = Field(default=None)
 
-    exec_id: Optional[int] = Field(default=None)
     params: Dict[str, "DagParam"] = Field(default_factory=dict)
 
 
@@ -459,25 +469,40 @@ class DAG(BaseModel):
         # Get the calling frame (2 levels up)
         frame = inspect.currentframe()
         caller_frame = frame.f_back.f_back
-        caller_module_name = os.path.basename(
-                caller_frame.f_code.co_filename
-            ).split(".")[-2]
+        if (
+            os.path.basename(caller_frame.f_code.co_filename).split(".")[-2]
+                != "retraining_pipeline"
+        ):
+            pipeline_name = os.path.basename(
+                caller_frame.f_code.co_filename).split(".")[-2]
+        else:
+            pipeline_name = os.path.basename(
+                os.path.dirname(caller_frame.f_code.co_filename))
 
         dao = DAO(os.environ["RP_METADATASTORE_URL"])
-        self.exec_id = dao.add_execution(
-            name=caller_module_name,
+        exec_id = dao.add_execution(
+            name=pipeline_name,
             docstring=self.docstring,
+            params={
+                name: param.to_serializable_dict()
+                for name, param in self.params.items()
+            },
             username=getpass.getuser(),
             ui_css=self.ui_css.__dict__ if self.ui_css else None,
             start_timestamp=datetime.now(timezone.utc)
         )
         tasktypes_list, taskgroups_list = self.to_elements_lists()
         for i, tasktype in enumerate(tasktypes_list):
-            dao.add_tasktype(exec_id=self.exec_id, order=i,
+            dao.add_tasktype(exec_id=exec_id, order=i,
                              **tasktype)
         for i, taskgroup in enumerate(taskgroups_list):
-            dao.add_taskgroup(exec_id=self.exec_id, order=i,
+            dao.add_taskgroup(exec_id=exec_id, order=i,
                              **taskgroup)
+
+        # Update context
+        _dag_execution_context_var.get().update(
+            pipeline_name=pipeline_name, exec_id=exec_id
+        )
 
 
     def to_elements_lists(
@@ -667,10 +692,10 @@ def taskgroup(func=None, *, ui_css=None):
         return decorator(func)
 
 
-def _get_dag_params(dag_fun: Callable):
+def _get_dag_params(dag_func: Callable):
     """Executes the function so params get instanciated."""
     # Get source and parse it
-    source = inspect.getsource(dag_fun)
+    source = inspect.getsource(dag_func)
     tree = ast.parse(source)
 
     # Extract just the function body lines
@@ -684,7 +709,7 @@ def _get_dag_params(dag_fun: Callable):
         raise ValueError("Could not find function definition")
 
     # Execute statements line by line to build up locals
-    func_globals = dag_fun.__globals__.copy()
+    func_globals = dag_func.__globals__.copy()
     func_locals = {}
 
     for stmt in func_node.body:
@@ -903,17 +928,35 @@ class UiCss(BaseModel):
         )
     )
 
-    @field_validator("background", "color", "border")
-    def must_be_hex_color(cls, v, info):
-        if (
-            v is not None and
-            not re.match(r'^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$', v)
-        ):
-            raise ValueError(
-                f"{cls.__name__}.{info.field_name} got invalid value {v!r}:" +
-                " must be a hex color code starting with #."
-            )
-        return v
+    if IS_PYDANTIC_V2:
+        @field_validator("background", "color", "border")
+        @classmethod
+        def must_be_hex_color(
+            cls, v: Optional[str],
+            info: ValidationInfo
+        ) -> Optional[str]:
+            if (
+                v is not None and
+                not re.match(r'^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$', v)
+            ):
+                raise ValueError(
+                    f"{cls.__name__}.{info.field_name} got invalid value {v!r}: "
+                    "must be a hex color code starting with #."
+                )
+            return v
+
+    else:
+        @validator("background", "color", "border")
+        def must_be_hex_color(cls, v: Optional[str]) -> Optional[str]:
+            if (
+                v is not None and
+                not re.match(r'^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$', v)
+            ):
+                raise ValueError(
+                    f"{cls.__name__}.field got invalid value {v!r}: "
+                    "must be a hex color code starting with #."
+                )
+            return v
 
     def to_dict(self) -> dict:
         # Filter out None values before serializing
@@ -921,10 +964,35 @@ class UiCss(BaseModel):
         return data
 
 
+def serialize(obj: Any) -> Any:
+    """
+    Convert obj into JSON-serializable primitives.
+    """
+    if obj is None:
+        return None
+    if isinstance(obj, (str, int, float, bool)):
+        return obj
+    if isinstance(obj, (datetime, date)):
+        return obj.isoformat()
+    if isinstance(obj, BaseModel):
+        # convert model to plain dict first,
+        # then serialize recursively
+        return serialize(obj.dict())
+    if isinstance(obj, dict):
+        return {k: serialize(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple, set)):
+        return [serialize(v) for v in obj]
+    # Safe fallback
+    return str(obj)
+
 class DagParam(BaseModel):
     """Represents a parameter for DAG execution."""
     description: str
     default: Any = None
+
+    def to_serializable_dict(self) -> Dict[str, Any]:
+        """Return a JSON-serializable dict representation of this DagParam."""
+        return {"description": self.description, "default": serialize(self.default)}
 
 # only to be called in the runtime module.
 _dag_execution_context_var = \
@@ -940,6 +1008,10 @@ class DagExecutionContext:
             return object.__getattribute__(self, name)
         return self._params.get(name)
 
+    def update(self, **kwargs):
+        """Update context parameters."""
+        self._params.update(kwargs)
+
 class _ContextProxy:
     """Proxy that automatically calls .get() on the ContextVar"""
     def __getattr__(self, name: str):
@@ -950,5 +1022,17 @@ class _ContextProxy:
                 "Are you calling this outside of a DAG execution?")
         return getattr(ctx, name)
 
+    def __setattr__(self, name: str, value: Any):
+        ctx = _dag_execution_context_var.get()
+        if ctx is None:
+            raise RuntimeError(
+                "DAG execution context not set. " +
+                "Are you calling this outside of a DAG execution?")
+        ctx._params[name] = value
+
 ctx = _ContextProxy()
+
+if not IS_PYDANTIC_V2:
+    TaskType.update_forward_refs()
+    DAG.update_forward_refs()
 

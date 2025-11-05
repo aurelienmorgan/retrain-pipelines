@@ -1,5 +1,6 @@
 
 import os
+import copy
 import logging
 import concurrent.futures
 
@@ -182,6 +183,9 @@ def _execute_parallel_branches(
         - List[TaskPayload]:
             Results from each parallel branch.
     """
+    # CAPTURE THE CONTEXT BEFORE THREADS
+    context = _dag_execution_context_var.get()
+
     with concurrent.futures.ThreadPoolExecutor() as executor:
         futures = []
         for idx in range(count):
@@ -190,7 +194,8 @@ def _execute_parallel_branches(
                 for k, v in parent_results.items()
             })
             futures.append(executor.submit(
-                _execute_branch,
+                _execute_branch_with_context,
+                context,
                 subdag_elements,
                 branch_input,
                 exec_id,
@@ -269,6 +274,21 @@ def _execute_branch(
         i += 1
 
     return branch_results[branch_elements[-1].name]
+
+def _execute_branch_with_context(
+    context: DagExecutionContext,
+    branch_elements: List[Union[TaskType, TaskGroup]],
+    branch_input: TaskPayload,
+    exec_id: int,
+    rank: List[int]
+) -> TaskPayload:
+    """Wrapper that sets context before executing branch."""
+    token = _dag_execution_context_var.set(context)
+    try:
+        return _execute_branch(
+            branch_elements, branch_input, exec_id, rank)
+    finally:
+        _dag_execution_context_var.reset(token)
 
 
 def _execute_regular_task(
@@ -352,6 +372,9 @@ def _execute_regular_taskgroup(
             The result produced by the tasks
             (potentially nested) of the taskgroup.
     """
+    # CAPTURE THE CONTEXT BEFORE THREADS
+    context = _dag_execution_context_var.get()
+
     result = TaskPayload({})
     with concurrent.futures.ThreadPoolExecutor() as executor:
         # Submit all elements (both tasks and nested taskgroups) to executor
@@ -360,7 +383,8 @@ def _execute_regular_taskgroup(
             result[elmt.name] = None  # to preserve keys ordering
             if isinstance(elmt, TaskType):
                 future = executor.submit(
-                    _execute_regular_task,
+                    _execute_task_with_context,
+                    context,
                     elmt,
                     parent_results,
                     exec_id,
@@ -370,7 +394,8 @@ def _execute_regular_taskgroup(
             else:
                 # Submit nested taskgroups to executor as well
                 future = executor.submit(
-                    _execute_regular_taskgroup,
+                    _execute_taskgroup_with_context,
+                    context,
                     elmt,
                     parent_results,
                     exec_id,
@@ -399,11 +424,39 @@ def _execute_regular_taskgroup(
 
     return result
 
+def _execute_task_with_context(
+    context: DagExecutionContext,
+    t: TaskType,
+    parent_results: TaskPayload,
+    exec_id: int,
+    rank: Optional[List[int]] = None
+) -> TaskPayload:
+    """Wrapper that sets context before executing task."""
+    token = _dag_execution_context_var.set(context)
+    try:
+        return _execute_regular_task(t, parent_results, exec_id, rank)
+    finally:
+        _dag_execution_context_var.reset(token)
+
+def _execute_taskgroup_with_context(
+    context: DagExecutionContext,
+    tg: TaskGroup,
+    parent_results: TaskPayload,
+    exec_id: int,
+    rank: Optional[List[int]] = None
+) -> TaskPayload:
+    """Wrapper that sets context before executing taskgroup."""
+    token = _dag_execution_context_var.set(context)
+    try:
+        return _execute_regular_taskgroup(tg, parent_results, exec_id, rank)
+    finally:
+        _dag_execution_context_var.reset(token)
+
 
 def execute(
     dag: DAG,
     params: Optional[Dict[str, Any]] = None
-) -> TaskPayload:
+) -> (TaskPayload, dict):
     """From the start, executes the DAG that contains the given task.
 
     Handles task-groups, parallel and nested parallel tasks,
@@ -418,6 +471,8 @@ def execute(
     Results:
         - (TaskPayload)
             results of the last task in the DAG.
+        - (dict)
+            DAG context dump.
     """
     # Build execution context with defaults and overrides
     params = params or {}
@@ -437,12 +492,14 @@ def execute(
     # actual DAG execution
     try:
         dag.init()
-        _rich_log_execution_id_with_timestamp(dag.exec_id)
+        exec_id = _dag_execution_context_var.get()._params.get("exec_id")
+        _rich_log_execution_id_with_timestamp(exec_id)
 
-        print(f"Root tasks: {[t.name for t in dag.roots]}")
+        log = logging.getLogger()
+        log.debug(f"Root tasks: {[t.name for t in dag.roots]}")
 
         order = _topological_sort(dag.roots)
-        print(f"Topological order: {[e.name for e in order]}")
+        log.debug(f"Topological order: {[e.name for e in order]}")
 
         results = TaskPayload({})
         i = 0
@@ -467,7 +524,7 @@ def execute(
                     # Execute parallel subdag for each input
                     input_count = _parallel_input_count(parent_results)
                     sub_results = _execute_parallel_branches(
-                        subdag_tasks, parent_results, input_count, dag.exec_id)
+                        subdag_tasks, parent_results, input_count, exec_id)
 
                     # Store results for the last task in subdag
                     results[subdag_tasks[-1].name] = sub_results
@@ -477,18 +534,21 @@ def execute(
                     continue
                 else:
                     # This includes merge tasks at the top level
-                    result = _execute_regular_task(elmt, parent_results, dag.exec_id)
+                    result = _execute_regular_task(elmt, parent_results, exec_id)
                     results[elmt.name] = result
             else:
                 elmt.log.info("Executing taskgroup: " +
                            f"[rgb(0,255,255) on #af00ff]{elmt.name}[/]")
-                tg_results = _execute_regular_taskgroup(elmt, parent_results, dag.exec_id)
+                tg_results = _execute_regular_taskgroup(elmt, parent_results, exec_id)
                 for task_name, task_result in tg_results.items():
                     results[task_name] = task_result
 
             i += 1
 
-        return results[order[-1].name]
+        return (
+            results[order[-1].name],
+            copy.copy(_dag_execution_context_var.get()._params)
+        )
     finally:
         # Reset context after execution
         _dag_execution_context_var.reset(token)
