@@ -790,8 +790,6 @@ function ganttInsert(ganttTimelineObjName, payload, interBarsSpacing) {
         interBarsSpacing
     )
 
-    const tr = ganttTimelineObj.table.querySelector(`tr[data-id="${payload.id}"]`);
-
     // reset prior odd/even background overlay on groups
     // and apply back
     // (as inserts break prior odd/even distribution)
@@ -812,7 +810,17 @@ function ganttInsert(ganttTimelineObjName, payload, interBarsSpacing) {
         removeBgEvenOddOverlay(allRelatedRows);
         allRelatedRows.forEach((tr) => initTrFormat(ganttTimelineObj, tr));
 
+    } else if (payload.is_parallel) {
+        // case "first-level entirely new sub-DAG"
+        const threeInsertedRows = ganttTimelineObj.table.querySelectorAll(
+            `[data-id="${payload.name}"], ` +
+            `[data-id="${payload.name + "." + JSON.stringify(payload.rank)}"], ` +
+            `[data-id="${payload.id}"]`
+        )
+        threeInsertedRows.forEach((tr) => initTrFormat(ganttTimelineObj, tr));
     } else {
+        // case "top-level, standard task"
+        const tr = ganttTimelineObj.table.querySelector(`tr[data-id="${payload.id}"]`);
         initTrFormat(ganttTimelineObj, tr);
     }
 
@@ -846,24 +854,18 @@ function removeBgEvenOddOverlay(rows) {
     });
 }
 
-function ganttUpdate(ganttTimelineObjName, payload, interBarsSpacing, counter = 0) {
+function ganttUpdate(ganttTimelineObjName, payload, interBarsSpacing) {
     /* *
     * for tasks end-timestamp propagation.
     ** */
     const ganttTimelineObj = getGlobalObjByName(ganttTimelineObjName);
 
-    const taskRow = ganttTimelineObj.table.querySelector(
+    let taskRow = ganttTimelineObj.table.querySelector(
         `tr[data-id="${payload.id}"]`);
 
     if (!taskRow) {
         // start by inserting payload in Gantt-chart component
-        // if for any abnormal reason "newTask" hadn't fired on it
-        if (counter > 0) {
-            // if we tried before and it's still not there,
-            // avoid infinite loop, give up
-            return;
-        }
-        counter += 1;
+        // if, for any abnormal reason, "newTask" hadn't fired on it
         try {
             ganttInsert(ganttTimelineObjName, payload, interBarsSpacing);
         } catch (error) {
@@ -871,11 +873,24 @@ function ganttUpdate(ganttTimelineObjName, payload, interBarsSpacing, counter = 
             console.error(error);
             return;
         }
+        // if it's still not there, give up
+        taskRow = ganttTimelineObj.table.querySelector(
+            `tr[data-id="${payload.id}"]`);
+        if (!taskRow) return;
     }
 
-    // actual update of end_timestamp
+    // update of end_timestamp
     const timelineCell = taskRow.cells[ganttTimelineObj.timelineColumnIndex];
     timelineCell.dataset.endTimestamp = new Date(payload.end_timestamp).getTime();
+
+    // update of failed status, if applies
+    if (payload.failed) {
+        timelineCell.closest('tr').classList.add("failed")
+        const bar = timelineCell.getElementsByClassName(
+            "gantt-timeline-bar")[0];
+        bar.classList.add("failed");
+    }
+
     ganttTimelineObj.refresh();
 }
 

@@ -760,14 +760,15 @@ def after_insert_listener(mapper, connection, target):
 task_ended_api_endpoint = \
     f"{os.environ['RP_WEB_SERVER_URL']}/api/v1/task_end_event"
 
-@event.listens_for(Task._end_timestamp, "set", retval=False)
-def after_end_timestamp_change(target, newValue, oldvalue, initiator):
+@event.listens_for(Task, "after_update")
+def after_task_update(mapper, connection, target):
     """DAG-engine notifies WebConsole server.
 
     This fires when Task's _end_timestamp changes.
     Emits a TaskExt dict.
     """
-    if newValue != oldvalue and newValue is not None:
+    if target._end_timestamp is not None:
+        # Here, both _end_timestamp and failed are up-to-date
         # --- retrieve Task fields ---
         data_snapshot = {}
         for col in target.__table__.columns:
@@ -780,7 +781,6 @@ def after_end_timestamp_change(target, newValue, oldvalue, initiator):
                 data_snapshot[col.name] = str(value)
             else:
                 data_snapshot[col.name] = value
-        data_snapshot["end_timestamp"] = newValue.isoformat()
 
         # logger.info(f"Task after_end_timestamp_change {data_snapshot}")
 

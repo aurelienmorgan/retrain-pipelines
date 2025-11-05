@@ -26,13 +26,17 @@ class Execution(Base):
     __tablename__ = 'executions'
 
     id = Column(Integer, primary_key=True)
+
     name = Column(String, nullable=False)
     docstring = Column(String, nullable=True)
+    params = Column(JSON, nullable=True)
+
     username = Column(String, nullable=False)
     _start_timestamp = Column('start_timestamp',
         DateTime(timezone=True), nullable=False)
     _end_timestamp = Column('end_timestamp',
         DateTime(timezone=True), nullable=True)
+    context_dump = Column(JSON, nullable=True)
 
     tasks = relationship(
         "Task",
@@ -58,11 +62,9 @@ class Execution(Base):
         if data:
             kwargs = {**data, **kwargs}
             kwargs["id"] = int(kwargs["id"])
-            kwargs["name"] = str(kwargs["name"])
             kwargs["docstring"] = \
                 str(kwargs["docstring"]) if "docstring" in kwargs \
                 else None
-            kwargs["username"] = str(kwargs["username"])
             kwargs["_start_timestamp"] = \
                 parse_datetime(kwargs["start_timestamp"])
             kwargs["_end_timestamp"] = (
