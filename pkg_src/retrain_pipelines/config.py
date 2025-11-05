@@ -88,6 +88,7 @@ except Exception as e:
 
 ################################################################
 
+
 # https://rich.readthedocs.io/en/stable/markup.html
 
 class CustomRichHandler(RichHandler):
@@ -97,27 +98,49 @@ class CustomRichHandler(RichHandler):
             return Text("")  # Return empty text to hide level
         return super().get_level_text(record)
 
+    # def render_message(self, record: logging.LogRecord, message: str) -> Text:
+        # """
+        # For DEUB purpose only
+        # Override to prepend logger name to rendered message.
+        # """
+        # rendered = super().render_message(record, message)
+
+        # prefix = Text(f"{record.name} | ", style="bold cyan")
+        # prefix.append(rendered)
+
+        # return prefix
 
 FORMAT = "%(message)s"  # Basic log message format
 DATEFMT = "%H:%M:%S"
 
+rich_handler = CustomRichHandler(markup=True)
 
-# Configure the root logger to use RichHandler
-logging.basicConfig(
-    level="NOTSET",     # Log all levels
-    format=FORMAT,
-    datefmt=DATEFMT,
-    handlers=[CustomRichHandler(markup=True)],
-)
-# for overly noisy dependencies
-logging.getLogger("matplotlib").setLevel(logging.ERROR)
-logging.getLogger("PIL.PngImagePlugin").setLevel(logging.ERROR)
-logging.getLogger("graphviz").setLevel(logging.ERROR)
-logging.getLogger("python_multipart").setLevel(logging.ERROR)
-logging.getLogger("asyncio").setLevel(logging.WARNING)
-logging.getLogger("tzlocal").setLevel(logging.ERROR)
-logging.getLogger("aiosqlite").setLevel(logging.ERROR)
-logging.getLogger("urllib3").setLevel(logging.INFO)
+# Patch getLogger to attach Rich and set sane default levels
+_original_getLogger = logging.getLogger
+def getLogger(name=None):
+    logger = _original_getLogger(name)
+    if (
+        not (name and name.startswith("uvicorn")) and
+        not any(isinstance(h, RichHandler) for h in logger.handlers)
+    ):
+        logger.handlers = []
+        logger.addHandler(rich_handler)
+        logger.setLevel(logging.WARNING if name else logging.NOTSET)
+    return logger
+logging.getLogger = getLogger
+
+# Update all existing loggers immediately
+for name, logger in logging.root.manager.loggerDict.items():
+    if name == "rich": continue
+    if isinstance(logger, logging.Logger):
+        if not any(isinstance(h, RichHandler) for h in logger.handlers):
+            logger.handlers = []
+            logger.addHandler(rich_handler)
+            logger.setLevel(logging.WARNING)
+
+logger = logging.getLogger()
+logger.setLevel(logging.NOTSET)
+
 
 ################################################################
 
