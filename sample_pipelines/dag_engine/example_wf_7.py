@@ -6,7 +6,7 @@ from typing import List, Union
 
 from retrain_pipelines.dag_engine.core import \
     TaskPayload, task, taskgroup, parallel_task, \
-    dag, UiCss
+    dag, UiCss, ctx
 from retrain_pipelines.dag_engine.runtime import \
     execute
 from retrain_pipelines.dag_engine.renderer import \
@@ -21,7 +21,6 @@ def start():
     """Root task: produces a list of numbers."""
 
     # Do whatever you want
-    # e.g. you could handle pipeline parameters here
 
     #################################
     # Return must be an enumerator, #
@@ -46,14 +45,54 @@ def parallel(payload: TaskPayload):
 # ----
 
 
+import inspect
+def add_context_entry(
+    task_name: str, rank: List[int], task_id: int, entry: str
+):
+    """Convenience method to add to DAG execution context
+
+    from inner split-line/taskgroup.
+    """
+
+    if not ctx.added_entry:
+        ctx.added_entry = {}
+    if not task_name in ctx.added_entry:
+        ctx.added_entry[task_name] = {}
+
+    ctx.added_entry[task_name][str(rank)] = {
+        "task_id": task_id,
+        "entry_value": entry
+    }
+
 @task
-def snake_head_A1(payload: TaskPayload) -> List[int]:
-    # Receives a 1D list.
+def snake_head_A1(
+    payload: TaskPayload, task_id: int, rank: List[int]
+) -> List[int]:
+    """Receives a 1D list.
+    """
+    """Has optional named arguments task_id & rank
+    automatically populated at runtime,
+    during DAG execution.
+    """
 
     # Since the herein task only has 1 direct parent =>
     assert payload["parallel"] == payload.get("parallel") == payload
 
     # Do whatever you want
+
+    ################################
+    # Access DAG execution-context #
+    #      (parameters, etc.)      #
+    ################################
+    from datetime import datetime, timezone
+    add_context_entry(
+        task_name=inspect.currentframe().f_code.co_name,
+        rank=rank,
+        task_id=task_id,
+        entry=\
+            datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+    )
+    ################################
 
     result = payload * 1  # force value
 
@@ -150,8 +189,15 @@ if __name__ == "__main__":
     # Render the DAG
     svg_fullname = os.path.join(os.environ["RP_ARTIFACTS_STORE"], "dag.html")
     render_svg(retrain_pipeline, svg_fullname)
+
     # Run the DAG
-    print("Final result:", execute(retrain_pipeline, dag_params=None))
-    print(f"execution {os.path.splitext(os.path.basename(__file__))[0]}[{retrain_pipeline.exec_id}]")
+    final_result, context_dump = execute(retrain_pipeline, params=None)
+    print(
+        f"execution {context_dump['exec_id']} - " +
+        f"{context_dump['pipeline_name']} - final result : {final_result}"
+    )
+    import json
+    print("context_dump['added_entry'] : " +
+          json.dumps(context_dump['added_entry'], indent=4))
     print(f"DAG SVG written to {svg_fullname}")
 

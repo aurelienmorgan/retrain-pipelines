@@ -189,10 +189,19 @@ class TaskType(BaseModel):
 
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
-            rank = kwargs.pop("rank", None)
-            exec_id = kwargs.pop("exec_id", None)
-            task_id = kwargs.pop("task_id", None)  # Get task_id from merge_func
-                                                   # if it exists
+            """ rank and task_id are optional named arguments."""
+            exec_id = kwargs.pop("exec_id")
+            arg_names = list(inspect.signature(func).parameters.keys())
+            if not "rank" in arg_names:
+                rank = kwargs.pop("rank", None)
+            else:
+                rank = kwargs["rank"]
+            # Get task_id from merge_func
+            # if it exists
+            if not "task_id" in arg_names:
+                task_id = kwargs.pop("task_id", None)
+            else:
+                task_id = kwargs["task_id"]
 
             dao = DAO(os.environ["RP_METADATASTORE_URL"])
             if task_id is None:
@@ -203,6 +212,8 @@ class TaskType(BaseModel):
                     rank=rank,
                     start_timestamp=datetime.now(timezone.utc)
                 )
+                if "task_id" in arg_names:
+                    kwargs["task_id"] = task_id
 
             docstring = '\n'.join(
                 f'[bold green]{line}[/]'
