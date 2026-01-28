@@ -1,12 +1,12 @@
 
 import os
 import json
-
-import pandas as pd
-import numpy as np
-
-import inspect
+import logging
 import shutil
+import inspect
+
+import numpy as np
+import pandas as pd
 
 from sklearn.preprocessing import OrdinalEncoder
 
@@ -99,7 +99,7 @@ def preprocess_data_fct(
             os.path.join(local_path, 'buckets_params.json')
         with open(buckets_dict_path, "w") as json_file:
             json.dump(buckets_dict, json_file)
-    print(f"buckets_dict : {buckets_dict}")
+    logging.getLogger().info(f"buckets_dict : {buckets_dict}")
 
     # Separate numerical and categorical columns
     numerical_features = X_raw.select_dtypes(include=[np.number]).columns
@@ -118,7 +118,7 @@ def preprocess_data_fct(
             encoder_dict = {feature: list(categories)
                             for feature, categories
                             in zip(categorical_features, encoder.categories_)}
-            print(f"encoder_dict : {encoder_dict}")
+            logging.getLogger().info(f"encoder_dict : {encoder_dict}")
             encoder_dict_path = \
                 os.path.join(local_path, 'encoder_params.json')
             with open(encoder_dict_path, "w") as json_file:

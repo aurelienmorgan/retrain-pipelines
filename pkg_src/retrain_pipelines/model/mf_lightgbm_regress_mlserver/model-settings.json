@@ -1,0 +1,4 @@
+{
+  "name": "lightgbm-model",
+  "implementation": "mlserver_lightgbm_reg_handler.LightGBMModel"
+}

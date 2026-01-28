@@ -51,7 +51,7 @@ INTERPRETABILITY_DISCLAIMER = \
 We're here reconciling apples with oranges.
 The intent is to visualize in the [0-1] range
 measures of inter-dependencies between features
-using a mix of three different approcahes :
+using a mix of three different approaches :
 Cramér's V, η², and absolute value of correlation.
 Despite them all falling in the [0-1] range,
 they measure different things, respectively:

@@ -80,7 +80,6 @@ def parallel_coord_plot(
         display(HTML(parallel_coord_plot(perf_df)))
         ```
     """
-
     fig = go.Figure(data=
         go.Parcoords(
             line = dict(color = perf_df.iloc[:,-1:],

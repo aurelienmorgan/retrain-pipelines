@@ -367,23 +367,122 @@
                                             rgba(77, 0, 102, 0) 100%);
             }
         </style>
-        
-        <!-- @see https://getbootstrap.com/docs/4.0/components/collapse/ -->
-        <!-- a select extract from https://cdn.jsdelivr.net/npm/bootstrap@4.0.0/dist/css/bootstrap.min.css -->
-        <style>
-            .collapse {
-              display: none;
-            }
 
-            .collapse.show {
-              display: block;
+        <!-- accordion BEGIN -->
+        <script>
+            document.addEventListener('DOMContentLoaded', function() {
+                document.querySelectorAll('[data-toggle="collapse"]').forEach(button => {
+                    button.addEventListener('click', function(e) {
+                        e.preventDefault();
+
+                        const targetId = this.getAttribute('data-target') || this.getAttribute('href');
+                        const target = document.querySelector(targetId);
+
+                        if (!target) return;
+
+                        const parentId = target.getAttribute('data-parent');
+                        const isShown = target.classList.contains('show');
+
+                        // Close ALL siblings with same data-parent
+                        if (parentId) {
+                            document.querySelectorAll(
+                                `[data-parent="${parentId}"].collapse.show`
+                            ).forEach(sibling => {
+                                if (sibling !== target) {
+                                    hide(sibling);
+                                    const siblingButton =
+                                        document.querySelector(`[data-target="#${sibling.id}"]`);
+                                    if (siblingButton) siblingButton.setAttribute('aria-expanded', 'false');
+                                }
+                            });
+                        }
+
+                        // Toggle current
+                        if (isShown) {
+                            hide(target);
+                            this.setAttribute('aria-expanded', 'false');
+                        } else {
+                            show(target);
+                            this.setAttribute('aria-expanded', 'true');
+                        }
+                    });
+                });
+
+                function show(element) {
+                    element.style.height = '0';
+                    element.classList.remove('collapse');
+                    element.classList.add('collapsing');
+
+                    const height = element.scrollHeight;
+                    const duration = Math.min(Math.max(height / 1000, 0.2), 0.6);
+                    element.style.transition = `height ${duration}s ease`;
+                    element.style.height = height + 'px';
+
+                    setTimeout(() => {
+                        element.classList.remove('collapsing');
+                        element.classList.add('collapse', 'show');
+                        element.style.height = '';
+                        element.style.transition = '';
+
+                        // Scroll if needed
+                        const rect = element.getBoundingClientRect();
+                        if (rect.bottom > window.innerHeight) {
+                            const overflow = rect.bottom - window.innerHeight;
+                            window.scrollBy({top: overflow + 20, behavior: 'smooth'});
+                        }
+                    }, duration * 1000);
+                }
+
+                function hide(element) {
+                    const height = element.scrollHeight;
+                    const duration = Math.min(Math.max(height / 1000, 0.2), 0.6);
+
+                    element.style.height = height + 'px';
+                    element.offsetHeight;
+
+                    element.classList.remove('collapse', 'show');
+                    element.classList.add('collapsing');
+                    element.style.transition = `height ${duration}s ease`;
+                    element.style.height = '0';
+
+                    setTimeout(() => {
+                        element.classList.remove('collapsing');
+                        element.classList.add('collapse');
+                        element.style.transition = '';
+                    }, duration * 1000);
+                }
+            });
+
+            // forcing header visibility (via smooth scrolling) on accordion expand
+            document.addEventListener('DOMContentLoaded', function() {
+                var collapses = document.querySelectorAll('.collapse');
+                collapses.forEach(function(collapse) {
+                    var observer = new MutationObserver(function(mutations) {
+                        mutations.forEach(function(mutation) {
+                            if (mutation.type === 'attributes' &&
+                                mutation.attributeName === 'class'
+                            ) {
+                                if (collapse.classList.contains('show')) {
+                                    var cardHeader = collapse.previousElementSibling;
+                                    if (cardHeader) {
+                                        cardHeader.scrollIntoView(
+                                            { behavior: 'smooth', block: 'start' });
+                                    }
+                                }
+                            }
+                        });
+                    });
+                    observer.observe(collapse, { attributes: true });
+                });
+            });
+        </script>
+        <style>
+            .collapse:not(.show) {
+                display: none;
             }
 
             .collapsing {
-              position: relative;
-              height: 0;
-              overflow: hidden;
-              transition: height 0.35s ease;
+                overflow: hidden;
             }
 
             .btn {
@@ -401,7 +500,11 @@
               font-size: 1rem;
               line-height: 1.5;
               border-radius: 0.25rem;
-              transition: color 0.15s ease-in-out, background-color 0.15s ease-in-out, border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
+              transition:
+                  color 0.15s ease-in-out,
+                  background-color 0.15s ease-in-out,
+                  border-color 0.15s ease-in-out,
+                  box-shadow 0.15s ease-in-out;
               /* apply custom styling from here !> */
               background-color: transparent;
               width: 100%;
@@ -427,12 +530,8 @@
               border-bottom: 1px solid rgba(0, 0, 0, 0.125);
             }
         </style>
-        {% for dependency in bootstrap_js_dependencies %}
-        <script>
-            {% include dependency %}
-        </script>
-        {% endfor %}
-  
+        <!-- accordion END -->
+
         <script>
             function commandToClipboard(element_id) {
                 const element = document.getElementById(element_id);
@@ -463,28 +562,6 @@
                 </symbol>
             </defs>
         </svg>
-        <script language="javascript">
-            // forcing header visibility (via smooth scrolling) on Bootstrap expand
-            document.addEventListener('DOMContentLoaded', function() {
-                var collapses = document.querySelectorAll('.collapse');
-                collapses.forEach(function(collapse) {
-                    var observer = new MutationObserver(function(mutations) {
-                        mutations.forEach(function(mutation) {
-                            if (mutation.type === 'attributes' &&
-                                mutation.attributeName === 'class'
-                            ) {
-                                if (collapse.classList.contains('show')) {
-                                    var cardHeader = collapse.previousElementSibling;
-                                    cardHeader.scrollIntoView(
-                                        { behavior: 'smooth', block: 'start' });
-                                }
-                            }
-                        });
-                    });
-                    observer.observe(collapse, { attributes: true });
-                });
-            });
-        </script>
         <h1 style="padding-left: 30px;" class="shiny-gold-text">{{title}}</h1>
         <h2 style="background-color: #FFFFCC40; padding-left: 3px;
                    text-align: left; color:black;">
@@ -507,7 +584,7 @@
             window.onload = function() {
                 var link = document.getElementById("blessed_run_link");
                 if (window.self !== window.top) {
-                    // card displayed as an iframe (prob' in the Metaflow UI)
+                    // card displayed as an iframe
                     // [get parent domain & port without hitting CORS]
                     var referrerUrl = new URL(document.referrer);
                     var parentDomain = referrerUrl.hostname;
@@ -531,7 +608,7 @@
                         console.log(newHref)
                         link.href = newHref;
                     } else {
-                        // card is prob' hosted by Metaflow-Service [ui-backend]
+                        // card is prob' hosted by ui-backend
                         // => do nothing
                     }
                 }
@@ -870,11 +947,11 @@
                                                         <ul style="margin-top: 0; margin-bottom: 0;">
                                                             <li>
                                                                 filter by
-                                                                mf_id&nbsp;=&nbsp;{{wandb_filter_run_id}}
+                                                                rp_id&nbsp;=&nbsp;{{wandb_filter_run_id}}
                                                             </li>
                                                             <li>
-                                                                group by "mf"
-                                                                (prefix for Metaflow task name).
+                                                                group by "rp"
+                                                                (prefix for task name).
                                                             </li>
                                                         </ul>
                                                         <center>
@@ -1111,7 +1188,7 @@
                 <small>
                     <font color="white">
                         2023-<script>document.write(new Date().getFullYear());</script>
-                        &nbsp; - &nbsp; Metaflow &nbsp; - &nbsp;
+                        &nbsp; - &nbsp;
                         <a target="_blank"
                            href="https://github.com/aurelienmorgan/retrain-pipelines"
                            style="text-decoration: none;"><code class="shiny-silver-text" style="font-family: 'Lobster'; font-size: 14px; font-weight: normal; letter-spacing: 3px;">retrain-pipelines

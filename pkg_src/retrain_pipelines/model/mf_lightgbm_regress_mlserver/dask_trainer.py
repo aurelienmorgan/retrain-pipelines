@@ -1,13 +1,21 @@
 
-import pandas as pd
+import uuid
+import logging
+
 import numpy as np
+import pandas as pd
 
 import lightgbm as lgb
-import dask.dataframe as dd
-import dask.array as da
-import dask
 
-from metaflow import current
+import dask
+import dask.array as da
+import dask.dataframe as dd
+
+
+logging.getLogger("distributed").setLevel(logging.WARNING)
+
+logger = logging.getLogger(__name__)
+
 
 class MetricsCallback:
     def __init__(self, queue_name):
@@ -27,6 +35,7 @@ class MetricsCallback:
             }
         }
         self.queue.put(history)
+
 
 def dask_regressor_fit(
     X_train: pd.DataFrame,
@@ -50,6 +59,7 @@ def dask_regressor_fit(
             model hyperparameters
             to be passed through to
             the regressor's init argument.
+            
     Results:
         - lgb.LGBMRegressor:
             the fitted regressor
@@ -69,7 +79,7 @@ def dask_regressor_fit(
         X_train, npartitions=npartitions)
     # for i in range(npartitions):
     #     partition_size = len(dX_train.get_partition(i))
-    #     print(f"Partition {i}: {partition_size} rows")
+    #     logger.info(f"Partition {i}: {partition_size} rows")
     dy_train = dd.from_pandas(
         y_train, npartitions=npartitions)
     ############################
@@ -82,7 +92,7 @@ def dask_regressor_fit(
     dX_val = dd.from_pandas(X_val, npartitions=npartitions)
     # for i in range(npartitions):
     #     partition_size = len(dX_val.get_partition(i))
-    #     print(f"Partition {i}: {partition_size} rows")
+    #     logger.info(f"Partition {i}: {partition_size} rows")
     dy_val = dd.from_pandas(
         y_val, npartitions=npartitions)
     ############################
@@ -93,22 +103,28 @@ def dask_regressor_fit(
     eval_set = [(dX_train, dy_train), (dX_val, dy_val)]
     eval_names = ['Training', 'Validation']
 
-    dask_distrib_client = dask.distributed.Client()
-
-    lgb_reg = lgb.DaskLGBMRegressor(
-                    # max_depth=5,
-                    # min_child_samples=\
-                        # min(250, len(y_val)),
-                    # lambda_l1=0.1,
-                    # lambda_l2=0.1,
-                    # bagging_fraction=0.8,
-                    # feature_fraction=0.8,
-                    **hp_dict
-    )
+    # import threading ; threads = threading.enumerate()
+    # logger.info(f"Number of running threads: {len(threads)}")
+    # logger.info(help(dask.distributed.Client))
+    dask_distrib_client = dask.distributed.Client(
+        processes=False, timeout=2, n_workers=3, threads_per_worker=1)
 
     # Set up a Dask queue to collect metrics from workers
-    queue_name = f"lgb_history_queue_{current.task_id}"
+    queue_name = f"lgb_history_queue_{uuid.uuid4()}"
     metrics_queue = dask.distributed.Queue(queue_name)
+    logger.debug(f"metrics_queue : {metrics_queue}")
+
+    lgb_reg = lgb.DaskLGBMRegressor(
+        # max_depth=5,
+        # min_child_samples=\
+            # min(250, len(y_val)),
+        # lambda_l1=0.1,
+        # lambda_l2=0.1,
+        # bagging_fraction=0.8,
+        # feature_fraction=0.8,
+        **hp_dict
+    )
+    logger.debug(f"lgb_reg : {lgb_reg}")
 
     lgb_history = MetricsCallback(queue_name=queue_name)
 
@@ -146,8 +162,8 @@ def dask_regressor_fit(
                 workers_history[worker_name][metric].extend(values)
     metrics_queue.close()
 
-    print(f"distributed best_score_ : "+
-          f"{lgb_reg.best_score_['Validation']['rmse']}")
+    logger.debug(f"distributed best_score_ : "+
+                 f"{lgb_reg.best_score_['Validation']['rmse']}")
 
     return lgb_reg.to_local(), \
            lgb_reg.evals_result_, \

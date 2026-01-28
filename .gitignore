@@ -67,6 +67,7 @@ dmypy.json
 
 # retrain-pipelines
 retrain_pipelines/__version__.py
+console_as_docker/
 serving_artifacts/
 sample_pipelines/data
 sample_pipelines/.env

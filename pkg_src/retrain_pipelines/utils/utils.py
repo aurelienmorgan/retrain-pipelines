@@ -28,8 +28,6 @@ if importlib.util.find_spec("torch") is not None:
 
 from contextlib import contextmanager
 
-retrain_pipeline_type = os.getenv("retrain_pipeline_type")
-
 logger = logging.getLogger(__name__)
 
 
@@ -102,7 +100,6 @@ def _load_and_get_function(
     Results:
         - (callable)
     """
-
     # Load the module from the file path
     spec = importlib.util.spec_from_file_location(
                 qualified_module_name, module_path)
@@ -114,8 +111,8 @@ def _load_and_get_function(
         function = getattr(module, function_name)
     else:
         raise AttributeError(
-                f"Function 'get_html' not found" +
-                f"in module '{qualified_module_name}'")
+            f"Function 'get_html' not found" +
+            f"in module '{qualified_module_name}'")
 
     # Create a proxy module
     proxy_module = type(sys)(qualified_module_name)
@@ -141,7 +138,6 @@ def get_get_dataset_readme_content(
      "pipeline_card_module_dir" parameter)
     and returns its "get_dataset_readme_content" function.
     """
-
     pipeline_card_module_path = \
         os.path.realpath(os.path.join(pipeline_card_module_dir,
                                       "dataset_readme.py"))
@@ -150,7 +146,7 @@ def get_get_dataset_readme_content(
         _load_and_get_function(
             pipeline_card_module_path,
             f"retrain_pipelines.pipeline_card."+
-                f"{retrain_pipeline_type}.dataset_readme",
+                f"{os.getenv('retrain_pipeline_type')}.dataset_readme",
             "get_dataset_readme_content"
         )
 
@@ -167,7 +163,6 @@ def get_get_model_readme_content(
      "pipeline_card_module_dir" parameter)
     and returns its "get_model_readme_content" function.
     """
-
     pipeline_card_module_path = \
         os.path.realpath(os.path.join(pipeline_card_module_dir,
                                       "model_readme.py"))
@@ -176,7 +171,7 @@ def get_get_model_readme_content(
         _load_and_get_function(
             pipeline_card_module_path,
             f"retrain_pipelines.pipeline_card."+
-                f"{retrain_pipeline_type}.dataset_readme",
+                f"{os.getenv('retrain_pipeline_type')}.dataset_readme",
             "get_model_readme_content"
         )
 
@@ -193,7 +188,6 @@ def get_get_html(
      "pipeline_card_module_dir" parameter)
     and returns its "get_html" function.
     """
-
     pipeline_card_module_path = \
         os.path.realpath(os.path.join(pipeline_card_module_dir,
                                       "pipeline_card.py"))
@@ -202,7 +196,7 @@ def get_get_html(
         _load_and_get_function(
             pipeline_card_module_path,
             f"retrain_pipelines.pipeline_card."+
-                f"{retrain_pipeline_type}.pipeline_card",
+                f"{os.getenv('retrain_pipeline_type')}.pipeline_card",
             "get_html"
         )
 
@@ -220,7 +214,6 @@ def get_preprocess_data_fct(
     and returns its "preprocess_data_fct"
     function.
     """
-
     preprocessing_module_path = \
         os.path.realpath(os.path.join(preprocess_module_dir,
                                       "preprocessing.py"))
@@ -229,7 +222,7 @@ def get_preprocess_data_fct(
         _load_and_get_function(
             preprocessing_module_path,
             f"retrain_pipelines.model."+
-                f"{retrain_pipeline_type}.preprocessing",
+                f"{os.getenv('retrain_pipeline_type')}.preprocessing",
             "preprocess_data_fct"
         )
 
@@ -311,6 +304,7 @@ def _create_requirements_from_conda(
                             f"from generated requirements.txt")
                 continue
             if pkg_name in conda_env_packages:
+                # package-name present in both conda and pip lists
                 conda_version = conda_env_packages[pkg_name]
                 
                 # Extract major and minor versions for comparison
@@ -356,7 +350,9 @@ def _create_requirements_from_pip(
     entries = result.stdout.splitlines()
     filtered_entries = [
         entry for entry in entries
-        if not any(regex.fullmatch(pattern, re.split(r'(==| @ )', entry)[0])
+        if not any(regex.fullmatch(pattern,
+                                   regex.split(r'(==| @ )',
+                                   entry)[0])
                    for pattern in exclude)
     ]
     with open(os.path.join(target_dir, 'requirements.txt')

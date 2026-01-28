@@ -9,7 +9,7 @@ import pandas as pd
 
 from metaflow import cards
 
-from jinja2 import Environment, BaseLoader, TemplateNotFound
+from jinja2 import Environment, FileSystemLoader
 
 from retrain_pipelines import __version__
 from .helpers import apply_args_color_format, highlight_min_max_cells, \
@@ -106,50 +106,10 @@ def get_html(
                                               escape=False, index = False)
     ##########################
 
-    bootstrap_js_dependencies = [
-        # 'https://code.jquery.com/jquery-3.2.1.slim.min.js',
-        'jquery-3.2.1.slim.min.js',
-        # 'https://cdn.jsdelivr.net/npm/popper.js@1.12.9/dist/umd/popper.min.js',
-        'popper-1.12.9.min.js',
-        # 'https://cdn.jsdelivr.net/npm/bootstrap@4.0.0/dist/js/bootstrap.min.js',
-        'bootstrap-4.0.0.min.js'
-    ]
-
-    ##########################
-    #     Jinja template     #
-    # rendering starts here  #
-    ##########################
-    class MultiFileSystemLoader(BaseLoader):
-        """
-        allow for more than one dir
-        to serve as possible origins
-        for Jinja input source files.
-        """
-
-        def __init__(self, searchpath):
-            self.searchpath = searchpath
-
-        def get_source(self, environment, template):
-            for path in self.searchpath:
-                template_path = os.path.join(path, template)
-                if os.path.exists(template_path):
-                    with open(template_path, 'r', encoding='utf-8') as file:
-                        source = file.read()
-                    return source, template_path, lambda: True
-
-            raise TemplateNotFound(template)
-
-    file_loader = MultiFileSystemLoader([
-        params['template_dir'],
-        os.path.realpath(os.path.join(
-            os.path.dirname(importlib.util.find_spec(f"retrain_pipelines").origin),
-            "pipeline_card", "static"))
-    ])
-    env = Environment(loader=file_loader)
+    env = Environment(loader=FileSystemLoader(params['template_dir']))
     template = env.get_template('template.html')
 
     return template.render(
-        bootstrap_js_dependencies=bootstrap_js_dependencies,
         title=params['title'], subtitle=params['subtitle'],
         blessed_color="#008000" if model_version_blessed \
                       else "#811331",

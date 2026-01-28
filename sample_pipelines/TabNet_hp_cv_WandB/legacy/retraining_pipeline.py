@@ -9,8 +9,8 @@ import logging
 import traceback
 import subprocess
 import importlib.util
-from textwrap import dedent
 from io import StringIO
+from textwrap import dedent
 
 import numpy as np
 import pandas as pd
@@ -48,11 +48,12 @@ from retrain_pipelines.utils import flatten_dict, \
 
 
 logging.getLogger().setLevel(logging.INFO)
+logging.getLogger("retrain_pipelines").addHandler(logging.StreamHandler())
 
 
 class TabNetHpCvWandbFlow(FlowSpec):
     """
-    Training pipeline
+    Retraining pipeline
     """
 
     #--- flow parameters -------------------------------------------------------
@@ -66,7 +67,7 @@ class TabNetHpCvWandbFlow(FlowSpec):
         is_text=True,
         help="Path to the input data file",
         default=os.path.realpath(
-            os.path.join(os.path.dirname(__file__), "..", "data",
+            os.path.join(os.path.dirname(__file__), "..", "..", "data",
                          "synthetic_classif_tab_data_4classes.csv"))
     )
 
@@ -139,7 +140,7 @@ class TabNetHpCvWandbFlow(FlowSpec):
         "preprocess_artifacts_path",
         type=str,
         default=default_preprocess_module_dir,
-        help="Tempo [MLserver SDK] artifacts location "+\
+        help="TorchServe artifacts location "+\
              "(i.e. dir hosting your custom 'preprocessing.py'"+\
              " file), if different from default"
     )
@@ -260,7 +261,7 @@ class TabNetHpCvWandbFlow(FlowSpec):
         self.serving_artifacts_local_folder = \
             os.path.realpath(os.path.join(
                 os.path.dirname(__file__),
-                '..', '..', 'serving_artifacts',
+                "..", "..", "..", "serving_artifacts",
                 os.path.sep.join(current.run.path_components)
         ))
 
@@ -916,6 +917,7 @@ class TabNetHpCvWandbFlow(FlowSpec):
             self.model_version_blessed = True
 
         # self.model_version_blessed = False ### DEBUG - DELETE ###
+
         if self.model_version_blessed:
             current.run.add_tags(['model_version_blessed'])
 
@@ -932,7 +934,7 @@ class TabNetHpCvWandbFlow(FlowSpec):
         Note that using isolated virtual env (using @conda task decorator)
         is advisable to not embark the whole pipeline dependencies
         into the local TorchServe server.
-        We don't for educational purpose, keep things "simple" to grasp
+        For educational purpose, We don't. We keep things "simple" to grasp
         as well as to avoid forcing conda (for instance miniconda) as
         a virtual environment management mean to the user.
         """
@@ -970,6 +972,8 @@ class TabNetHpCvWandbFlow(FlowSpec):
             # save dependencies as artifact
             create_requirements(self.serving_artifacts_local_folder,
                                 exclude=[
+                                    "matplotlib", "pillow", # version conflict
+                                                            # quick fix
                                     "torch", # already present
                                              # in the torchserve
                                              # Docker base image
@@ -1115,7 +1119,7 @@ class TabNetHpCvWandbFlow(FlowSpec):
                 get_get_html(self.pipeline_card_artifacts_path)
         else:
             from retrain_pipelines.pipeline_card import get_html
-        from retrain_pipelines.pipeline_card.helpers import mf_dag_svg
+        from retrain_pipelines.pipeline_card.helpers.legacy import mf_dag_svg
         ###########################
 
 

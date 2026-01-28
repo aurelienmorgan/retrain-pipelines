@@ -60,6 +60,7 @@ from retrain_pipelines.utils import create_requirements
 
 
 logging.getLogger().setLevel(logging.INFO)
+logging.getLogger("retrain_pipelines").addHandler(logging.StreamHandler())
 
  
 class LocalServeReadinessEnum(Enum):
@@ -460,7 +461,7 @@ class UnslothFuncCallFlow(FlowSpec):
         self.serving_artifacts_local_folder = \
             os.path.realpath(os.path.join(
                 os.path.dirname(__file__),
-                '..', '..', 'serving_artifacts',
+                "..", "..", "..", "serving_artifacts",
                 os.path.sep.join(current.run.path_components)
         ))
 
@@ -1952,7 +1953,7 @@ class UnslothFuncCallFlow(FlowSpec):
         else:
             from retrain_pipelines.pipeline_card import \
                     get_html
-        from retrain_pipelines.pipeline_card.helpers import \
+        from retrain_pipelines.pipeline_card.helpers.legacy import \
                 mf_dag_svg
         #############################
 

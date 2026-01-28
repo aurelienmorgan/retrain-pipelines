@@ -21,7 +21,7 @@ from retrain_pipelines.legacy_launcher import \
 # Metaflow retraining pipelines for tabular data #
 ##################################################
 
-def test_mf_lightgbm_regress_tempo():
+def test_mf_lightgbm_regress_mlserver():
     data = pseudo_random_generate(
                 DatasetType.TABULAR_REGRESSION,
                 num_samples = 1_500)

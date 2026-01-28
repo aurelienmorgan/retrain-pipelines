@@ -33,14 +33,14 @@ elif "mf_tabnet_classif_torchserve" == retrain_pipeline_type:
                 plot_masks_to_dict
 
 
-elif "mf_lightgbm_regress_tempo" == retrain_pipeline_type:
+elif "mf_lightgbm_regress_mlserver" == retrain_pipeline_type:
     from . import helpers
     sys.modules[
-            "retrain_pipelines.pipeline_card.mf_lightgbm_regress_tempo.helpers"
+            "retrain_pipelines.pipeline_card.mf_lightgbm_regress_mlserver.helpers"
         ] = helpers
     __all__ = ["helpers"]
 
-    from .mf_lightgbm_regress_tempo.pipeline_card import \
+    from .mf_lightgbm_regress_mlserver.pipeline_card import \
                 get_html
 
 else:

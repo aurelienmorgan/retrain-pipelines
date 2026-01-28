@@ -8,13 +8,12 @@ import pandas as pd
 import json
 import time
 import shutil
-import joblib
 import logging
 import itertools
 import importlib.util
 
-from textwrap import dedent
 from io import StringIO
+from textwrap import dedent
 
 import matplotlib
 import matplotlib.pyplot as plt
@@ -32,10 +31,7 @@ from metaflow.current import Current
 from metaflow.cards import Image, Table, Markdown, Artifact
 
 import wandb
-from wandb.lightgbm import log_summary
-
-import tempo
-from tempo.serve.metadata import ModelDataArg, ModelDataArgs
+from wandb.integration.lightgbm import log_summary
 
 import lightgbm as lgb
 
@@ -44,21 +40,21 @@ from retrain_pipelines.dataset import features_desc, \
         features_distri_plot
 from retrain_pipelines.dataset.features_dependencies import \
         dataset_to_heatmap_fig
-from retrain_pipelines.utils import grant_read_access, \
-        tmp_os_environ
+from retrain_pipelines.utils import create_requirements
 
 
 logging.getLogger().setLevel(logging.INFO)
+logging.getLogger("retrain_pipelines").addHandler(logging.StreamHandler())
 
 
 class LightGbmHpCvWandbFlow(FlowSpec):
     """
-    Training pipeline
+    Retraining pipeline
     """
 
     #--- flow parameters -------------------------------------------------------
 
-    RETRAIN_PIPELINE_TYPE = "mf_lightgbm_regress_tempo"
+    RETRAIN_PIPELINE_TYPE = "mf_lightgbm_regress_mlserver"
     # best way to share the config across subprocesses
     os.environ["retrain_pipeline_type"] = RETRAIN_PIPELINE_TYPE
 
@@ -67,7 +63,7 @@ class LightGbmHpCvWandbFlow(FlowSpec):
         is_text=True,
         help="Path to the input data file",
         default=os.path.realpath(
-            os.path.join(os.path.dirname(__file__), "..", "data",
+            os.path.join(os.path.dirname(__file__), "..", "..", "data",
                          "synthetic_classif_tab_data_continuous.csv"))
     )
 
@@ -78,14 +74,14 @@ class LightGbmHpCvWandbFlow(FlowSpec):
              "dict of optional pairs of  "+\
              "feature_name/buckets_count.",
         type=JSONType,
-        default=dedent("""{}""")
+        default="{}"
     )
 
     pipeline_hp_grid = Parameter(
         "pipeline_hp_grid",
         help="LightGBM model hyperparameters domain",
         type=JSONType,
-        default=dedent("""{  
+        default=dedent("""        {
             "boosting_type": ["gbdt"],
             "num_leaves": [20, 30],
             "learning_rate": [0.01, 0.1],
@@ -125,7 +121,7 @@ class LightGbmHpCvWandbFlow(FlowSpec):
         "preprocess_artifacts_path",
         type=str,
         default=default_preprocess_module_dir,
-        help="Tempo [MLserver SDK] artifacts location "+\
+        help="MLserver artifacts location "+\
              "(i.e. dir hosting your custom 'preprocessing.py'"+\
              " file), if different from default"
     )
@@ -242,9 +238,10 @@ class LightGbmHpCvWandbFlow(FlowSpec):
         self.retrain_pipelines = f"retrain-pipelines {__version__}"
         self.retrain_pipeline_type = os.environ["retrain_pipeline_type"]
 
-        self.serving_artifacts_local_folder = os.path.realpath(os.path.join(
+        self.serving_artifacts_local_folder = \
+            os.path.realpath(os.path.join(
                 os.path.dirname(__file__),
-                '..', '..', 'serving_artifacts',
+                "..", "..", "..", "serving_artifacts",
                 os.path.sep.join(current.run.path_components)
         ))
 
@@ -388,7 +385,6 @@ class LightGbmHpCvWandbFlow(FlowSpec):
                 - (int)
                 - (dict)
             """
-
             current_task = Task(current_.pathspec)
 
             # retrieve list of ids for the "cross_validation" tasks
@@ -573,11 +569,10 @@ class LightGbmHpCvWandbFlow(FlowSpec):
 
         # get perf metrics from previous steps
         hp_rmses = [input.hp_rmse for input in inputs]
-        print(f"hp_accuracies : {hp_rmses}")
 
         best_cv_agg_task_idx = np.argmin(hp_rmses)
         print(f"best_cv_agg_task_idx : {best_cv_agg_task_idx}")
-        print(f"best_cv_agg_task_idx : "+
+        print(f"best_cv_task_id : "+
               f"{inputs[best_cv_agg_task_idx].cross_validation_id}")
 
         # find best hyperparams
@@ -684,7 +679,7 @@ class LightGbmHpCvWandbFlow(FlowSpec):
         self.model = model
         self.predictions = model.predict(self.X_test)
 
-        # Generate training plot
+        # --- Generate training plots ---
         num_rounds = model.get_params()['n_estimators']
         train_loss = history['Training']['l2']
         valid_loss = history['Validation']['l2']
@@ -743,7 +738,6 @@ class LightGbmHpCvWandbFlow(FlowSpec):
             "mae ": mae,
             "r2": r2
         }
-        #############################################
 
         if "disabled" != self.wandb_run_mode:
             wandb_flow_run = wandb.init(
@@ -784,6 +778,7 @@ class LightGbmHpCvWandbFlow(FlowSpec):
 
             wandb_flow_run.finish()
             wandb.join()
+        #############################################
 
         #############################################
         #             sliced performance            #
@@ -858,12 +853,14 @@ class LightGbmHpCvWandbFlow(FlowSpec):
                       " - model_version_blessing : " +
                           str(self.model_version_blessed))
                 break
+
+        # self.model_version_blessed = False ### DEBUG - DELETE ###
+
         # case 'no prior blessed run'
         if current_blessed_rmse == sys.maxsize:
             print("case 'no prior blessed model version found => blessing.'")
             self.model_version_blessed = True
 
-        # self.model_version_blessed = True ### DEBUG - DELETE ###
         if self.model_version_blessed:
             current.run.add_tags(['model_version_blessed'])
 
@@ -875,133 +872,214 @@ class LightGbmHpCvWandbFlow(FlowSpec):
         """
         If the trained model version is blessed, validate serving.
         """
-        from retrain_pipelines.model import get_tempo_artifact, \
-                tempo_wait_ready, tempo_predict
-
+        """
+        Note that we embark the whole pipeline dependencies
+        into the local MLServer server.
+        That's actually unnecessary and lengthens
+        the docker image build time.
+        But we keep doing so for generalizability purpose
+        of the sample pipeline.
+        In the herein case, only below dependencies are
+        strictly required for the inference service :
+          - mlserver==1.3.5
+          - mlserver-lightgbm==1.3.5
+          - lightgbm==4.3.0
+          - numpy==1.26.4
+          - uvloop==0.17.0
+        """
         # tracking below using a 3-states var
         # -1 for not applicable, and
         # 0/1 bool for failure/success otherwise
         self.local_serve_is_ready = -1
 
         if self.model_version_blessed:
-            from tempo.serve.loader import save
-            from retrain_pipelines.utils import system_has_conda, \
-                    is_conda_env, venv_as_conda
-
             # serialize model version
             model_file = os.path.join(self.serving_artifacts_local_folder,
-                                      'model.joblib')
-            joblib.dump(self.model, model_file)
+                                      "model.txt")
+            self.model.booster_.save_model(model_file)
 
-            if system_has_conda():
-                # get name of virtual environment
-                conda_need_delete = False
-                if is_conda_env():
-                    conda_env = os.path.basename(sys.prefix)
-                else:
-                    conda_env = "_"+os.path.basename(sys.prefix)
-                    # create the (temp) conda env
-                    # for Seldon/MLServer to use
-                    venv_as_conda(sys.prefix, conda_env)
-                    conda_need_delete = True
+            preprocess_module_dir = \
+                os.path.dirname(
+                    importlib.util.find_spec(
+                        f"retrain_pipelines.model.{os.getenv('retrain_pipeline_type')}"
+                    ).origin)
+            # save Dockerfile.mlserver as artifact
+            shutil.copy(
+                os.path.join(
+                    preprocess_module_dir,
+                    'Dockerfile.mlserver'),
+                os.path.join(self.serving_artifacts_local_folder,
+                             'Dockerfile.mlserver'))
+            # save LightGBM Regressor MLServer handler class as artifact
+            shutil.copy(
+                os.path.join(
+                    preprocess_module_dir,
+                    'mlserver_lightgbm_reg_handler.py'),
+                os.path.join(self.serving_artifacts_local_folder,
+                             'mlserver_lightgbm_reg_handler.py'))
+            # save MLServer settings as artifact
+            shutil.copy(
+                os.path.join(
+                    preprocess_module_dir,
+                    'settings.json'),
+                os.path.join(self.serving_artifacts_local_folder,
+                             'settings.json'))
+            shutil.copy(
+                os.path.join(
+                    preprocess_module_dir,
+                    'model-settings.json'),
+                os.path.join(self.serving_artifacts_local_folder,
+                             'model-settings.json'))
+            # save dependencies as artifact
+            create_requirements(self.serving_artifacts_local_folder,
+                                exclude=[
+                                    "retrain-pipelines",
+                                    "tritonclient",
+                                    # quick version conflict resolution =>
+                                    "urllib3", "requests", "docker"
+                                ]
+            )
 
-                os.environ["no_proxy"] = "localhost,127.0.0.1,0.0.0.0"
-
-                # inference signature
-                # must be declared explicitely for "from BYTES" conversion
-                # of string attributes of payload on http inference request
-                tempo_input_args = []
-                for column in self.X.columns:
-                    if np.issubdtype(self.X[column].dtype, np.number):
-                        ty = np.ndarray
-                    else:
-                        ty = str
-                    tempo_input_args.append(ModelDataArg(ty=ty, name=column))
-                tempo_inputs = ModelDataArgs(args=tempo_input_args)
-                tempo_outputs = ModelDataArgs(args=[
-                    ModelDataArg(ty=float, name="predicted_value")
-                ])
-
-                # wrap the model version for Seldon
-                tempo_model = get_tempo_artifact(
-                    conda_env=conda_env,
-                    local_folder=self.serving_artifacts_local_folder,
-                    description="Blessed model version",
-                    inputs=tempo_inputs,
-                    outputs=tempo_outputs,
-                    verbosity=logging.DEBUG
-                )
-
-                ############################################
-                #       pack the python environment        #
-                ############################################
-                print("!!!   Packing env can take a while, hang in there.   !!!")
-                save(tempo_model)  ## environment.tar.gz
-                grant_read_access(os.path.join(
-                    self.serving_artifacts_local_folder, 'environment.tar.gz'))
-                # print(os.system("ls -lh " +
-                #     os.path.join(serving_artifacts_local_folder, 'environment.tar.gz')))
-                if conda_need_delete:
-                    shutil.rmtree(
-                        os.path.join(
-                            os.environ['CONDA_PREFIX'], 'envs', conda_env
-                        ), ignore_errors=True)
-                ############################################
-
-                with tmp_os_environ({'REQUESTS_CA_BUNDLE': ''}):
-                    ############################################
-                    # temporarily annihilate env var           #
-                    #           REQUESTS_CA_BUNDLE             #
-                    # due to interferences in their respective #
-                    # interactions with python lib `requests`  #
-                    # between `wandb` & `seldon tempo`         #
-                    ############################################
+            os.environ["no_proxy"] = "localhost,127.0.0.1,0.0.0.0"
 
 
-                    ############################################
-                    #  actually deploy the prediction service  #
-                    ############################################
-                    start_time = time.time()
-                    from tempo import deploy_local
-                    remote_model = deploy_local(tempo_model)
-                    self.local_serve_is_ready = \
-                        int(tempo_wait_ready(remote_model, timeout=10*60))
-                    elapsed_time = time.time() - start_time
-                    print(f"deploy_local -   Elapsed time: {elapsed_time:.2f} seconds")
-                    ############################################
+            ############################################
+            #  actually deploy the prediction service  #
+            ############################################
+            start_time = time.time()
+            from retrain_pipelines.utils.docker import \
+                build_and_run_docker, print_container_log_tail, \
+                cleanup_docker
+            from retrain_pipelines.model.mlserver import \
+                await_server_ready, server_has_model, \
+                endpoint_still_starting, endpoint_is_ready
 
-                    if self.local_serve_is_ready == 1:
-                        from tempo.protocols.v2 import V2Protocol
-
-                        inference_request = V2Protocol().to_protocol_request(
-                            categ_feature0='value1',
-                            num_feature1=np.array([0.1], dtype=np.float32),
-                            num_feature2=np.array([0.1], dtype=np.float32),
-                            num_feature3=np.array([3.1], dtype=np.float32),
-                            num_feature4=np.array([0.2], dtype=np.float32)
-                        )
-                        print(f"inference_request : {inference_request}")
-                        try:
-                            prediction = tempo_predict(remote_model, inference_request)
-                            print(json.dumps(prediction, indent=4))
-                        except Exception as ex:
-                            import traceback
-                            print('inference_request : ', end='', file=sys.stderr)
-                            print(inference_request, file=sys.stderr)
-                            print(ex, file=sys.stderr)
-                            traceback.print_tb(ex.__traceback__, file=sys.stderr)
-                            self.local_serve_is_ready = 0
-
-                        finally:
-                            remote_model.undeploy()
-            else:
-                # No conda
+            serving_container = build_and_run_docker(
+                image_name="lgbm_reg_serve", image_tag="1.0",
+                build_path=self.serving_artifacts_local_folder,
+                dockerfile="Dockerfile.mlserver",
+                ports_publish_dict={'8080/tcp': 9080}
+            )
+            if not serving_container:
+                print("failed spinning the MLServer container",
+                      file=sys.stderr)
                 self.local_serve_is_ready = 0
-                print(
-                    "Error: 'conda' not installed or not found in PATH. "+
-                    "Seldon/MLServer however requires it. " +
-                    "You may consider 'miniforge'. ",
-                    file=sys.stderr, flush=True)
+                try:
+                    cleanup_docker(container_name="lgbm_reg_serve",
+                                   image_name="lgbm_reg_serve:1.0")
+                except Exception as cleanup_ex:
+                    # fail silently
+                    pass
+            elif not await_server_ready():
+                print("MLServer server failed to get ready",
+                      file=sys.stderr)
+                print_container_log_tail("lgbm_reg_serve", 50)
+                self.local_serve_is_ready = 0
+            elif not server_has_model("lightgbm-model"):
+                print("MLServer server didn't publish the model",
+                      file=sys.stderr)
+                self.local_serve_is_ready = 0
+            else:
+                print("Awaiting endpoint launch..")
+                timeout = 10*60
+                start_time = time.time()
+                while endpoint_still_starting("lightgbm-model"):
+                    if time.time() - start_time > timeout:
+                        print(
+                            f"The endpoint 'lightgbm-model' did not start " +
+                            f"within {timeout} seconds.")
+                        print_container_log_tail("lgbm_reg_serve", 50)
+                        self.local_serve_is_ready = 0
+                        break
+                    time.sleep(4)
+                elapsed_time = time.time() - start_time
+                print(f"Elapsed time: {elapsed_time:.3f} seconds")
+
+                # health check on the spun endpoint
+                self.local_serve_is_ready = int(
+                    endpoint_is_ready("lightgbm-model")
+                )
+            elapsed_time = time.time() - start_time
+            print(f"deploy_local -   Elapsed time: {elapsed_time:.2f} seconds")
+            ############################################
+
+            if self.local_serve_is_ready == 1:
+                from pydantic import ValidationError
+                import traceback
+
+                from retrain_pipelines.model import endpoint_test
+
+                start_time = time.time()
+                raw_inference_request_items = {
+                    "inputs": [
+                        {
+                            "name": "categ_feature0",
+                            "shape": [3],
+                            "datatype": "BYTES",
+                            "data": ["value1", "value1", "value1"]
+                        },
+                        {
+                            "name": "num_feature1",
+                            "shape": [3],
+                            "datatype": "FP32",
+                            "data": [0.1, 0.1, 0.1]
+                        },
+                        {
+                            "name": "num_feature2",
+                            "shape": [3],
+                            "datatype": "FP32",
+                            "data": [0.1, 0.1, 0.1]
+                        },
+                        {
+                            "name": "num_feature3",
+                            "shape": [3],
+                            "datatype": "FP32",
+                            "data": [3.1, 3.1, 3.1]
+                        },
+                        {
+                            "name": "num_feature4",
+                            "shape": [3],
+                            "datatype": "FP32",
+                            "data": [0.2, 0.2, 0.2]
+                        }
+                    ]
+                }
+                try:
+                    endpoint_response = \
+                        endpoint_test.parse_endpoint_response(
+                            "lightgbm-model", raw_inference_request_items)
+                    # Compare the length of request and response items
+                    # (response type is already validated
+                    #  by enforced pydantic model)
+                    assert endpoint_response and \
+                           len(endpoint_response) == \
+                                len(raw_inference_request_items
+                                        ["inputs"][0]["data"]), \
+                           "Validation Error: The number of " \
+                           "response items does not match " \
+                           "the number of request items."
+                    self.local_serve_is_ready = 1
+                    elapsed_time = time.time() - start_time
+                    print(f"inference test -   "
+                          f"Elapsed time: {elapsed_time:.2f} seconds")
+                except ValidationError as vEx:
+                    print(vEx.errors(), file=sys.stderr)
+                    print(vEx, file=sys.stderr)
+                    traceback.print_tb(vEx.__traceback__, file=sys.stderr)
+                    self.local_serve_is_ready = 0
+                except Exception as ex:
+                    print(ex, file=sys.stderr)
+                    traceback.print_tb(ex.__traceback__, file=sys.stderr)
+                    self.local_serve_is_ready = 0
+                    pass
+            try:
+                cleanup_docker(container_name="lgbm_reg_serve",
+                               image_name="lgbm_reg_serve:1.0")
+            except Exception as cleanup_ex:
+                # fail silently
+                pass
+        else:
+            print("skipped")
 
         self.next(self.pipeline_card)
 
@@ -1034,7 +1112,7 @@ class LightGbmHpCvWandbFlow(FlowSpec):
                 get_get_html(self.pipeline_card_artifacts_path)
         else:
             from retrain_pipelines.pipeline_card import get_html
-        from retrain_pipelines.pipeline_card.helpers import mf_dag_svg
+        from retrain_pipelines.pipeline_card.helpers.legacy import mf_dag_svg
         ###########################
 
         ########################

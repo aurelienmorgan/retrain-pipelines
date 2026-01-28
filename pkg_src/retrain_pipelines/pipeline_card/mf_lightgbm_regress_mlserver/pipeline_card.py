@@ -2,19 +2,23 @@
 import os
 import copy
 import pytz
-import importlib.util
+
 from textwrap import dedent, indent
 
 import pandas as pd
 
-from metaflow import cards                                              ## LEGACY  -  DELETE ##
+import importlib                                                    ## LEGACY  -  DELETE ##
+if importlib.util.find_spec("metaflow") is not None:                ## LEGACY  -  DELETE ##
+    from metaflow import cards                                      ## LEGACY  -  DELETE ##
 
 from jinja2 import Environment, FileSystemLoader
 
 from retrain_pipelines import __version__
-from .helpers import apply_args_color_format, highlight_min_max_cells, \
-                     fig_to_base64, parallel_coord_plot
+from .helpers import apply_args_color_format, \
+    highlight_min_max_cells, fig_to_base64, \
+    parallel_coord_plot
 from ...dag_engine.sdk.core import Execution
+
 
 def get_html(
     params: list
@@ -67,6 +71,7 @@ def get_html(
                 f"/execution?id={current_blessed_exec.id}"
             previsous_blessed_card_url = ""                         ## LEGACY  -  NOT USED ANYMORE ##
                                                                     ## REMOVE SECTION FROM HTML TEMPLATE ##
+
     ##########################
 
     local_serve_is_ready = params['local_serve_is_ready']
@@ -75,7 +80,6 @@ def get_html(
     #          EDA           #
     ##########################
     records_count = "{:,}".format(params['records_count'])
-    classes_prior_prob = params['classes_prior_prob']
     features_desc_table = pd.DataFrame(
             [params['features_desc']]
         ).to_html(classes='wide', escape=False, index = False)
@@ -104,8 +108,7 @@ def get_html(
     if params['hyperparameters_dict']:
         hyperparameters_table = \
             pd.DataFrame([params['hyperparameters_dict']]
-                        ).to_html(classes='wide', escape=False,
-                                  index = False)
+                        ).to_html(classes='wide', escape=False, index = False)
     else:
         hyperparameters_table = DEFAULT_HTML_STR
 
@@ -114,23 +117,15 @@ def get_html(
     training_plt_fig.patch.set_facecolor((1.0, 1.0, 1.0, 0.6))
     training_curve = fig_to_base64(training_plt_fig)
 
-    target_class_figs = params['target_class_figs']
-    target_class_curves = {}
-    for target_class, target_class_masks_fig in target_class_figs.items():
-        if target_class_masks_fig is not None:
-            target_class_masks_fig = copy.copy(target_class_masks_fig)
-            # Set the RGBA background white color with partial transparency
-            target_class_masks_fig.patch.set_facecolor((1.0, 1.0, 1.0, 0.6))
-            target_class_curves[target_class] = \
-                fig_to_base64(target_class_masks_fig, extra_tight=True)
-        else:
-            target_class_curves[target_class] = None
+    features_plt_fig = copy.copy(params['features_plt_fig'])
+    # Set the RGBA background white color with partial transparency
+    features_plt_fig.patch.set_facecolor((1.0, 1.0, 1.0, 0.6))
+    feature_imp_curve = fig_to_base64(features_plt_fig)
 
-    classes_weighted_metrics_df = pd.DataFrame(
-        [params['classes_weighted_metrics_dict']])
-    classes_weighted_metrics_df = classes_weighted_metrics_df.map(
+    perf_metrics_df = pd.DataFrame([params['perf_metrics_dict']])
+    perf_metrics_df = perf_metrics_df.map(
         lambda x: '{:.3f}'.format(x).rstrip('0').rstrip('.'))
-    classes_weighted_metrics_table = classes_weighted_metrics_df.to_html(
+    perf_metrics_table = perf_metrics_df.to_html(
         classes='wide', escape=False, index = False)
 
     if params['sliced_perf_metrics_dict'] is None:
@@ -150,45 +145,19 @@ def get_html(
     ##########################
     # hyperparameter tunning #
     ##########################
-
     if params['pipeline_hp_grid_dict']:
         hp_grid_table = pd.DataFrame(
                 [params['pipeline_hp_grid_dict']]
             ).to_html(classes='wide', escape=False, index = False)
-
-        hp_perfs_df = pd.DataFrame(params['hp_perfs_list']
-                                  ).sort_values(by='accuracy', ascending=False)
-
+        hp_perfs_df = pd.DataFrame(params['hp_perfs_list'])
         hp_perfs_curve = parallel_coord_plot(hp_perfs_df)
-
-        hp_perfs_table = hp_perfs_df.to_html(classes='wide', escape=False,
+        hp_perfs_table = hp_perfs_df.sort_values(by='rmse', ascending=True) \
+                                    .to_html(classes='wide', escape=False,
                                              index = False)
-        def add_fixed_column_class(html_string):
-            """
-            Add "class" tag with value "fixed-column"
-            to "th" and "td" tags of the last column (accuracy value)
-            so it always shows despite table possibly being
-            wider than the page.
-            """
-            from bs4 import BeautifulSoup
-            soup = BeautifulSoup(html_string, 'html.parser')
-            table = soup.find('table')
-            if table:
-                for row in table.find_all(['tr']):
-                    last_cell = row.find_all(['th', 'td'])[-1]
-                    last_cell['class'] = last_cell.get('class', []) + \
-                                         ['fixed-column']
-            
-            return str(soup)
-
-        hp_perfs_table = add_fixed_column_class(hp_perfs_table)
     else:
-        # case "no hyperparameter search space
-        #       given as retraining pipeline input"
         hp_grid_table = None
         hp_perfs_curve = None
         hp_perfs_table = None
-
     ##########################
 
     env = Environment(loader=FileSystemLoader(params['template_dir']))
@@ -231,38 +200,34 @@ def get_html(
         ###################################
 
         records_count=records_count,
-        classes_prior_prob=classes_prior_prob,
         features_desc_table=indent(features_desc_table, ' '*36),
         data_distri_curve=data_distri_curve,
         data_heatmap_curve=data_heatmap_curve,
 
         training_curve=training_curve,
-        target_class_curves=target_class_curves,
         buckets_table=indent(buckets_table, ' '*52),
-        hyperparameters_table=indent(hyperparameters_table, ' '*56),
-        classes_weighted_metrics_table= \
-            indent(classes_weighted_metrics_table, ' '*52),
+        hyperparameters_table=indent(hyperparameters_table, ' '*52),
+        feature_imp_curve=feature_imp_curve,
+        perf_metrics_table=indent(perf_metrics_table, ' '*52),
         slice_feature_name=slice_feature_name,
         styled_sliced_perf_metrics_table=(
             None if styled_sliced_perf_metrics_table is None else
             indent(styled_sliced_perf_metrics_table, ' '*52)
         ),
 
-        hp_grid_table=indent(hp_grid_table, ' '*56) \
+        hp_grid_table=indent(hp_grid_table, ' '*52) \
                       if hp_grid_table is not None else None,
         cv_folds=str(params['cv_folds']),
         hp_perfs_curve=indent(hp_perfs_curve, ' '*60) \
                        if hp_perfs_curve is not None else None,
-        hp_perfs_table=indent(hp_perfs_table, ' '*56) \
+        hp_perfs_table=indent(hp_perfs_table, ' '*52) \
                        if hp_perfs_table is not None else None,
 
         wandb_project_ui_url=params['wandb_project_ui_url'],
         wandb_filter_run_id=params['wandb_filter_run_id'],
         wandb_need_sync_dir=params['wandb_need_sync_dir'],
 
-        task_obj_python_cmd= \
-            apply_args_color_format(params['task_obj_python_cmd']),
+        task_obj_python_cmd=apply_args_color_format(params['task_obj_python_cmd']),
         dag_svg=indent(params['dag_svg'], ' '*40),
         __version__=__version__
     )
-

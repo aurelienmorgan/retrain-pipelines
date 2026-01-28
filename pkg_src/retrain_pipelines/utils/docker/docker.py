@@ -144,7 +144,9 @@ def build_and_run_docker(
     try:
         container = docker_client.containers.run(
             full_image_name,
-            remove=True,
+            remove=False, # do not let auto-remove,
+                          # otherwise traces after unhandled exit
+                          # will never be reachable.
             detach=True,
             ports=ports_publish_dict,
             environment=env_vars_dict,
@@ -211,6 +213,15 @@ def cleanup_docker(
 
         print(f"Docker container {container.name} stopped.")
         print(container, flush=True)
+
+        try:
+            # shall be removed if docker_client.containers.run
+            # "remove" was set to True.
+            container.remove(force=True)
+            print(f"Docker container {container.name} removed.",
+                  flush=True)
+        except Exception:
+            pass
 
     # Remove the Docker image
     if image_name is not None:
