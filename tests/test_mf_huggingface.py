@@ -120,6 +120,7 @@ def test_mf_unsloth_func_call_litserve():
             "legacy", "retraining_pipeline.py"
         ), "run",
         "--dataset_repo_id", pytest_dataset_repo_id, \
+        "--polars_engine", "cpu", \
         "--cpt_training_args", "{cpt_training_args}",
         "--sft_training_args", "{sft_training_args}",
         "--model_repo_id", pytest_model_repo_id \

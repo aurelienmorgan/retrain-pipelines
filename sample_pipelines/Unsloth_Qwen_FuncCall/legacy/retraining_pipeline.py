@@ -93,7 +93,7 @@ class UnslothFuncCallFlow(FlowSpec):
         "hf_dataset",
         help="dict with 'repo_id' and 'commit_hash' keys. " + \
              "if 'commit_hash is None, falls back to latest version " +\
-             "of the dataset available in parquet format.\n" +
+             "of the dataset available in parquet format.\n" + \
              "Note that there are 3 required 'attributes' of type " + \
              "str, list[str], list[str]",
         type=JSONType,
@@ -164,6 +164,15 @@ class UnslothFuncCallFlow(FlowSpec):
              "for the Hugging Face dataset version push " + \
              "(will be created at runtime" + \
              " if doesn't already exist)."
+    )
+
+    polars_engine = Parameter(
+        "polars_engine",
+        type=str,
+        default="gpu",
+        help="The engine used by Polars for " + \
+             "dataset querying and processing " + \
+             "(either 'gpu' or 'cpu')."
     )
 
     hf_base_model = Parameter(
@@ -349,19 +358,20 @@ class UnslothFuncCallFlow(FlowSpec):
         # GPU availability
         print(torch.cuda.get_device_name(0))
         print(torch.__version__)
-        self.engine = "gpu" if torch.cuda.is_available() else "cpu"
+        self.engine = "cpu" if (
+                                    self.polars_engine == "gpu" and
+                                    not torch.cuda.is_available()
+                               ) \
+                      else self.polars_engine
 
         # hf_dataset
         hf_dataset_dict = \
             get_lazy_df(
                 repo_id=self.hf_dataset["repo_id"],
                 commit_hash=self.hf_dataset["commit_hash"],
-                files_filter=(
-                    self.hf_dataset['config_name']+"/.*\\.parquet"
-                    if (
-                        self.hf_dataset["config_name"] and
-                        "" < self.hf_dataset["config_name"]
-                    ) else ".*\\.parquet"
+                config_name=(
+                    self.hf_dataset["config_name"] and
+                    "" < self.hf_dataset["config_name"]
                 ),
                 hf_token=os.getenv("HF_TOKEN", None)
             )
@@ -390,17 +400,13 @@ class UnslothFuncCallFlow(FlowSpec):
         self.hf_dataset_dict = hf_dataset_dict
 
         # hf_enrich_dataset
-        print(self.hf_enrich_dataset)
         hf_enrich_dataset_dict = \
             get_lazy_df(
                 repo_id=self.hf_enrich_dataset["repo_id"],
                 commit_hash=self.hf_enrich_dataset["commit_hash"],
-                files_filter=(
-                    self.hf_enrich_dataset['config_name']+"/.*\\.parquet"
-                    if (
-                        self.hf_enrich_dataset["config_name"] and
-                        "" < self.hf_enrich_dataset["config_name"]
-                    ) else ".*\\.parquet"
+                config_name=(
+                    self.hf_enrich_dataset["config_name"] and
+                    "" < self.hf_enrich_dataset["config_name"]
                 ),
                 hf_token=os.getenv("HF_TOKEN", None)
             )
@@ -866,8 +872,8 @@ class UnslothFuncCallFlow(FlowSpec):
             version_label=new_dataset_version_label,
             commit_datetime=commit_datetime,
 
-            mf_flow_name=current.flow_name,
-            mf_run_id=current.run.id,
+            pipeline_name=current.flow_name,
+            exec_id=current.run.id,
             engine=self.engine
         )
         #############################
@@ -1471,7 +1477,7 @@ class UnslothFuncCallFlow(FlowSpec):
                 current_blessed_version_dict["perf_metrics"]
         ):
             current_blessed_run_id = \
-                current_blessed_version_dict["mf_run_id"]
+                current_blessed_version_dict["exec_id"]
             print(f"current_blessed_run_id : {current_blessed_run_id}")
             current_blessed_metric_value = \
                 current_blessed_version_dict[
@@ -1494,7 +1500,7 @@ class UnslothFuncCallFlow(FlowSpec):
                         # tasks are listed backwards, so last task is first item :
                         # Has the run seen task "pipeline_card" prior to last task
                         # (meaning, "pipeline_card" completed successfully and
-                        #  "run" has generated a sutom pipeline-card artifact) ?
+                        #  "run" has generated a custom pipeline-card artifact) ?
                         # If not, hyperlink generation will later fail.
                         run_has_custom_card_artifact = False
                         for step in run_steps:
@@ -1551,7 +1557,7 @@ class UnslothFuncCallFlow(FlowSpec):
                 "' can't be found in eval results " +
                 "from blessed run " +
                 str(current_blessed_version_dict[
-                    "mf_run_id"]) + " !")
+                    "exec_id"]) + " !")
 
         # self.model_version_blessed = True ### DEBUG - DELETE ###
 
@@ -1626,8 +1632,8 @@ class UnslothFuncCallFlow(FlowSpec):
             commit_datetime=commit_datetime,
             perf_metrics=self.perf_metrics,
 
-            mf_flow_name=current.flow_name,
-            mf_run_id=current.run.id
+            pipeline_name=current.flow_name,
+            exec_id=current.run.id
         )
         #############################
 
@@ -1723,9 +1729,13 @@ class UnslothFuncCallFlow(FlowSpec):
 
                 # save dependencies as artifact
                 create_requirements(self.serving_artifacts_local_folder,
-                                    exclude=["cudf-polars-.*", "cuda-python",
+                                    exclude=["numpy",  # version conflict
+                                                       # quick fix
+                                             "cudf-polars-.*", "cuda-python",
                                              "nvidia-.*", "(py)?libcudf-.*",
                                              "nvtx", "rmm-.*", "litserve",
+                                             "protobuf", "grpc.*",
+                                             "tensorboard",
                                              ".*retrain-pipelines.*"]
                 )
 
@@ -2094,6 +2104,7 @@ class UnslothFuncCallFlow(FlowSpec):
         }
         self.html = get_html(params)
         #############################
+        del self.hf_dataset_dict['lazy_df'], self.hf_enrich_dataset_dict['lazy_df']
         current
         #############################
 
@@ -2106,7 +2117,6 @@ class UnslothFuncCallFlow(FlowSpec):
         publish versioned source-code and pipeline-card
         for ths run on the Hugging Face Hub.
         """
-
         model_commit_datetime = \
             self.model_commit_dict["commit_datetime"]
         timestamp_str = \

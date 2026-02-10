@@ -27,8 +27,8 @@ def _dataset_readme_params(
     enrichment_rate: float,
     version_label: str,
     commit_datetime: datetime,
-    mf_flow_name: str,
-    mf_run_id: str,
+    pipeline_name: str,
+    exec_id: str,
     engine:str = "cpu"
 ) -> dict:
     """
@@ -62,8 +62,8 @@ def _dataset_readme_params(
             version label are of format "major.minor"
         - commit_datetime (datetime):
             timestamp for the new dataset version.
-        - mf_flow_name (str)
-        - mf_run_id (str)
+        - pipeline_name (str)
+        - exec_id (str)
         - engine (str):
             Polars engine (can be "cpu", "gpu"..)
 
@@ -189,8 +189,8 @@ def _dataset_readme_params(
 
             "__version__": __version__,
             "run_user": whoami()["name"],
-            "mf_flow_name": mf_flow_name,
-            "mf_run_id": mf_run_id
+            "pipeline_name": pipeline_name,
+            "exec_id": exec_id
         }
     
 
@@ -203,8 +203,8 @@ def get_dataset_readme_content(
     enrichment_rate: float,
     version_label: str,
     commit_datetime: datetime,
-    mf_flow_name: str,
-    mf_run_id: str,
+    pipeline_name: str,
+    exec_id: str,
     engine:str = "cpu"
 ) -> str:
     """
@@ -243,8 +243,8 @@ def get_dataset_readme_content(
             version label are of format "major.minor"
         - commit_datetime (datetime):
             timestamp for the new dataset version.
-        - mf_flow_name (str)
-        - mf_run_id (str)
+        - pipeline_name (str)
+        - exec_id (str)
         - engine (str):
             Polars engine (can be "cpu", gpu"..)
 
@@ -260,8 +260,8 @@ def get_dataset_readme_content(
         enrichment_rate=enrichment_rate,
         version_label=version_label,
         commit_datetime=commit_datetime,
-        mf_flow_name=mf_flow_name,
-        mf_run_id=mf_run_id,
+        pipeline_name=pipeline_name,
+        exec_id=exec_id,
         engine=engine
     )
 

@@ -272,7 +272,7 @@ def _compute_metrics_per_row(
     consideration.
 
     Example usage :
-        ```python
+    ```python
         test_eval_df = pl.DataFrame({
             "completion": [
                 '[{"tool": "A"}, {"tool": "B"}, {"tool": "A"}]',
@@ -290,7 +290,7 @@ def _compute_metrics_per_row(
                      ).map_elements(_compute_metrics_per_row,
                         return_dtype=pl.Object).alias("metrics")
         ).collect()
-        ```
+    ```
 
     Params:
         row (dict):
@@ -374,38 +374,55 @@ def compute_counts_n_metrics(
                 "jaccard" (float)
     """
 
+    # Explicit struct schema: avoids Polars
+    # inferring / fighting types element-by-element
+    _metrics_struct_dtype = pl.Struct({
+        "ground_truth_tool_calls": pl.Int64,
+        "predicted_tool_calls":    pl.Int64,
+        "precision":               pl.Float64,
+        "recall":                  pl.Float64,
+        "f1":                      pl.Float64,
+        "jaccard":                 pl.Float64,
+    })
+
+    def _row_to_metrics(row: dict) -> dict:
+        result = _compute_metrics_per_row(
+            row, is_format_fault_tolerant)
+        # Enforce exact types matching _metrics_struct_dtype
+        return {
+            "ground_truth_tool_calls": int(result["ground_truth_tool_calls"]),
+            "predicted_tool_calls":    int(result["predicted_tool_calls"]),
+            "precision":               float(result["precision"]),
+            "recall":                  float(result["recall"]),
+            "f1":                      float(result["f1"]),
+            "jaccard":                 float(result["jaccard"]),
+        }
+
     return eval_df.with_columns(
             pl.struct(["completion", "answer"]
                      ).map_elements(
-                        lambda row: _compute_metrics_per_row(
-                            row, is_format_fault_tolerant),
-                        return_dtype=pl.Object
+                        _row_to_metrics,
+                        return_dtype=_metrics_struct_dtype
                     ).alias("metrics")
         ).with_columns(
-           pl.col("metrics").map_elements(
-                   lambda x: x["ground_truth_tool_calls"],
-                   return_dtype=pl.Int8
-               ).alias("ground_truth_tool_calls"),
-           pl.col("metrics").map_elements(
-                   lambda x: x["predicted_tool_calls"],
-                   return_dtype=pl.Int8
-               ).alias("predicted_tool_calls"),
-           pl.col("metrics").map_elements(
-                   lambda x: x["precision"],
-                   return_dtype=pl.Float32
-               ).alias("precision"),
-           pl.col("metrics").map_elements(
-                   lambda x: x["recall"],
-                   return_dtype=pl.Float32
-               ).alias("recall"),
-           pl.col("metrics").map_elements(
-                   lambda x: x["f1"],
-                   return_dtype=pl.Float32
-               ).alias("f1"),
-           pl.col("metrics").map_elements(
-                   lambda x: x["jaccard"],
-                   return_dtype=pl.Float32
-               ).alias("jaccard")
+           pl.col("metrics").struct.field(
+               "ground_truth_tool_calls"
+           ).alias("ground_truth_tool_calls"),
+           pl.col("metrics").struct.field(
+               "predicted_tool_calls"
+           ).alias("predicted_tool_calls"),
+           pl.col("metrics").struct.field(
+               "precision"
+           ).alias("precision"),
+           pl.col("metrics").struct.field(
+               "recall"
+           ).alias("recall"),
+           pl.col("metrics").struct.field(
+               "f1"
+           ).alias("f1"),
+           pl.col("metrics").struct.field(
+               "jaccard"
+           ).alias("jaccard")
         ).select(pl.exclude("metrics"))
 
 
@@ -442,7 +459,7 @@ def _plot_bars(
     # shows xticklabels for up to max_x
     zeros = pl.DataFrame({
         xlabel: pl.Series(range(max_x + 1),
-                          dtype=pl.Int8),
+                          dtype=pl.Int64),
         "correct_count": pl.Series([0] * (max_x + 1),
                                    dtype=pl.UInt32),
         "total_count": pl.Series([0] * (max_x + 1),

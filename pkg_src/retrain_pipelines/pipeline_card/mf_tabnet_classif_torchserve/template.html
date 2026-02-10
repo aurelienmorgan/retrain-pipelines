@@ -575,14 +575,14 @@
         </div>
         <!-- model version blessing status -->
         {% if current_blessed_run_id is not none %}
-        <font color="#C0C0C0">Last blessed run&nbsp;:
-            run_id {{current_blessed_run_id}} ({{current_blessed_run_finished}})
+        <font color="#C0C0C0">Last blessed execution&nbsp;:
+            exec_id {{current_blessed_run_id}} ({{current_blessed_run_finished}})
         </font>
-        <a id="blessed_run_link" style="color: orange;" target="_blank"
+        <a id="blessed_exec_link" style="color: orange;" target="_blank"
            href="{{previsous_blessed_card_href}}">here</a>
         <script language="javascript">
             window.onload = function() {
-                var link = document.getElementById("blessed_run_link");
+                var link = document.getElementById("blessed_exec_link");
                 if (window.self !== window.top) {
                     // card displayed as an iframe
                     // [get parent domain & port without hitting CORS]
@@ -962,9 +962,11 @@
     {% if "" != wandb_need_sync_dir %}
                                                 <!-- wandb sync command -->
                                                 <em>
-                                                    Note that the herein flow run was not live-synced to WandB.
-                                                    Execute the following WandB CLI command locally to sync it
-                                                    so log-data shows there for this flow run&nbsp;:
+                                                    Note that the herein pipeline execution
+                                                    was not live-synced to WandB.
+                                                    Execute the following WandB CLI command locally
+                                                    to sync it so log-data shows there for
+                                                    this pipeline execution&nbsp;:
                                                     <div style="background-color:#000; color:#e6e6e6;
                                                                 font-family:'Segoe UI', Roboto;
                                                                 font-size: 10pt;
@@ -989,7 +991,7 @@
 {% else %}
                                             <em>
                                                 Note that WandB logging was explicitely disabled
-                                                for this flow run.
+                                                for this pipeline execution.
                                             </em>
 {% endif %}
                                             </font>
@@ -1043,7 +1045,7 @@
                         data-target="#collapseTwo" aria-expanded="false"
                         aria-controls="collapseTwo">
                         <center>
-                            <h1 style="color: #6082B6;">Key Artifacts for this flow run</h1>
+                            <h1 style="color: #6082B6;">Key Artifacts for this pipeline execution</h1>
                             <h2 style="color: #6082B6;"><em>python client commands</em></h2>
                         </center>
                         </button>
@@ -1160,7 +1162,7 @@
                         data-target="#collapseThree" aria-expanded="false"
                         aria-controls="collapseThree">
                             <center>
-                                <h1 style="color: #6082B6;">Flow run DAG</h1>
+                                <h1 style="color: #6082B6;">Pipeline execution DAG</h1>
                             </center>
                         </button>
                     </h5>

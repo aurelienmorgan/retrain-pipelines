@@ -13,165 +13,28 @@ import polars as pl
 
 from typing import Optional, Callable, Iterator
 
-from huggingface_hub.utils import RevisionNotFoundError, \
-    EntryNotFoundError, HfHubHTTPError
-
-from datasets import IterableDataset, DatasetDict
+from datasets import load_dataset, \
+    IterableDataset, DatasetDict
+from huggingface_hub import HfApi
 
 from retrain_pipelines import __version__
 from retrain_pipelines.utils.hf_utils import \
     get_repo_branches_commits_files, local_repo_folder_to_hub
 
 
-def get_latest_commit(
-    repo_id: str,
-    files_filter: str = ".*"
-) -> dict:
-    """
-    Get the dataset version info for the latest commit
-    for a given HF Dataset repo.
-    Focus put on files matching the given regex pattern
-    with associated metadata.
-
-    Params:
-        - repo_id (str):
-            Path to the HuggingFace dataset.
-        - files_filter (str):
-            only consider commits with any file
-            matching this regex pattern.
-
-    Results:
-        - (dict):
-            'commit_hash', 'commit_datetime',
-            'branch_name', 'files'
-    """
-
-    dataset_repo_branches = \
-        get_repo_branches_commits_files(
-            repo_id=repo_id, repo_type="dataset")
-
-    latest_matching_commit = None
-    regex_pattern = re.compile(files_filter)
-
-    for branch_type, branches in dataset_repo_branches.items():
-        for branch_name, branch_data in branches.items():
-            for \
-                commit_hash, commit_data \
-                in branch_data["commits"].items() \
-            :
-                matching_files = [
-                    f for f in commit_data["files"]
-                      if regex_pattern.search(f)
-                ]
-                if matching_files:
-                    commit_datetime = commit_data["created_at"]
-                    if (
-                        not latest_matching_commit
-                        or commit_datetime >
-                            latest_matching_commit["commit_datetime"]
-                    ):
-                        latest_matching_commit = {
-                            "commit_hash": commit_hash,
-                            "commit_datetime": commit_datetime,
-                            "branch_name": \
-                                branch_data["branch_name"],
-                            "files": matching_files,
-                        }
-    
-    return latest_matching_commit
-
-
-def get_commit(
-    repo_id: str,
-    commit_hash: str = None,
-    files_filter: str = ".*"
-) -> dict:
-    """
-    Get the dataset version info for a given "revision"
-    (commit_hash) of a given HF dataset.
-    Focus put on files matching the given regex pattern
-    with associated metadata.
-
-    Params:
-        - repo_id (str):
-            Path to the HuggingFace dataset.
-        - commit_hash (Optional, str):
-            Particular "revision" of the dataset
-            to scan.
-        - files_filter (str):
-            Only consider files matching
-            this regex pattern.
-
-    Results:
-        - (dict):
-            'commit_hash', 'commit_datetime',
-            'branch_name', 'files'
-    """
-
-    regex_pattern = re.compile(files_filter)
-
-    if not commit_hash:
-        matching_commit = get_latest_commit(
-            repo_id, files_filter
-        )
-        return matching_commit
-    else:
-        dataset_repo_branches = \
-            get_repo_branches_commits_files(
-                repo_id=repo_id, repo_type="dataset")
-        for \
-            branch_type, branches \
-            in dataset_repo_branches.items() \
-        :
-            for branch_name, branch_data in branches.items():
-                for \
-                    branch_commit_hash, branch_commit_data \
-                    in branch_data["commits"].items() \
-                :
-                    if commit_hash == branch_commit_hash:
-                        matching_files = [
-                            f for f
-                              in branch_commit_data["files"]
-                              if regex_pattern.search(f)
-                        ]
-                        if len(matching_files) > 0:
-                            matching_commit = {
-                                "commit_hash": commit_hash,
-                                "commit_datetime": \
-                                    branch_commit_data["created_at"],
-                                "branch_name": \
-                                    branch_data["branch_name"],
-                                "files": matching_files,
-                            }
-                            return matching_commit
-                        else:
-                            print(f"commit '{commit_hash}' " +
-                                  f"hosts no files matching pattern " +
-                                  f"'{files_filter}'",
-                                  file=sys.stderr)
-                            return None
-
-    return None
+# import logging
+# logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
 def get_lazy_df(
     repo_id: str,
     commit_hash: str = None,
-    files_filter: str = ".*\.parquet",
+    config_name: str = None,
     hf_token:str = None,
 ) -> dict:
     """
     Polars lazy dataframe object
-    for a given HuggingFace-hosted dataset.
-
-    Note:
-        We look for parquet files in a given "revision"
-        (i.e. a given repo commit).
-        It could mean using the @~parquet branch
-        if the dataset is not natively in parquet format
-        (but needs to be "public"
-         for the auto-convert bot to kick in).
-        @see https://huggingface.co/docs/dataset-viewer/en/parquet#conversion-to-parquet
+    for a given HuggingFace-hosted dataset "revision".
 
     Params:
         - repo_id (str):
@@ -180,15 +43,12 @@ def get_lazy_df(
             particular "revision" of the dataset
             to scan.
             Note:
-                commit_hash is a "by reference"
+                think of commit_hash as a "by reference"
                 parameter. If None, it is updated
                 to convey the actual (latest) value
                 info back to the caller
-        - files_filter (str):
-            Only consider files matching this regex pattern.
-            This can serve if the dataset has many tables
-            (possibly each with several splits),
-            with different formats, for instance.
+        - config_name (str):
+            Only consider a given dataset split (e.g. "train").
         - hf_token (Optional, str):
             Needed if the HF dataset is "gated"
             (requires to be granted access).
@@ -204,37 +64,52 @@ def get_lazy_df(
             - lazydf (pl.lazyframe.frame.LazyFrame)
     """
 
-    parquet_commit = get_commit(
-        repo_id=repo_id,
-        commit_hash=commit_hash,
-        files_filter=files_filter
-    )
-    if not parquet_commit:
-        print(f"commit '{commit_hash}' " +
-              "either does not exist or " +
-              "hosts no parquet file",
-              file=sys.stderr)
-        return None
+    # get dataset reference
+    ds_kwargs = {"path": repo_id}
+    if commit_hash:
+        ds_kwargs["revision"] = commit_hash
+    if config_name:
+        ds_kwargs["split"] = config_name
+    if hf_token:
+        ds_kwargs["token"] = hf_token
+    ds = load_dataset(**ds_kwargs)
 
-    polars_hf_urls = [
-        "hf://datasets/{}@{}/{}".format(
-            repo_id,
-            parquet_commit['commit_hash'],
-            parquet_file
-        )
-        for parquet_file \
-            in parquet_commit['files']
-    ]
+    # get revision
+    if not commit_hash:
+        if isinstance(ds, dict):
+            first_split = next(iter(ds.values()))
+            url = list(first_split._info.download_checksums.keys())[0]
+        else:
+            url = list(ds._info.download_checksums.keys())[0]
+        commit_hash = url.split('@')[1].split('/')[0]
+    # get revision datetime
+    commit_info = HfApi().list_repo_commits(
+        repo_id=repo_id, repo_type="dataset", revision=commit_hash)
+    for commit in commit_info:
+        if commit.commit_id == commit_hash:
+            commit_datetime = commit.created_at
+            break
 
-    lazy_df = pl.scan_parquet(
-        polars_hf_urls,
-        storage_options={"token": hf_token})
+    # If split not specified, ds is a dict of splits
+    if isinstance(ds, dict):
+        # Concatenate all splits
+        dfs = []
+        for split_name, split_ds in ds.items():
+            df = pl.from_arrow(split_ds.data.table)
+            dfs.append(df)
+
+        # Concatenate vertically
+        lazy_df = pl.concat(dfs, how="vertical").lazy()
+    else:
+        # Single split
+        lazy_df = pl.from_arrow(ds.data.table).lazy()
+
+    print(lazy_df.explain())
 
     return {
             "repo_id": repo_id,
-            "commit_hash": parquet_commit['commit_hash'],
-            "commit_datetime": \
-                parquet_commit['commit_datetime'],
+            "commit_hash": commit_hash,
+            "commit_datetime": commit_datetime,
             "lazy_df": lazy_df
         }
 

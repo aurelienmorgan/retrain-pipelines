@@ -79,9 +79,9 @@ def test_mf_tabnet_classif_torchserve():
 
     # assumes the "requirements.txt" from the subdir
     # of the herein "sample pipeline"
-    # are installed in an env named "metaflow_pytorch_1"
+    # are installed in an env named "metaflow_pytorch_1_venv"
     # (would it be through conda or venv)
-    env = get_venv(virtual_env_name="metaflow_pytorch_1")
+    env = get_venv(virtual_env_name="metaflow_pytorch_1_venv")
 
     pipeline_hp_grid = {
         "trainer": {

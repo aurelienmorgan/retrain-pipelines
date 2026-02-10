@@ -26,7 +26,6 @@ language:
 task_categories:
 - question-answering
 - text-generation
-- text2text-generation
 
 tags:
 - retrain-pipelines
@@ -145,8 +144,8 @@ Data-enrichment rate&nbsp;: +{{ (enrichment_rate * 100)|round(1) ~ '%' }}<br />
     <code><a target="_blank"
              href="https://github.com/aurelienmorgan/retrain-pipelines">retrain-pipelines
           {{ __version__ }}</a></code> - 
-    <code>Run by <a target="_blank" href="https://huggingface.co/{{ run_user }}">{{ run_user }}</a></code> -
-    <em><b>{{ mf_flow_name }}</b></em> - mf_run_id&nbsp;: <code>{{ mf_run_id }}</code>
+    <code>Launched by <a target="_blank" href="https://huggingface.co/{{ run_user }}">{{ run_user }}</a></code> -
+    <em><b>{{ pipeline_name }}</b></em> - exec_id&nbsp;: <code>{{ exec_id }}</code>
   </div>
 </div>
 

@@ -20,12 +20,15 @@ pytest===8.3.3
 rich==14.0.0
 datasets===3.1.0
 huggingface-hub===0.27.1
+transformers===4.46.2
+peft===0.14.0
+trl===0.12.0
+accelerate===1.1.1
 pyarrow===17.0.0
 polars[gpu]===1.21.0 --extra-index-url=https://pypi.nvidia.com
 https://download.pytorch.org/whl/cu124/torch-2.5.0%2Bcu124-cp310-cp310-linux_x86_64.whl
 unsloth===2024.11.5
 unsloth_zoo===2024.11.4
-trl===0.14.0
 xformers===0.0.28.post2
 tensorboard===2.18.0
 python-multipart===0.0.20

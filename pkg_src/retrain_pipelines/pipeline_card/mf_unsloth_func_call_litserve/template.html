@@ -562,7 +562,7 @@
         </div>
         <!-- model version blessing status -->
 {% if model_version_not_blessed %}
-        <font color="#C0C0C0">Last blessed run&nbsp;:
+        <font color="#C0C0C0">Last blessed execution&nbsp;:
             <b>v{{ previous_blessed_version_label }}</b>
             <span class="info-container">
                 <span style="background-color: #C0C0C0;" class="info-icon">i</span>
@@ -572,12 +572,12 @@
             [<a href="https://huggingface.co/{{ model_repo_id }}/blob/{{ previous_blessed_model_commit_hash }}/README.md"
                 target="_blank">HuggingFace &#x1F917;</a>]
     {% if previous_blessed_run_id is not none %}
-            - run_id {{previous_blessed_run_id}}
-            [<a id="blessed_run_link" style="color: orange;" target="_blank"
+            - exec_id {{previous_blessed_run_id}}
+            [<a id="blessed_exec_link" style="color: orange;" target="_blank"
                href="{{previsous_blessed_card_href}}">here</a>]
             <script language="javascript">
                 window.onload = function() {
-                    var link = document.getElementById("blessed_run_link");
+                    var link = document.getElementById("blessed_exec_link");
                     if (window.self !== window.top) {
                         // card displayed as an iframe
                         // [get parent domain & port without hitting CORS]
@@ -862,7 +862,7 @@
                         data-target="#collapseTwo" aria-expanded="false"
                         aria-controls="collapseTwo">
                         <center>
-                            <h1 style="color: #6082B6;">Key Artifacts for this flow run</h1>
+                            <h1 style="color: #6082B6;">Key Artifacts for this pipeline execution</h1>
                             <h2 style="color: #6082B6;"><em>python client commands</em></h2>
                         </center>
                         </button>
@@ -936,7 +936,7 @@
                         data-target="#collapseThree" aria-expanded="false"
                         aria-controls="collapseThree">
                             <center>
-                                <h1 style="color: #6082B6;">Flow run DAG</h1>
+                                <h1 style="color: #6082B6;">Pipeline execution DAG</h1>
                             </center>
                         </button>
                     </h5>

@@ -116,7 +116,7 @@ def current_blessed_model_version_dict(
 
     Results:
         - (dict):
-            - mf_run_id (str)
+            - exec_id (str)
             - commit_hash (str)
             - version_label (str)
             - commit_datetime (datetime)
@@ -167,9 +167,13 @@ def current_blessed_model_version_dict(
             }
 
         return {
-            "mf_run_id": model_info.cardData["mf_run_id"],
+            "exec_id": model_info.cardData["exec_id"] \
+                             if "exec_id" in model_info.cardData \
+                             else None,
             "commit_hash": model_info.sha,
-            "version_label": model_info.cardData["version"],
+            "version_label": model_info.cardData["version"] \
+                             if "version" in model_info.cardData \
+                             else None,
             "commit_datetime": commit_datetime,
             "perf_metrics": eval_results_dict
         }

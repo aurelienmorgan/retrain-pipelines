@@ -44,9 +44,9 @@ from retrain_pipelines.utils import create_requirements
 from retrain_pipelines.dag_engine.sdk import \
     ExecutionsIterator
 
-
 from retrain_pipelines.utils import grant_read_access, \
     tmp_os_environ
+
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -289,7 +289,6 @@ def training_job(
             ),
             resume=False
         )
-
 
     (train_idx, val_idx) = payload
     logger.info(f"task {task_id} - " +
@@ -732,7 +731,7 @@ def model_version_blessing(_):
                       str(ctx.model_version_blessed))
             break
 
-    ctx.model_version_blessed = False ### DEBUG - DELETE ###
+    # ctx.model_version_blessed = False ### DEBUG - DELETE ###
 
     # case 'no prior blessed run'
     if current_blessed_rmse == sys.maxsize:

@@ -23,7 +23,7 @@ language:
 - en
 
 task_categories:
-- text2text-generation
+- text-generation
 
 tags:
 - retrain-pipelines
@@ -38,7 +38,7 @@ thumbnail: https://cdn-avatars.huggingface.co/v1/production/uploads/651e93137b2a
 # @see https://huggingface.co/docs/hub/models-widgets#enabling-a-widget
 # @see https://huggingface.co/docs/hub/models-widgets-examples
 # @see https://huggingface.co/docs/hub/en/model-cards#specifying-a-task--pipelinetag-
-pipeline_tag: text2text-generation
+pipeline_tag: text-generation
 widget:
   - text: >-
       Hello
@@ -51,7 +51,7 @@ widget:
     output:
       text: '[{"name": "is_perfect_square", "arguments": {"num": 49}}]'
 
-mf_run_id: '{{ mf_run_id }}'
+exec_id: '{{ exec_id }}'
 
 # @see https://huggingface.co/docs/huggingface_hub/guides/model-cards#include-evaluation-results
 # @see https://huggingface.co/docs/huggingface_hub/main/en/package_reference/cards#huggingface_hub.EvalResult
@@ -59,8 +59,8 @@ model-index:
 - name: {{ pretty_name }}
   results:
   - task:
-      type: text2text-generation
-      name: Text2Text Generation
+      type: text-generation
+      name: Text Generation
     dataset:
       name: {{ dataset_pretty_name }}
       type: {{ dataset_repo_id }}
@@ -155,7 +155,7 @@ The herein LoRa adapter can for instance be used as follows&nbsp;:<br />
              href="https://github.com/aurelienmorgan/retrain-pipelines">retrain-pipelines
           {{ __version__ }}</a></code> - 
     <code>Run by <a target="_blank" href="https://huggingface.co/{{ run_user }}">{{ run_user }}</a></code> -
-    <em><b>{{ mf_flow_name }}</b></em> - mf_run_id&nbsp;: <code>{{ mf_run_id }}</code>
+    <em><b>{{ pipeline_name }}</b></em> - exec_id&nbsp;: <code>{{ exec_id }}</code>
   </div>
 </div>
 

@@ -26,8 +26,8 @@ def _model_readme_params(
     version_label: str,
     commit_datetime: datetime,
     perf_metrics: dict,
-    mf_flow_name: str,
-    mf_run_id: str,
+    pipeline_name: str,
+    exec_id: str,
 ) -> dict:
     """
     Populates the params dict to be used
@@ -50,8 +50,8 @@ def _model_readme_params(
         - perf_metrics (dict):
             metric_name/metric_value as
             key/value pairs.
-        - mf_flow_name (str)
-        - mf_run_id (str)
+        - pipeline_name (str)
+        - exec_id (str)
 
     Results:
         - (dict)
@@ -152,8 +152,8 @@ def _model_readme_params(
 
             "__version__": __version__,
             "run_user": whoami()["name"],
-            "mf_flow_name": mf_flow_name,
-            "mf_run_id": mf_run_id
+            "pipeline_name": pipeline_name,
+            "exec_id": exec_id
         }
     
 
@@ -168,8 +168,8 @@ def get_model_readme_content(
     commit_datetime: datetime,
     perf_metrics: dict,
 
-    mf_flow_name: str,
-    mf_run_id: str,
+    pipeline_name: str,
+    exec_id: str,
 ) -> str:
     """
 
@@ -199,8 +199,8 @@ def get_model_readme_content(
         - perf_metrics (dict):
             metric_name/metric_value as
             key/value pairs.
-        - mf_flow_name (str)
-        - mf_run_id (str)
+        - pipeline_name (str)
+        - exec_id (str)
 
     Results:
         - (str)
@@ -213,8 +213,8 @@ def get_model_readme_content(
         version_label=version_label,
         commit_datetime=commit_datetime,
         perf_metrics=perf_metrics,
-        mf_flow_name=mf_flow_name,
-        mf_run_id=mf_run_id
+        pipeline_name=pipeline_name,
+        exec_id=exec_id
     )
 
     env = Environment(loader=FileSystemLoader(template_folder))
