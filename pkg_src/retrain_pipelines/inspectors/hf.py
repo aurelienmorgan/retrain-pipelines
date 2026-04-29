@@ -145,13 +145,29 @@ def model_versions_history_html_table(
 
     df = pd.DataFrame(model_versions_history.history)
 
-    df['commit_hash'] = df['commit_hash'].apply(
+
+    df["branch_name"] = df["branch_name"].apply(
+        lambda branch_name: 
+            branch_name.replace("retrain-pipelines_", "")
+    )
+
+    df["commit_hash"] = df["commit_hash"].apply(
         lambda commit_hash:
             f"<a href=\"https://hf.co/" +
                       model_versions_history.repo_id +
                       f"/blob/{commit_hash}/README.md\" " +
                 "target=\"_blank\">" +
             f"{commit_hash[:7]}</a>"
+    )
+
+    df["commit_datetime"] = (
+        pd.to_datetime(df["commit_datetime"], utc=True)
+        .dt.tz_convert(None)
+        .dt.strftime("%Y-%m-%d %H:%M:%S")
+    )
+
+    df["eval_results"] = df["eval_results"].apply(
+        lambda d: {k: round(v, 3) for k, v in d.items()}
     )
 
     return df.to_html(escape=False, index=False)
