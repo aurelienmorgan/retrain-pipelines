@@ -1,8 +1,5 @@
-import os
-import logging
 
-from rich.logging import RichHandler
-from rich.text import Text
+import os
 
 
 # RP_ASSETS_CACHE
@@ -23,7 +20,7 @@ except Exception as e:
 
 # RP_METADATASTORE_URL
 # We instruct SQLite to wait for a lock to be released
-# before raising a "db locked" error on conccurency issue.
+# before raising a "db locked" error on concurrency issue.
 # Setting a timeout in the URL
 os.environ["RP_METADATASTORE_URL"] = (
     os.environ.get(
@@ -61,10 +58,22 @@ except Exception as e:
     print(f"Error creating cache directory: {e}")
 
 
-# RP_WEB_SERVER_URL
+# RP_WEB_SERVER_URL & RP_GRPC_SERVER_URL
+os.environ["RP_WEB_SERVER_PORT"] = (
+    os.environ.get(
+        "RP_WEB_SERVER_PORT", "5001"
+    )
+)
+os.environ["RP_GRPC_SERVER_PORT"] = (
+    os.environ.get(
+        "RP_GRPC_SERVER_PORT", "50051"
+    )
+)
+# serves for the internal dag-engine
 os.environ["RP_WEB_SERVER_URL"] = (
     os.environ.get(
-        "RP_WEB_SERVER_URL", "http://localhost:5001/"
+        "RP_WEB_SERVER_URL",
+        f"http://localhost:{os.environ['RP_WEB_SERVER_PORT']}/"
     ).rstrip("/")
 )
 
@@ -84,63 +93,4 @@ except PermissionError as e:
     print(f"Permission denied: {e}")
 except Exception as e:
     print(f"Error creating cache directory: {e}")
-
-
-################################################################
-
-
-# https://rich.readthedocs.io/en/stable/markup.html
-
-class CustomRichHandler(RichHandler):
-    def get_level_text(self, record: logging.LogRecord) -> Text:
-        # Override to hide level text for INFO logs
-        if record.levelno == logging.INFO:
-            return Text("")  # Return empty text to hide level
-        return super().get_level_text(record)
-
-    # def render_message(self, record: logging.LogRecord, message: str) -> Text:
-        # """
-        # For DEUB purpose only
-        # Override to prepend logger name to rendered message.
-        # """
-        # rendered = super().render_message(record, message)
-
-        # prefix = Text(f"{record.name} | ", style="bold cyan")
-        # prefix.append(rendered)
-
-        # return prefix
-
-FORMAT = "%(message)s"  # Basic log message format
-DATEFMT = "%H:%M:%S"
-
-rich_handler = CustomRichHandler(markup=True)
-
-# Patch getLogger to attach Rich and set sane default levels
-_original_getLogger = logging.getLogger
-def getLogger(name=None):
-    logger = _original_getLogger(name)
-    if (
-        not (name and name.startswith("uvicorn")) and
-        not any(isinstance(h, RichHandler) for h in logger.handlers)
-    ):
-        logger.handlers = []
-        logger.addHandler(rich_handler)
-        logger.setLevel(logging.WARNING if name else logging.NOTSET)
-    return logger
-logging.getLogger = getLogger
-
-# Update all existing loggers immediately
-for name, logger in logging.root.manager.loggerDict.items():
-    if name == "rich": continue
-    if isinstance(logger, logging.Logger):
-        if not any(isinstance(h, RichHandler) for h in logger.handlers):
-            logger.handlers = []
-            logger.addHandler(rich_handler)
-            logger.setLevel(logging.WARNING)
-
-logger = logging.getLogger()
-logger.setLevel(logging.NOTSET)
-
-
-################################################################
 
