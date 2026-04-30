@@ -20,6 +20,7 @@ def start():
 
     # Do whatever you want
     # e.g. you could handle pipeline parameters here
+    import time ; time.sleep(3)                             ### DEBUG - DELETE ###
 
     #################################
     # Return must be an enumerator, #
@@ -67,6 +68,11 @@ def inner_inner_parallel(payload: TaskPayload):
     repeated in a 2D list."""
 
     # Do whatever you want
+
+    # import time ; start_time = time.time()
+    # while time.time() - start_time < 10:
+        # print("titi")
+        # time.sleep(1)
 
     #################################
     # Return must be an enumerator, #
@@ -120,16 +126,29 @@ def end(payload: TaskPayload):
 
 @dag(ui_css=UiCss(background="#002fff", color="#99ff00"))
 def retrain_pipeline():
+    """2-levels deep nested sub-DAGing.
+    """
     # Compose the DAG using operator overloading (>>)
     return start >> outer_parallel >> inner_parallel >> inner_inner_parallel >> merge_inner_inner >> merge_inner >> merge_outer >> end
 
 
 if __name__ == "__main__":
+    # print(f"to_tasktypes_list : {retrain_pipeline.to_tasktypes_list(serializable=True)}")
+
     # Render the DAG
-    svg_fullname = os.path.join(os.environ["RP_ARTIFACTS_STORE"], "dag.html")
+    svg_fullname = os.path.realpath(os.path.join(
+        os.path.dirname(os.path.realpath(__file__)), "dag.html"
+    ))
     render_svg(retrain_pipeline, svg_fullname)
+
     # Run the DAG
-    print("Final result:", execute(retrain_pipeline, dag_params=None))
-    print(f"execution {os.path.splitext(os.path.basename(__file__))[0]}[{retrain_pipeline.exec_id}]")
+    final_result, context_dump = execute(retrain_pipeline, params=None)
+    print(
+        f"execution {context_dump['exec_id']} - " +
+        f"{context_dump['pipeline_name']} - final result : {final_result}"
+    )
+    import json
+    print("context_dump : " +
+          json.dumps(context_dump, indent=4))
     print(f"DAG SVG written to {svg_fullname}")
 

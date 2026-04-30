@@ -12,7 +12,6 @@ import itertools
 import importlib.util
 
 from typing import List
-from textwrap import dedent
 
 import numpy as np
 import pandas as pd
@@ -59,8 +58,6 @@ def start() -> TaskPayload:
 
     # inputs validation
     assert os.path.exists(os.path.realpath(ctx.data_file_fullname))
-    ctx.buckets_param = json.loads(ctx.buckets_param)
-    ctx.pipeline_hp_grid = json.loads(ctx.pipeline_hp_grid)
     ctx.cv_folds = int(ctx.cv_folds)
     ctx.dask_partitions = int(ctx.dask_partitions)
     assert ctx.wandb_run_mode in ['disabled', 'offline', 'online']
@@ -95,6 +92,14 @@ def start() -> TaskPayload:
 
     if not os.path.exists(ctx.serving_artifacts_local_folder):
         os.makedirs(ctx.serving_artifacts_local_folder)
+
+
+    # preemptive dask/distributed/lightgbm hard-reset
+    # from potential prior execution on the same
+    # python interpreter as the current one
+    from retrain_pipelines.model import nuke_dask_cpp
+    nuke_dask_cpp()
+
 
     return data
 
@@ -1117,16 +1122,16 @@ def retrain_pipeline():
              "on raw numerical feature(s). " + \
              "dict of optional pairs of  " + \
              "feature_name/buckets_count.",
-        default="{}"
+        default={}
     )
     pipeline_hp_grid = DagParam(
         description="LightGBM model hyperparameters domain",
-        default=dedent("""        {
+        default={
             "boosting_type": ["gbdt"],
             "num_leaves": [20, 30],
             "learning_rate": [0.01, 0.1],
             "n_estimators": [50, 100]
-        }""")
+        }
     )
     cv_folds = DagParam(
         description="(int) how many Cross Validation folds shall be used.",

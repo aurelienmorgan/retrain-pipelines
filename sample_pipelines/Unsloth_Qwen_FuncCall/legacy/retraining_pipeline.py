@@ -1161,8 +1161,8 @@ class UnslothFuncCallFlow(FlowSpec):
             return { "text" : outputs, }
         sft_train_dataset = queries_dataset["train"].map(
             formatting_prompts_func, batched=True)
-        sft_valid_dataset = queries_dataset["validation"].map(
-            formatting_prompts_func, batched=True,)
+        # sft_valid_dataset = queries_dataset["validation"].map(
+            # formatting_prompts_func, batched=True,)
         #######################################
 
         #######################################
@@ -1488,6 +1488,8 @@ class UnslothFuncCallFlow(FlowSpec):
                 current_blessed_metric_value
             )
 
+            # self.model_version_blessed = False ### DEBUG - DELETE ###
+
             if not self.model_version_blessed:
                 self.current_blessed_version_dict = \
                     current_blessed_version_dict
@@ -1558,8 +1560,6 @@ class UnslothFuncCallFlow(FlowSpec):
                 "from blessed run " +
                 str(current_blessed_version_dict[
                     "exec_id"]) + " !")
-
-        # self.model_version_blessed = True ### DEBUG - DELETE ###
 
         self.next(self.model_to_hub)
 

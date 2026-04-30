@@ -11,7 +11,6 @@ import traceback
 import importlib.util
 
 from typing import List
-from textwrap import dedent
 
 import numpy as np
 import pandas as pd
@@ -62,7 +61,6 @@ def start() -> TaskPayload:
     # inputs validation
     assert os.path.exists(os.path.realpath(ctx.data_file_fullname))
     ctx.buckets_param = json.loads(ctx.buckets_param)
-    ctx.pipeline_hp_grid = json.loads(ctx.pipeline_hp_grid)
     ctx.cv_folds = int(ctx.cv_folds)
     assert ctx.wandb_run_mode in ['disabled', 'offline', 'online']
 
@@ -929,6 +927,10 @@ def infra_validator(_):
         except Exception as cleanup_ex:
             # fail silently
             pass
+    else:
+        logger.info("skipped")
+
+    return None
 
 
 @task
@@ -1113,7 +1115,7 @@ def retrain_pipeline():
     pipeline_hp_grid = DagParam(
         description="TabNet model hyperparameters domain " + \
                     "(for both the model and the trainer)",
-        default=dedent("""        {
+        default={
             "trainer": {
                 "max_epochs": [100],
                 "patience": [10],
@@ -1137,7 +1139,7 @@ def retrain_pipeline():
                 "scheduler_fn":["torch.optim.lr_scheduler.StepLR"],
                 "epsilon":[0.000000000000001]
             }
-        }""")
+        }
     )
     cv_folds = DagParam(
         description="(int) how many Cross Validation folds shall be used.",

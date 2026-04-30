@@ -16,6 +16,7 @@ from retrain_pipelines.dag_engine.renderer import \
 @task
 def start():
     """Root task."""
+    import time ; time.sleep(3)                             ### DEBUG - DELETE ###
     return
 
 
@@ -23,6 +24,7 @@ def start():
 def snake_head_A1(_):
 
     # Do whatever you want
+    print("Do whatever you want - A1")
 
     return "A1"
 
@@ -72,6 +74,9 @@ def snake_head_B1(snake_heads_A_results: TaskPayload):
         ("B1_" + snake_heads_A_results["snake_head_A2"]),
         ("B1_" + snake_heads_A_results["snake_head_A3"])
     ]
+
+    print(this_task_result)
+
     return this_task_result
 
 
@@ -91,6 +96,9 @@ def snake_head_B2(snake_heads_A_results: TaskPayload):
         ("B2_" + snake_heads_A_results["snake_head_A2"]),
         ("B2_" + snake_heads_A_results["snake_head_A3"])
     ]
+
+    print(this_task_result)
+
     return this_task_result
 
 
@@ -110,6 +118,9 @@ def snake_head_B3(snake_heads_A_results: TaskPayload):
         ("B3_" + snake_heads_A_results["snake_head_A2"]),
         ("B3_" + snake_heads_A_results["snake_head_A3"])
     ]
+
+    print(this_task_result)
+
     return this_task_result
 
 
@@ -160,7 +171,7 @@ def end(payload: TaskPayload):
 
 @dag(ui_css=UiCss(background="#00ffff"))
 def retrain_pipeline():
-    """Several groups of tasks, chained.
+    """2 taskgroups in series.
 
     Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur.
 
@@ -171,11 +182,22 @@ def retrain_pipeline():
 
 
 if __name__ == "__main__":
+    # print(f"to_tasktypes_list : {retrain_pipeline.to_tasktypes_list(serializable=True)}")
+
     # Render the DAG
-    svg_fullname = os.path.join(os.environ["RP_ARTIFACTS_STORE"], "dag.html")
+    svg_fullname = os.path.realpath(os.path.join(
+        os.path.dirname(os.path.realpath(__file__)), "dag.html"
+    ))
     render_svg(retrain_pipeline, svg_fullname)
+
     # Run the DAG
-    print("Final result:", execute(retrain_pipeline, dag_params=None))
-    print(f"execution {os.path.splitext(os.path.basename(__file__))[0]}[{retrain_pipeline.exec_id}]")
+    final_result, context_dump = execute(retrain_pipeline, params=None)
+    print(
+        f"execution {context_dump['exec_id']} - " +
+        f"{context_dump['pipeline_name']} - final result : {final_result}"
+    )
+    import json
+    print("context_dump : " +
+          json.dumps(context_dump, indent=4))
     print(f"DAG SVG written to {svg_fullname}")
 

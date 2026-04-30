@@ -16,11 +16,22 @@ from retrain_pipelines.dag_engine.renderer import \
 # ---- Example: TaskGroup in Parallelism and Merging ----
 
 
+logger = logging.getLogger(__name__)
+# logger = logging.getLogger()
+# logger = logging.getLogger("retrain_pipelines")
+
+
 @task(ui_css=UiCss(background="#ff7b00", color="#ff7b00", border="#ff7b00"))
 def start():
     """Root task: produces a list of numbers."""
+    logger.warning("log warning test")                                    # DEBUG  -  DELETE
+    logger.error("log error test")                                        # DEBUG  -  DELETE
+    logger.critical("log critical test")                                  # DEBUG  -  DELETE
+    import sys ; print("print error test", file=sys.stderr)               # DEBUG  -  DELETE
+    sys.stderr.write("write error test")                                  # DEBUG  -  DELETE
 
     # Do whatever you want
+    import time ; time.sleep(3)                                           # DEBUG  -  DELETE
 
     #################################
     # Return must be an enumerator, #
@@ -28,7 +39,6 @@ def start():
     # to split/distribute handling. #
     #################################
     return [1, 2, 3, 4]
-
 
 @parallel_task(ui_css=UiCss(background="#00ff37"))
 def parallel(payload: TaskPayload):
@@ -45,7 +55,6 @@ def parallel(payload: TaskPayload):
 # ----
 
 
-import inspect
 def add_context_entry(
     task_name: str, rank: List[int], task_id: int, entry: str
 ):
@@ -53,7 +62,6 @@ def add_context_entry(
 
     from inner split-line/taskgroup.
     """
-
     if not ctx.added_entry:
         ctx.added_entry = {}
     if not task_name in ctx.added_entry:
@@ -84,6 +92,7 @@ def snake_head_A1(
     # Access DAG execution-context #
     #      (parameters, etc.)      #
     ################################
+    import inspect
     from datetime import datetime, timezone
     add_context_entry(
         task_name=inspect.currentframe().f_code.co_name,
@@ -107,6 +116,11 @@ def snake_head_A2(payload: TaskPayload) -> List[int]:
     assert payload["parallel"] == payload.get("parallel") == payload
 
     # Do whatever you want
+
+    import time ; start_time = time.time()
+    while time.time() - start_time < 10:
+        print("titi")
+        time.sleep(1)
 
     result = [x * 2 for x in payload]
 
@@ -180,14 +194,16 @@ def end(payload: TaskPayload):
 
 @dag(ui_css=UiCss(background="#ff7b00"))
 def retrain_pipeline():
-    """TaskGroup in parallel line."""
+    """Taskgroup inside a sub-DAG."""
     # Compose the DAG using operator overloading (>>)
     return start >> parallel >> snake_heads_A >> join_snake_heads >> merge >> end
 
 
 if __name__ == "__main__":
     # Render the DAG
-    svg_fullname = os.path.join(os.environ["RP_ARTIFACTS_STORE"], "dag.html")
+    svg_fullname = os.path.realpath(os.path.join(
+        os.path.dirname(os.path.realpath(__file__)), "dag.html"
+    ))
     render_svg(retrain_pipeline, svg_fullname)
 
     # Run the DAG
@@ -197,7 +213,7 @@ if __name__ == "__main__":
         f"{context_dump['pipeline_name']} - final result : {final_result}"
     )
     import json
-    print("context_dump['added_entry'] : " +
-          json.dumps(context_dump['added_entry'], indent=4))
+    print("context_dump : " +
+          json.dumps(context_dump, indent=4))
     print(f"DAG SVG written to {svg_fullname}")
 

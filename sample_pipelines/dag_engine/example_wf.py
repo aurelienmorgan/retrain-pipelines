@@ -20,6 +20,7 @@ def start():
     """Root task: produces a list of numbers."""
 
     # Do whatever you want
+    import time ; time.sleep(3)                             ### DEBUG - DELETE ###
 
     ################################
     # Access DAG execution-context #
@@ -31,7 +32,7 @@ def start():
     from datetime import datetime, timezone
     ctx.added_entry = \
         datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S') + \
-        " UTC - execution-context, task dynamically added entry"
+        " UTC - execution-context, task dynamically-added entry"
     print(f"ctx addon: {ctx.added_entry}")
     ################################
 
@@ -40,7 +41,7 @@ def start():
     # for following parallel task   #
     # to split/distribute handling. #
     #################################
-    return [1, 2, 3, 4]
+    return [1, 2, 3, 4, 5, 6]
 
 
 @parallel_task
@@ -79,13 +80,15 @@ def end(payload: TaskPayload):
     # Since the herein task only has 1 direct parent =>
     assert payload["merge"] == payload.get("merge") == payload
 
-    assert payload == [200, 208]
+    assert payload == [420, 432]
 
     return None
 
 
 @dag(ui_css=UiCss(background="#000", color="#ffd700", border="#ffd700"))
 def retrain_pipeline():
+    """Simple sub-DAGing with context.
+    """
 
     # Declare DAG parameters (will be used in tasks via ctx)
     dummy_param_1 = DagParam(
@@ -104,17 +107,21 @@ def retrain_pipeline():
 if __name__ == "__main__":
     # print(f"to_tasktypes_list : {retrain_pipeline.to_tasktypes_list(serializable=True)}")
     # Render the DAG
-    svg_fullname = os.path.join(os.environ["RP_ARTIFACTS_STORE"], "dag.html")
+    svg_fullname = os.path.realpath(os.path.join(
+        os.path.dirname(os.path.realpath(__file__)), "dag.html"
+    ))
     render_svg(retrain_pipeline, svg_fullname)
 
     print(retrain_pipeline.help()) # help string (parameters definitions and defaults)
 
     # Execute with parameter overrides
     import random
-    print("Final result:", execute(retrain_pipeline, params={
+    final_result, context_dump = execute(retrain_pipeline, params={
         "dummy_param_1": f"{random.randint(1, 10)} - override default for that execution"
-    }))
-
-    print(f"execution {os.path.splitext(os.path.basename(__file__))[0]}[{retrain_pipeline.exec_id}]")
+    })
+    print(
+        f"execution {context_dump['exec_id']} - " +
+        f"{context_dump['pipeline_name']} - final result : {final_result}"
+    )
     print(f"DAG SVG written to {svg_fullname}")
 

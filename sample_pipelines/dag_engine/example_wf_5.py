@@ -17,6 +17,7 @@ from retrain_pipelines.dag_engine.renderer import \
 @task
 def start():
     # Root task
+    import time ; time.sleep(3)                             ### DEBUG - DELETE ###
     return
 
 
@@ -158,16 +159,29 @@ def end(payload: TaskPayload):
 
 @dag(ui_css=UiCss(background="#9b56fc"))
 def retrain_pipeline():
+    """2-levels deep nested taskgroups.
+    """
     # Compose the DAG using operator overloading (>>)
     return start >> inline1 >> snake_heads_A >> join_snake_heads >> inline2 >> end
 
 
 if __name__ == "__main__":
+    # print(f"to_tasktypes_list : {retrain_pipeline.to_tasktypes_list(serializable=True)}")
+
     # Render the DAG
-    svg_fullname = os.path.join(os.environ["RP_ARTIFACTS_STORE"], "dag.html")
+    svg_fullname = os.path.realpath(os.path.join(
+        os.path.dirname(os.path.realpath(__file__)), "dag.html"
+    ))
     render_svg(retrain_pipeline, svg_fullname)
+
     # Run the DAG
-    print("Final result:", execute(retrain_pipeline, dag_params=None))
-    print(f"execution {os.path.splitext(os.path.basename(__file__))[0]}[{retrain_pipeline.exec_id}]")
+    final_result, context_dump = execute(retrain_pipeline, params=None)
+    print(
+        f"execution {context_dump['exec_id']} - " +
+        f"{context_dump['pipeline_name']} - final result : {final_result}"
+    )
+    import json
+    print("context_dump : " +
+          json.dumps(context_dump, indent=4))
     print(f"DAG SVG written to {svg_fullname}")
 
