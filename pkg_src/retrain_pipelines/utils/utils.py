@@ -288,8 +288,10 @@ def _create_requirements_from_conda(
     # pip freeze on the active virtual environment
     # we need to truncate long version-numbering
     # such as "1.13.1.post200" or "0.11.1b20240718"
-    pip_freeze = subprocess.run(["pip", "list", "--format", "freeze"],
-                                capture_output=True, text=True)
+    pip_freeze = subprocess.run(
+        [sys.executable, "-m", "pip", "list", "--format", "freeze"],
+        capture_output=True, text=True
+    )
     pip_freeze_output_lines = pip_freeze.stdout.splitlines()
 
     # fix the package version-numbering issue
@@ -572,6 +574,23 @@ def venv_as_conda(venv_path, conda_env_name):
     """)
     logger.info(install_cmd)
     subprocess.run(install_cmd, shell=True, check=True)
+
+
+@lru_cache
+def in_notebook():
+    """whether or not the kernel is one
+    of a notebook (Jupyter, Kaggle, Colab, etc.)."""
+    try:
+        from IPython import get_ipython
+        _notebook_kernel = (
+            get_ipython() is not None and
+            'IPKernelApp' in get_ipython().config
+        )
+    except:
+        _notebook_kernel = False
+
+    logger.debug(f"in_notebook : {_notebook_kernel}")
+    return _notebook_kernel
 
 
 def grant_read_access(file_path: str):

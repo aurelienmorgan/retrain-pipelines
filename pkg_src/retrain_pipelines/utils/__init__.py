@@ -1,6 +1,4 @@
 
-from .rich_wave import animate_wave
-
 from .utils import strip_ansi_escape_codes, \
                    rgb_to_rgba, hex_to_rgba, \
                    parse_datetime, \
@@ -12,10 +10,13 @@ from .utils import strip_ansi_escape_codes, \
                    is_conda_env, \
                    venv_as_conda, \
                    create_requirements, \
+                   in_notebook, \
                    grant_read_access, \
                    tmp_os_environ, \
                    as_env_var, \
                    get_get_html, \
                    get_get_dataset_readme_content, \
                    get_get_model_readme_content
+
+from .rich_wave import animate_wave
 

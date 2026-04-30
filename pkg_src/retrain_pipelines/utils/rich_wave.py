@@ -1,17 +1,22 @@
+
 import sys
 import time
 import math
 import os
 
-from rich.console import Console
 from rich.text import Text
 from rich.live import Live
 
 from IPython import get_ipython
 from IPython.display import display, clear_output, HTML, update_display
 
+
+from . import in_notebook
+
+
 GOLD_HEX = "#c39c1a"
 MAJENTA_HEX = "#9a2bab"
+
 
 def _wave_cli(text: str, wave_length: int = 6, delay: float = 0.1, loops: int = 2):
     length = len(text)
@@ -136,10 +141,7 @@ def animate_wave(text: str, wave_length: int = 6, delay: float = 0.1, loops: int
         os.getenv('launched_from_magic', None) or
         os.getenv('launched_from_cli', None)
     ):
-
-        in_jupyter = get_ipython() is not None and hasattr(sys, 'ps1')
-
-        if in_jupyter:
+        if in_notebook():
             _wave_notebook(text, wave_length, delay, loops)
         else:
             _wave_cli(text, wave_length, delay, loops)
