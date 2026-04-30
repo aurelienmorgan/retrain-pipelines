@@ -1,5 +1,9 @@
 
 import os
+import sys
+import asyncio
+import logging
+import concurrent.futures
 
 from typing import Optional, List
 from datetime import datetime, timedelta
@@ -7,6 +11,36 @@ from pydantic import BaseModel, Field, PrivateAttr
 
 from .core import Execution
 from ..db.dao import AsyncDAO
+from ...utils import in_notebook
+
+
+logger = logging.getLogger(__name__)
+
+
+def _run_async(coro):
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+
+    if in_notebook():
+        """
+        Jupyter (IPython kernel) already
+        starts and runs an event loop internally.
+        Run the coroutine in a dedicated worker thread
+        with its own fresh event loop
+        so that the kernel's running loop is left untouched:
+            - loop.run_until_complete()
+            - asyncio.run()
+            - other loop management calls
+        """
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=1
+        ) as pool:
+            future = pool.submit(asyncio.run, coro)
+            return future.result()
+
+    return loop.run_until_complete(coro)
 
 
 class ExecutionsIterator(BaseModel):
@@ -41,7 +75,7 @@ class ExecutionsIterator(BaseModel):
     class Config:
         arbitrary_types_allowed = True
 
-    async def previous(self) -> Optional[Execution]:
+    async def _previous(self) -> Optional[Execution]:
         """Get the previous (older) execution in the sequence.
 
         Results:
@@ -98,6 +132,23 @@ class ExecutionsIterator(BaseModel):
         self._index += 1
         return execution
 
+    def previous(self) -> Optional[Execution]:
+        """Get the previous (older) execution in the sequence.
+
+        Results:
+            - (Execution):
+                previous Execution object in line,
+                none if no more executions exist
+
+        Note:
+            Timestamps are stored at millisecond precision.
+            We assume no two executions of the same pipeline
+            start within the same millisecond
+            (at page boundaries).
+        """
+        logger.debug(f"{self}  - previous")
+        return _run_async(self._previous())
+
     def length(self) -> int:
         """Get total count of executions matching the criteria.
 
@@ -107,11 +158,11 @@ class ExecutionsIterator(BaseModel):
             - (int):
                 total number of matching executions.
         """
-        import asyncio
         dao = AsyncDAO(
             db_url=os.environ["RP_METADATASTORE_ASYNC_URL"]
         )
-        return asyncio.run(
+        logger.debug(f"{self}  - length")
+        return _run_async(
             dao.get_executions_count(
                 pipeline_name=self.exec_name,
                 execs_status="success" if self.success_only else None
@@ -123,7 +174,7 @@ class ExecutionsIterator(BaseModel):
         return self
 
     async def __anext__(self):
-        execution = await self.previous()
+        execution = await self._previous()
         if execution is None:
             raise StopAsyncIteration
         return execution
@@ -133,8 +184,7 @@ class ExecutionsIterator(BaseModel):
         return self
 
     def __next__(self):
-        import asyncio
-        execution = asyncio.run(self.previous())
+        execution = self.previous()
         if execution is None:
             raise StopIteration
         return execution
