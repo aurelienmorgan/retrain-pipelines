@@ -41,6 +41,8 @@ elif "mf_lightgbm_regress_mlserver" == retrain_pipeline_type:
                 preprocess_data_fct
     from .mf_lightgbm_regress_mlserver.dask_trainer import \
                 dask_regressor_fit
+    from .mf_lightgbm_regress_mlserver.dask_cleanup import \
+                nuke_dask_cpp
 
     from .mf_lightgbm_regress_mlserver import \
                 mlserver
