@@ -1,11 +1,24 @@
 
 import sys
 import time
+import logging
 import subprocess
+
 from datetime import datetime
 
-import docker
-from docker.errors import DockerException
+
+logger = logging.getLogger(__name__)
+
+
+try:
+    import docker
+    from docker.errors import DockerException
+except Exception as ex:  # docker python SDK not installed
+    logger.error(ex)
+    docker = None
+
+    class DockerException(Exception):
+        pass
 
 
 def env_has_docker() -> bool:
@@ -18,10 +31,17 @@ def env_has_docker() -> bool:
     `DOCKER_HOST` for this.
     """
 
+    if docker is None:
+        return False
+
     try:
-        docker.from_env()
+        client = docker.from_env()
+        client.ping()
+        client.close()
     except DockerException as dEx:
-        print(dEx)
+        logger.warning(dEx)
+        return False
+    except Exception:
         return False
     return True
 
@@ -30,15 +50,18 @@ def print_container_log_tail(
     container_name: str,
     tail_length: int
 ):
+    if docker is None:
+        raise RuntimeError("docker SDK not installed")
+
     container = docker.from_env().containers.list(
         all=True, filters={"name": container_name})[0]
-    print('##### local docker container log tail BEGIN :',
+    logger.info("##### local docker container log tail BEGIN :",
+                file=sys.stderr)
+    logger.info(container.logs(timestamps=True, tail=tail_length
+                              ).decode('utf-8'),
           file=sys.stderr)
-    print(container.logs(timestamps=True, tail=tail_length
-                        ).decode('utf-8'),
-          file=sys.stderr)
-    print('##### local docker container log tail END.',
-          file=sys.stderr)
+    logger.info("##### local docker container log tail END.",
+                file=sys.stderr)
 
 
 def build_and_run_docker(
@@ -92,12 +115,15 @@ def build_and_run_docker(
             success/failure
     """
 
+    if docker is None:
+        return False
+
     docker_client = docker.from_env()
     full_image_name = f"{image_name}:{image_tag}"
 
     # Build the Docker image
     timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-    print(f"{timestamp} Building Docker image...")
+    logger.info(f"{timestamp} Building Docker image...")
     build_success = True
     try:
         build_response = docker_client.api.build(
@@ -114,33 +140,29 @@ def build_and_run_docker(
         for chunk in build_response:
             timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
             if 'stream' in chunk:
-                print(f"{timestamp} {chunk['stream'].strip()}",
-                      flush=True)
+                logger.info(f"{timestamp} {chunk['stream'].strip()}")
             elif 'error' in chunk:
                 build_success = False
-                print(f"{timestamp} Error: {chunk['error']}",
-                      flush=True)
+                logger.info(f"{timestamp} Error: {chunk['error']}")
             elif 'aux' in chunk:
-                print(f"{timestamp} Auxiliary: {chunk['aux']}",
-                      flush=True)
+                logger.info(f"{timestamp} Auxiliary: {chunk['aux']}")
 
     except docker.errors.BuildError as e:
         build_success = False
-        print(f"BuildError: {e}", flush=True)
+        logger.warning(f"BuildError: {e}")
     except docker.errors.APIError as e:
         build_success = False
-        print(f"APIError: {e}", flush=True)
+        logger.warning(f"APIError: {e}")
     except Exception as e:
         build_success = False
-        print(f"Unexpected error: {e}", flush=True)
+        logger.warning(f"Unexpected error: {e}")
 
     if not build_success:
             return False
 
     # Run the Docker container
     timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-    print(f"{timestamp} Running Docker container...",
-          flush=True)
+    logger.info(f"{timestamp} Running Docker container...")
     try:
         container = docker_client.containers.run(
             full_image_name,
@@ -156,7 +178,7 @@ def build_and_run_docker(
             # gpus='all'
         )
     except Exception as ex:
-        print(ex, flush=True)
+        logger.warning(ex)
         return False
 
     # await
@@ -167,10 +189,10 @@ def build_and_run_docker(
         container = docker_client.containers.list(
             all=True, filters={"name": image_name})[0]
         done_created = "created" != container.status.lower()
-    print(f"{timestamp} Docker container {image_name}" +
-          " started successfully " +
-          f"({container.id[:12]}, {container.status}).",
-          flush=True)
+    logger.info(
+        f"{timestamp} Docker container {image_name}" +
+        " started successfully " +
+        f"({container.id[:12]}, {container.status}).")
 
     return True
 
@@ -192,16 +214,18 @@ def cleanup_docker(
             Ignored if "image_name" is None.
     """
 
+    if docker is None:
+        return
+
     docker_client = docker.from_env()
 
     container = docker_client.containers.list(
         all=True, filters={"name": container_name})[0]
     if container is None:
-        print(f"no {container_name} container found.",
-              flush=True)
+        logger.info(f"no {container_name} container found.")
     else:
         # Stop the Docker container
-        print(f"Stopping Docker container {container.name}...")
+        logger.info(f"Stopping Docker container {container.name}...")
         container.stop()
         stopped = False
         while not stopped:
@@ -211,26 +235,24 @@ def cleanup_docker(
                 all=True, filters={"name": container_name})[0]
             stopped = "running" != container.status.lower()
 
-        print(f"Docker container {container.name} stopped.")
-        print(container, flush=True)
+        logger.info(f"Docker container {container.name} stopped.")
+        logger.debug(container)
 
         try:
             # shall be removed if docker_client.containers.run
             # "remove" was set to True.
             container.remove(force=True)
-            print(f"Docker container {container.name} removed.",
-                  flush=True)
+            logger.info(f"Docker container {container.name} removed.")
         except Exception:
             pass
 
     # Remove the Docker image
     if image_name is not None:
-        print(f"Removing Docker image {container_name}...",
-              flush=True)
+        logger.info(f"Removing Docker image {container_name}...")
         subprocess.run(["docker", "rmi",
                         "--no-prune" if no_pruning else "",
                         image_name],
                        check=True)
-        print(f"Docker image {container_name} removed.",
-              flush=True)
+        logger.info(f"Docker image {container_name} removed.")
+
 
