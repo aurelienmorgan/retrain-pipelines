@@ -7,30 +7,29 @@ import json
 
 import numpy as np
 import polars as pl
+
 from tqdm import tqdm
 from collections import Counter
+from typing import Union, Any, Literal
 
 import torch
-
-import datasets
-import transformers
 
 import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 
 
 def infer_validation(
-    tokenizer: transformers.PreTrainedTokenizer |
-               transformers.PreTrainedTokenizerFast,
-    model: transformers.PreTrainedModel,
-    validation_data: datasets.Dataset,
+    tokenizer: Union["transformers.PreTrainedTokenizer",
+                     "transformers.PreTrainedTokenizerFast"],
+    model: "transformers.PreTrainedModel",
+    validation_data: "datasets.Dataset",
     prompt_template: str,
     batch_size: int = 32,
     queries_attr_name: str = "query",
     answers_attr_name: str = "answers",
     max_new_tokens: int = 400,
-    device: str = "cuda"
-) -> list:
+    device: Literal["cuda", "cpu"] = "cuda"
+) -> list[dict[str, Any]]:
     """
     Generates inference on the validation dataset.
     Also provides input (incl. prompt_template)
@@ -44,7 +43,7 @@ def infer_validation(
         - prompt_template (str):
         - batch_size (int):
         - queries_attr_name (str):
-        - answers_attr_name (int):
+        - answers_attr_name (str):
         - max_new_tokens (int):
             maximum number of tokens the model
             can generate, excluding the input prompt.
@@ -67,6 +66,8 @@ def infer_validation(
                 Inferred list of tool-calls
             new_tokens_count
     """
+    import datasets
+    import transformers
 
     torch.cuda.empty_cache()
     gc.collect()
@@ -540,7 +541,7 @@ def _plot_bars(
 
 def plot_validation_completions(
     eval_metrics_df: pl.LazyFrame,
-    engine: str = "gpu"
+    engine: Literal["gpu", "cpu"] = "gpu"
 ) -> Figure:
     """
     100% stacked bar plots of correct/incorrect
