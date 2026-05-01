@@ -7,8 +7,6 @@ import pandas as pd
 from io import BytesIO
 from matplotlib.figure import Figure
 
-from metaflow import FlowSpec
-
 
 def apply_args_color_format(
   python_command_str: str

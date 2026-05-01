@@ -201,7 +201,7 @@ def get_html(
         model_version_not_blessed="" if model_version_blessed else "NOT ",
 
         # if model version not blessed => #
-        current_blessed_run_id=(
+        current_blessed_run_id=(                                    ## LEGACY  -  RENAME VARIABLE ##
             None if model_version_blessed
             else current_blessed_exec.id),
         current_blessed_run_finished=(

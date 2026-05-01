@@ -2,18 +2,26 @@
 import os
 import copy
 import pytz
+import logging
+
 import importlib.util
+
 from textwrap import dedent, indent
 
 import pandas as pd
 
-from metaflow import cards
+from metaflow import cards                                              ## LEGACY  -  DELETE ##
 
 from jinja2 import Environment, FileSystemLoader
 
 from retrain_pipelines import __version__
 from .helpers import apply_args_color_format, highlight_min_max_cells, \
                      fig_to_base64, parallel_coord_plot
+from ...dag_engine.sdk.core import Execution
+
+
+logger = logging.getLogger(__name__)
+
 
 def get_html(
     params: list
@@ -27,23 +35,34 @@ def get_html(
     # model version blessing #
     ##########################
     model_version_blessed = params['model_version_blessed']
-    previous_blessed_run = params['current_blessed_run']
-    if previous_blessed_run is not None:
-        previous_blessed_model_card_task = [
-            step.task for step in previous_blessed_run.steps()
-            if step.id == 'pipeline_card'][0]
-        previous_blessed_custom_card = \
-            cards.get_cards(previous_blessed_model_card_task,
-                            id='custom', type='html')[0]
+    current_blessed_exec = params['current_blessed_run']            ## LEGACY  -  RENAME PARAM ##
+    if current_blessed_exec is not None:
+        # previous blessed model version was trained on
+        # the same backend DB instance
+        logger.debug(f"current_blessed_exec : {current_blessed_exec}")
+        if not isinstance(current_blessed_exec, Execution):
+            ## LEGACY  -  DELETE start ##
+            previous_blessed_model_card_task = [
+                step.task for step in current_blessed_exec.steps()
+                if step.id == 'pipeline_card'][0]
+            previous_blessed_custom_card = \
+                cards.get_cards(previous_blessed_model_card_task,
+                                id='custom', type='html')[0]
+            previsous_blessed_card_href = '/flows/' + \
+                previous_blessed_custom_card.path[
+                    :previous_blessed_custom_card.path.rfind("/")+1] + \
+                previous_blessed_custom_card.hash
 
-        previsous_blessed_card_href = '/flows/' + \
-            previous_blessed_custom_card.path[
-                :previous_blessed_custom_card.path.rfind("/")+1] + \
-            previous_blessed_custom_card.hash
-        previsous_blessed_card_url = \
-            previous_blessed_model_card_task.pathspec + \
-            '?direction=asc&group=true&order=startTime&section=' + \
-            previous_blessed_custom_card.hash
+            previsous_blessed_card_url = \
+                previous_blessed_model_card_task.pathspec + \
+                '?direction=asc&group=true&order=startTime&section=' + \
+                previous_blessed_custom_card.hash
+            ## LEGACY  -  DELETE end ##
+        else:
+            previsous_blessed_card_href = \
+                f"/execution?id={current_blessed_exec.id}"
+            previsous_blessed_card_url = ""                         ## LEGACY  -  NOT USED ANYMORE ##
+                                                                    ## REMOVE SECTION FROM HTML TEMPLATE ##
     ##########################
 
     LocalServeReadinessEnum = params['LocalServeReadinessEnum']
@@ -131,14 +150,14 @@ def get_html(
             else params['current_blessed_model_commit_hash']),
         ## if ML framework instance is the same
         ## between non-blessed and previous-blessed
-        previous_blessed_run_id=(
-            None if previous_blessed_run is None
-            else previous_blessed_run.id),
+        previous_blessed_run_id=(                                   ## LEGACY  -  RENAME VARIABLE ##
+            None if current_blessed_exec is None
+            else current_blessed_exec.id),
         previsous_blessed_card_href=(
-            None if previous_blessed_run is None
+            None if current_blessed_exec is None
             else previsous_blessed_card_href),
-        previsous_blessed_card_url=(
-            None if previous_blessed_run is None
+        previsous_blessed_card_url =(
+            None if current_blessed_exec is None
             else previsous_blessed_card_url),
         ###################################
 
@@ -225,3 +244,4 @@ def get_html(
         dag_svg=indent(params['dag_svg'], ' '*40),
         __version__=__version__
     )
+

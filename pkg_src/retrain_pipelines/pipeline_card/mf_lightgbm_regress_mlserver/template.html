@@ -531,27 +531,94 @@
                 var link = document.getElementById("blessed_exec_link");
                 if (window.self !== window.top) {
                     // card displayed as an iframe
-                    // [get parent domain & port without hitting CORS]
-                    var referrerUrl = new URL(document.referrer);
-                    var parentDomain = referrerUrl.hostname;
-                    var parentPort = referrerUrl.port;
-                    var newUrl = `http://${parentDomain}${parentPort ? ':' + parentPort : ''}/{{previsous_blessed_card_url}}`;
-                    link.href = newUrl;
+                    // might be that it's displayed as a page
+                    // in an Hugging Face Space
+                    // (they all are turned into iFrames
+                    //  with main page "header" HF Space menu bar)
+
+                    function getFrameContext() {
+                        const isIframe = window.self !== window.top;
+                        if (!isIframe) {
+                            return {
+                                isIframe: false,
+                                selfUrl: window.self.location.href,
+                                parentUrl: null,
+                                parentOrigin: null
+                            };
+                        }
+                        // window.self.location is always accessible (it's our own frame)
+                        const selfUrl = window.self.location.href;
+                        // window.top.location.href throws cross-origin, but origin alone may work
+                        let parentUrl = null;
+                        let parentOrigin = null;
+                        try {
+                            // This only works if parent is same origin
+                            parentUrl = window.top.location.href;
+                            parentOrigin = window.top.location.origin;
+                        } catch (e) {
+                            // Cross-origin parent: we can still get the origin via document.referrer
+                            // or the ancestorOrigins API.
+                            // not always set, but often is =>
+                            parentUrl = document.referrer || null;
+                            // Chrome/Edge/Safari, not Firefox =>
+                            parentOrigin = window.location.ancestorOrigins?.[0] ?? null;
+                        }
+                        return { isIframe: true, selfUrl, parentUrl, parentOrigin };
+                    }
+                    console.log(getFrameContext());
+                    function isHuggingFaceSpaceHostedWebConsole() {
+                        const frameContext = getFrameContext();
+
+                        if (
+                            !frameContext.isIframe ||
+                            frameContext.parentOrigin !== "https://huggingface.co"
+                        ) {
+                            return false;
+                        }
+
+                        const selfParentDir =
+                            frameContext.selfUrl.substring(0, frameContext.selfUrl.lastIndexOf("/"));
+                        const heartbeatUrl = `${selfParentDir}/web_server/heartbeat`;
+                        console.log("heartbeatUrl", heartbeatUrl);
+
+                        const xhr = new XMLHttpRequest();
+                        xhr.open("GET", heartbeatUrl, false); // false = synchronous
+                        try {
+                            xhr.send();
+                            return xhr.status === 200;
+                        } catch {
+                            return false;
+                        }
+                    }
+                    if (!isHuggingFaceSpaceHostedWebConsole()) {
+                        // card displayed as an iframe
+                        // [get parent domain & port without hitting CORS]
+                        var referrerUrl = new URL(document.referrer);
+                        var parentDomain = referrerUrl.hostname;
+                        var parentPort = referrerUrl.port;
+                        var newUrl = `http://${parentDomain}${parentPort ? ':' + parentPort : ''}/{{previsous_blessed_card_url}}`;
+                        link.href = newUrl;
+                    } else {
+                        console.log("isHuggingFaceSpaceHostedWebConsole",
+                                    isHuggingFaceSpaceHostedWebConsole());
+                        // card is hosted by "Hugging Face Space"-hosted WebConsole instance
+                        // => do nothing
+                    }
                 } else {
                     // card is not displayed as an iframe
                     var isLocalFile = window.location.protocol === "file:"
-                    // console.log(isLocalFile);
+                    console.log("isLocalFile", isLocalFile);
                     if (isLocalFile) {
                         // card is prob' displayed
                         // via a python call to
                         // "retrain_pipelines.inspectors.browse_local_pipeline_card"
-                        var currentDir = window.location.pathname.substring(
+                        var previousDir = window.location.pathname.substring(
                                 0, window.location.pathname.lastIndexOf('/'));
-                        console.log(currentDir)
+                        console.log(previousDir)
                         var lastSegment = link.href.substring(
                                 link.href.lastIndexOf('/') + 1);
-                        var newHref = `file:///${currentDir}/_html-custom-${lastSegment}.html`;
-                        console.log(newHref);
+                        var newHref = `file:///${previousDir}/_html-custom-${lastSegment}.html`;
+                        console.log(newHref)
                         link.href = newHref;
                     } else {
                         // card is prob' hosted by ui-backend

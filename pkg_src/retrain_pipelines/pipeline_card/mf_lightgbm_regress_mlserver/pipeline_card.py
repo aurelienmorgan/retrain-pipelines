@@ -9,7 +9,11 @@ import pandas as pd
 
 import importlib                                                    ## LEGACY  -  DELETE ##
 if importlib.util.find_spec("metaflow") is not None:                ## LEGACY  -  DELETE ##
-    from metaflow import cards                                      ## LEGACY  -  DELETE ##
+    import warnings                                                 ## LEGACY  -  DELETE ##
+    with warnings.catch_warnings():                                 ## LEGACY  -  DELETE ##
+        warnings.filterwarnings(                                    ## LEGACY  -  DELETE ##
+            "ignore", message="pkg_resources is deprecated")        ## LEGACY  -  DELETE ##
+        from metaflow import cards                                  ## LEGACY  -  DELETE ##
 
 from jinja2 import Environment, FileSystemLoader
 
@@ -170,7 +174,7 @@ def get_html(
         model_version_not_blessed="" if model_version_blessed else "NOT ",
 
         # if model version not blessed => #
-        current_blessed_run_id=(
+        current_blessed_run_id=(                                    ## LEGACY  -  RENAME VARIABLE ##
             None if model_version_blessed
             else current_blessed_exec.id),
         current_blessed_run_finished=(
