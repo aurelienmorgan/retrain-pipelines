@@ -138,6 +138,7 @@ class GroupedRows:
     def __init__(
         self,
         id: str,
+        uuid: str,
         name: str,
         start_timestamp: Optional[datetime],
         end_timestamp: Optional[datetime],
@@ -147,6 +148,7 @@ class GroupedRows:
         style: Optional[dict]
     ):
         self.id = id
+        self.uuid = uuid
         self.name = name
         self.start_timestamp = start_timestamp
         self.end_timestamp = end_timestamp
@@ -196,7 +198,15 @@ class GroupedRows:
             "{" +
                 f"id: {recursive_js(self.id)}, " +
                 "cells: {" +
-                    f"name: {{ value: {recursive_js(self.name)}, attributes: {{}} }}, " +
+                    "name: { " +
+                        f"value: {recursive_js(self.name)}, " +
+                        "attributes: {" +
+                            (
+                                f"uuid: {recursive_js(self.uuid)} "
+                                if self.uuid else ""
+                            ) +
+                        "} " +
+                    "}, " +
                     "timeline: {" +
                         "value: null, " +
                         "attributes: {" +
@@ -224,6 +234,7 @@ class GroupedRows:
         return (
             f"{self.__class__.__name__}("
             f"id={self.id!r}, "
+            f"uuid={self.uuid!r}, "
             f"name={self.name!r}, "
             f"children={len(self.children)})"
         )
@@ -239,7 +250,7 @@ def _organize_tasks(
     and parallel sub-DAG lines).
 
     e.g.:
-    ```python
+    ```
     tasks_list = [
         Task("task1", ""),
         Task("task2", "tg1"),
@@ -535,11 +546,13 @@ def task_row(
 
     result = GroupedRows(
         id=task_ext.id,
+        uuid=str(task_ext.tasktype_uuid),
         name=task_ext.name,
         start_timestamp=task_ext.start_timestamp,
         end_timestamp=task_ext.end_timestamp,
-        callbacks=None,
-        extraClasses=None if not task_ext.failed else ["failed"],
+        callbacks=["showDetailsModal(this);"],
+        extraClasses=["task"] + \
+                     ([] if not task_ext.failed else ["failed"]),
         children=None,
         style=row_style
     )
@@ -576,6 +589,7 @@ def parallel_grouped_rows(
         parallel_lines_list.append(
             GroupedRows(
                 id=f"{parralel_task_ext.name}{parallel_line_rank_suffix}",
+                uuid=str(parralel_task_ext.tasktype_uuid),
                 name=f"{parralel_task_ext.name}{parallel_line_rank_suffix}",
                 start_timestamp=None,
                 end_timestamp=None,
@@ -599,6 +613,7 @@ def parallel_grouped_rows(
             f".[{','.join(map(str, parralel_task_ext.rank[:-1]))}]"
             if len(parralel_task_ext.rank) > 1 else ""
         ),
+        uuid=None,
         name="Distributed sub-pipeline",
         start_timestamp=None,
         end_timestamp=None,
@@ -633,6 +648,7 @@ def taskgroup_grouped_rows(
             f".[{','.join(map(str, rank))}]"
             if rank else ""
         ),
+        uuid=str(taskgroup.uuid),
         name=taskgroup.name,
         start_timestamp=None,
         end_timestamp=None,

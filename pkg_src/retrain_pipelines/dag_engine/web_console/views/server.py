@@ -704,7 +704,8 @@ def register(app, rt, prefix=""):
                     async function connectWebSocket() {
                         let ws;
 
-                        const ws_url = `ws://${location.host}/{prefix}web_server/stream_logs`;
+                        const ws_scheme = location.protocol === 'https:' ? 'wss' : 'ws';
+                        const ws_url = `${ws_scheme}://${location.host}/{prefix}web_server/stream_logs`;
                         // start and allow for restart on connection lost
                         while (true) {
                             try {
@@ -830,8 +831,8 @@ def register(app, rt, prefix=""):
 
                     // Note that 'loadLogs' is first triggered
                     // not straight at page load
-                    // but once the log-streaming websocket get connected
-                    // so the so loadLogs event is streamed
+                    // but once the log-streaming websocket gets connected
+                    // so the loadLogs event is streamed
 
                     // Assign to selection list change event
                     document.addEventListener('DOMContentLoaded', function() {

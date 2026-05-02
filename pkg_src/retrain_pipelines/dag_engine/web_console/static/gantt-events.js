@@ -513,6 +513,8 @@ function addSummaryTimestamps(ganttTimelineObj, groupHeaderRow) {
             const tr = headerTimelineCell.closest('tr');
             tr.classList.add("failed");
         }
+    } else {
+        delete headerTimelineCell.dataset.endTimestamp;
     }
 }
 
@@ -584,7 +586,7 @@ function ganttInsert(ganttTimelineObjName, payload, interBarsSpacing) {
             cells: {
                 name: {
                     value: payload.name,
-                    attributes: {}
+                    attributes: {"uuid": payload.tasktype_uuid}
                 },
                 timeline: {
                     value: null,
@@ -593,6 +595,8 @@ function ganttInsert(ganttTimelineObjName, payload, interBarsSpacing) {
                     }
                 }
             },
+            callbacks: [`showDetailsModal(this);`],
+            extraClasses: ["task"],
             style: payload.ui_css
         }
     ]
@@ -631,9 +635,37 @@ function ganttInsert(ganttTimelineObjName, payload, interBarsSpacing) {
                     groupRows[i].classList.contains("group-header") ?
                     groupRows[i].nextElementSibling.cells[ganttTimelineObj.timelineColumnIndex] :
                     groupRows[i].cells[ganttTimelineObj.timelineColumnIndex];
+                const cellStartTs = Number(timelineCell.dataset.startTimestamp);
 
-                if (Number(timelineCell.dataset.startTimestamp) > payloadStartTimestamp) {
+                if (cellStartTs > payloadStartTimestamp) {
                     group_index = i;
+                    break;
+                } else if (cellStartTs === payloadStartTimestamp) {
+                    // Move forward to find extent of equal timestamp entries
+                    let j = i;
+                    while (j < groupRows.length) {
+                        const nextCell = groupRows[j].classList.contains("group-header")
+                            ? groupRows[j].nextElementSibling.cells[ganttTimelineObj.timelineColumnIndex]
+                            : groupRows[j].cells[ganttTimelineObj.timelineColumnIndex];
+                        if (Number(nextCell.dataset.startTimestamp) === payloadStartTimestamp) {
+                            j++;
+                        } else {
+                            break;
+                        }
+                    }
+                    // Insert payload by comparing IDs
+                    // within block of items with equal timestamp
+                    const payloadId = Number(payload.id);
+                    group_index = i; // default to start of block
+                    for (; group_index < j; group_index++) {
+                        const cell = groupRows[group_index].classList.contains("group-header")
+                            ? groupRows[group_index].nextElementSibling.cells[ganttTimelineObj.timelineColumnIndex]
+                            : groupRows[group_index].cells[ganttTimelineObj.timelineColumnIndex];
+                        const cellId = Number(cell.dataset.id);
+                        if (payloadId < cellId) break;
+                    }
+                    // console.log("taskgroup", payload.name, "group_index -",
+                    //             group_index, "groupRows", groupRows);
                     break;
                 }
             }
@@ -654,7 +686,9 @@ function ganttInsert(ganttTimelineObjName, payload, interBarsSpacing) {
                             attributes: {}
                         }
                     },
-                    callbacks: ["toggleHeaderTimeline('execGanttTimelineObj', this);"],
+                    callbacks: [
+                        "toggleHeaderTimeline('execGanttTimelineObj', this);"
+                    ],
                     extraClasses: ["taskgroup"],
                     children: [payloadItem],
                     style: taskgroup.ui_css
@@ -733,10 +767,10 @@ function ganttInsert(ganttTimelineObjName, payload, interBarsSpacing) {
                 // case "append split-line to distributed sub-DAG"
                 group_header_row_id = subDagGroupHeaderRowId;
                 // determine insert index
-                const existingSplitLinesArr =
-                    [...ganttTimelineObj.table.querySelectorAll(
-                        `tr.group-header.parallel-line[data-path^="${subDagGroupHeaderRow.dataset.path}."]`
-                    )];
+                const prefix = subDagGroupHeaderRow.dataset.path + ".";
+                  const existingSplitLinesArr = [...ganttTimelineObj.table.querySelectorAll(
+                          `tr.group-header.parallel-line[data-path^="${prefix}"]`
+                      )].filter(el => !el.dataset.path.slice(prefix.length).includes('.'));
 
                 for (let i = 0; i < existingSplitLinesArr.length; i++) {
                     const groupRow = existingSplitLinesArr[i];
@@ -744,9 +778,37 @@ function ganttInsert(ganttTimelineObjName, payload, interBarsSpacing) {
                     const parallelTaskRow = groupRow.nextElementSibling;
                     const timelineCell =
                         parallelTaskRow.cells[ganttTimelineObj.timelineColumnIndex];
+                    const cellStartTs = Number(timelineCell.dataset.startTimestamp);
 
-                    if (Number(timelineCell.dataset.startTimestamp) > payloadStartTimestamp) {
+                    if (cellStartTs > payloadStartTimestamp) {
                         group_index = i;
+                        break;
+                    } else if (cellStartTs === payloadStartTimestamp) {
+                        // Move forward to find extent of equal timestamp entries
+                        let j = i;
+                        while (j < existingSplitLinesArr.length) {
+                            const nextCell = existingSplitLinesArr[j].classList.contains("group-header")
+                                ? existingSplitLinesArr[j].nextElementSibling.cells[ganttTimelineObj.timelineColumnIndex]
+                                : existingSplitLinesArr[j].cells[ganttTimelineObj.timelineColumnIndex];
+                            if (Number(nextCell.dataset.startTimestamp) === payloadStartTimestamp) {
+                                j++;
+                            } else {
+                                break;
+                            }
+                        }
+                        // Insert payload by comparing IDs
+                        // within block of items with equal timestamp
+                        const payloadId = Number(payload.id);
+                        group_index = i; // default to start of block
+                        for (; group_index < j; group_index++) {
+                            const cell = existingSplitLinesArr[group_index].classList.contains("group-header")
+                                ? existingSplitLinesArr[group_index].nextElementSibling.cells[ganttTimelineObj.timelineColumnIndex]
+                                : existingSplitLinesArr[group_index].cells[ganttTimelineObj.timelineColumnIndex];
+                            const cellId = Number(cell.dataset.id);
+                            if (payloadId < cellId) break;
+                        }
+                        // console.log("taskgroup", payload.name, "group_index -",
+                        //             group_index, "existingSplitLinesArr", existingSplitLinesArr);
                         break;
                     }
                 }
@@ -835,12 +897,33 @@ function ganttInsert(ganttTimelineObjName, payload, interBarsSpacing) {
     );
     overrideLabels(ganttTimelineObj, rowsToStyle);
 
+    // update summary on potential (deep) collapsed parent groups
+    if (payload.rank)
+        updateSummaryTimestamps(ganttTimelineObjName, payload.id)
+
     ganttTimelineObj.refresh();
 
     /* update label-column length (table-layout: fixed) */
     const maxLabelLength = getLongestFirstColumnWidth(ganttTimelineObj.table);
     const firstCol = ganttTimelineObj.table.querySelector('colgroup col:first-child');
     firstCol.style.width = maxLabelLength + "px";
+}
+
+function updateSummaryTimestamps(ganttTimelineObjName, childRowId) {
+    const ganttTimelineObj = getGlobalObjByName(ganttTimelineObjName);
+
+    const child_path = ganttTimelineObj.table.querySelector(
+        `tr[data-id="${childRowId}"]`).dataset.path;
+
+    const parts = child_path.split(".");
+
+    for (let i = parts.length - 2 ; i >= 0 ; i--) {
+        const parentGroupRow = ganttTimelineObj.table.querySelector(
+            `tr.group-header[data-path="${parts.slice(0, i + 1).join(".")}"]`);
+        if (parentGroupRow.classList.contains("collapsed")) {
+            toggleHeaderTimeline(ganttTimelineObjName, parentGroupRow)
+        }
+    }
 }
 
 function removeBgEvenOddOverlay(rows) {
@@ -857,6 +940,7 @@ function removeBgEvenOddOverlay(rows) {
 function ganttUpdate(ganttTimelineObjName, payload, interBarsSpacing) {
     /* *
     * for tasks end-timestamp propagation.
+    * fired by e.g. 'taskEnded' event listener
     ** */
     const ganttTimelineObj = getGlobalObjByName(ganttTimelineObjName);
 
@@ -890,6 +974,10 @@ function ganttUpdate(ganttTimelineObjName, payload, interBarsSpacing) {
             "gantt-timeline-bar")[0];
         bar.classList.add("failed");
     }
+
+    // update summary on potential (deep) collapsed parent groups
+    if (payload.rank)
+        updateSummaryTimestamps(ganttTimelineObjName, payload.id)
 
     ganttTimelineObj.refresh();
 }

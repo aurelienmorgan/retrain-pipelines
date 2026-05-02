@@ -25,8 +25,70 @@ exec_end_subscribers = []
 new_task_subscribers = []
 task_end_subscribers = []
 
+task_trace_subscribers = []
+
 
 uvicorn_logger = logging.getLogger("uvicorn.access")
+
+
+###### clean shutdown on hard thread kill ######################################
+
+# Sentinel pushed into every subscriber queue on server shutdown,
+# so each generator exits cleanly and its finally-block fires.
+_SHUTDOWN = object()
+
+# The asyncio event loop the server runs on.
+# Set by the first generator that starts; cleared on reset.
+_server_loop = None
+
+
+def notify_server_shutdown():
+    """Push the shutdown sentinel into every active subscriber queue.
+
+    Called from the main (notebook) thread before the server thread
+    is killed, giving generators time to exit and run their finally-blocks
+    (which remove them from the subscriber lists).
+    """
+    global _server_loop
+    if not (_server_loop is None or _server_loop.is_closed()):
+        for queue, _ in (
+            list(new_exec_subscribers) +
+            list(exec_end_subscribers) +
+            list(new_task_subscribers) +
+            list(task_end_subscribers) +
+            list(task_trace_subscribers)
+        ):
+            try:
+                _server_loop.call_soon_threadsafe(
+                    queue.put_nowait, _SHUTDOWN)
+            except RuntimeError:
+                pass
+    else:
+        # No live loop — just wipe the lists directly as a safety net.
+        pass
+    new_exec_subscribers.clear()
+    exec_end_subscribers.clear()
+    new_task_subscribers.clear()
+    task_end_subscribers.clear()
+    task_trace_subscribers.clear()
+
+
+def reset_for_restart():
+    """Wipe any stale subscriber state before a new server start.
+
+    Safety net for the case where notify_server_shutdown() didn't manage
+    to drain everything (e.g. hard kernel restart).
+    """
+    global _server_loop
+    _server_loop = None
+    new_exec_subscribers.clear()
+    exec_end_subscribers.clear()
+    new_task_subscribers.clear()
+    task_end_subscribers.clear()
+    task_trace_subscribers.clear()
+
+
+################################################################################
 
 
 async def execution_number(
@@ -113,12 +175,21 @@ async def augment_new_task(task_ext_dict: dict) -> dict:
 
 
 async def multiplexed_event_generator(client_info: ClientInfo):
+    global new_exec_subscribers, exec_end_subscribers, \
+           new_task_subscribers, task_end_subscribers, \
+           _server_loop
+
+    if _server_loop is None:
+        _server_loop = asyncio.get_event_loop()
+
     queues = {
         "newExecution": asyncio.Queue(),
         "executionEnded": asyncio.Queue(),
 
         "newTask": asyncio.Queue(),
-        "taskEnded": asyncio.Queue()
+        "taskEnded": asyncio.Queue(),
+
+        "taskTrace": asyncio.Queue()
     }
 
     new_exec_subscribers.append((queues["newExecution"], client_info))
@@ -127,7 +198,10 @@ async def multiplexed_event_generator(client_info: ClientInfo):
 
     new_task_subscribers.append((queues["newTask"], client_info))
     task_end_subscribers.append((queues["taskEnded"], client_info))
-    print(f"task subscribers [{len(new_task_subscribers)}] : {task_end_subscribers}")
+    print(f"task subscribers [{len(task_end_subscribers)}] : {task_end_subscribers}")
+
+    task_trace_subscribers.append((queues["taskTrace"], client_info))
+    print(f"taskt trace subscribers [{len(task_trace_subscribers)}] : {task_trace_subscribers}")
 
     try:
         # Initial get asyncio tasks
@@ -143,8 +217,8 @@ async def multiplexed_event_generator(client_info: ClientInfo):
                 # Identify which asyncio queue/task finished
                 key = next(k for k, v in get_tasks.items() if v == finished)
 
-                execution_id = finished.result()["id"]
                 if key in ["newExecution", "executionEnded"]:
+                    execution_id = finished.result()["id"]
                     execution_number_response = await execution_number(execution_id)
                     data = execution_number_response.body.decode("utf-8")
 
@@ -157,6 +231,11 @@ async def multiplexed_event_generator(client_info: ClientInfo):
                     #     of taskgroup nesting
                     data = copy.copy(finished.result())
                     await augment_new_task(data)
+                    data = json.dumps(data)
+                    # print(f"{key} - {data}")
+
+                elif key in ["taskTrace"]:
+                    data = copy.copy(finished.result())
                     data = json.dumps(data)
                     # print(f"{key} - {data}")
 
@@ -185,10 +264,27 @@ async def multiplexed_event_generator(client_info: ClientInfo):
         # (ensuring the asyncio task is cancelled)
         raise
     finally:
-        new_exec_subscribers.remove((queues["newExecution"], client_info))
-        exec_end_subscribers.remove((queues["executionEnded"], client_info))
+        try:
+            new_exec_subscribers.remove((queues["newExecution"], client_info))
+        except Exception:
+            pass
+        try:
+            exec_end_subscribers.remove((queues["executionEnded"], client_info))
+        except Exception:
+            pass
         print(f"execution subscribers [{len(new_exec_subscribers)}] : {new_exec_subscribers}")
-        new_task_subscribers.remove((queues["newTask"], client_info))
-        task_end_subscribers.remove((queues["taskEnded"], client_info))
-        print(f"execution subscribers [{len(new_exec_subscribers)}] : {new_exec_subscribers}")
+        try:
+            new_task_subscribers.remove((queues["newTask"], client_info))
+        except Exception:
+            pass
+        try:
+            task_end_subscribers.remove((queues["taskEnded"], client_info))
+        except Exception:
+            pass
+        print(f"task subscribers [{len(task_end_subscribers)}] : {task_end_subscribers}")
+        try:
+            task_trace_subscribers.remove((queues["taskTrace"], client_info))
+        except Exception:
+            pass
+        print(f"task trace subscribers [{len(task_trace_subscribers)}] : {task_trace_subscribers}")
 

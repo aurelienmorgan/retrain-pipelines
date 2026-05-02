@@ -235,6 +235,7 @@ export function attachDateTimePicker(divId, {COOKIE_PREFIX = ''} = {}) {
                 box-sizing: border-box;
                 transition: border 0.15s;
                 background: rgba(255, 255, 255, 0.3);
+                color: inherit;
             }
             .custom-number-input:hover input {
                 border: 1.5px solid #703398;
@@ -310,6 +311,7 @@ export function attachDateTimePicker(divId, {COOKIE_PREFIX = ''} = {}) {
                 -webkit-appearance: none;
                 -moz-appearance: none;
                 background: rgba(255, 255, 255, 0.3);
+                color: inherit;
                 box-sizing: border-box;
                 transition: border 0.15s;
                 cursor: pointer;

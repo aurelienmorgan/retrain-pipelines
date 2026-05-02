@@ -1,8 +1,15 @@
 
-"""Note : We store UTC timestamps, some databases return those
+"""
+Note : We store UTC timestamps, some databases return those
 right but without the tzinfo param value
 so, python considers they're local time,
-unless we set the tzinfo timezone info ourselves."""
+unless we set the tzinfo timezone info ourselves.
+
+Note: js timestamps are down to the millisecond
+(not microsecond as python's are).
+So we truncate them here. 2 timestamps that are
+equal on the frontend are equal on the backend too.
+"""
 
 from datetime import datetime, timezone, \
     date
@@ -14,7 +21,7 @@ from sqlalchemy import ForeignKey, Column, \
     UniqueConstraint
 
 from sqlalchemy.orm import relationship, \
-    declarative_base
+    declarative_base, validates
 
 from retrain_pipelines.utils import parse_datetime
 
@@ -352,6 +359,69 @@ class Task(Base):
 
     def __repr__(self):
         return f"{__class__.__name__}({self.id}-{self.tasktype_uuid})"
+
+
+class TaskTrace(Base):
+    __tablename__ = 'tasktraces'
+
+    id = Column(Integer, primary_key=True)
+    task_id = Column(Integer,
+                     ForeignKey('tasks.id', ondelete='CASCADE'),
+                     nullable=False)
+
+    timestamp = Column(DateTime(timezone=True), nullable=False)
+    # batch inserts doesn't garantee insertion order
+    # (i.e. auto-increment ids are not safely chronologically ordered)
+    # so we track it with extra attributes
+    microsec = Column(Integer, nullable=False, default=0) # [0-999]
+    microsec_idx = Column(Integer, nullable=False, default=1)
+
+    content = Column(String, nullable=False)
+    is_err = Column(Boolean, nullable=False, default=False)
+
+    task = relationship("Task", backref="traces")
+
+    def __init__(self, *args, **kwargs):
+        # Support dict as the ONLY positional argument
+        data = None
+        if len(args) == 1 and isinstance(args[0], dict):
+            data = args[0]
+        elif len(args) > 0:
+            raise TypeError(
+                "TaskTrace accepts a dict or keyword arguments")
+
+        if data:
+            kwargs = {**data, **kwargs}
+        # Remove SQLAlchemy internal attributes
+        kwargs.pop('_sa_instance_state', None)
+
+        super().__init__(**kwargs)
+
+    @validates('timestamp')
+    def validate_timestamp(self, key, value):
+        """making sure, as it's an optional attr to api."""
+        if (
+            value is None or
+            (isinstance(value, datetime) and value.tzinfo is None)
+        ):
+            raise ValueError(
+                "timestamp must be a timezone-aware datetime")
+
+        if isinstance(value, str):
+            try:
+                iso_str = value.replace("Z", "+00:00")
+                value = datetime.fromisoformat(iso_str)
+                if value.tzinfo is None:
+                    value = value.replace(tzinfo=timezone.utc)
+            except ValueError as e:
+                raise ValueError(
+                    f"Invalid timestamp string format '{value}': {e}")
+
+        return value
+
+    def __repr__(self):
+        return \
+            f"{__class__.__name__}[{self.id}, {self.task_id}, {self.timestamp}, {self.microsec}, {self.microsec_idx}]({self.content})"
 
 
 class TaskExt(Task):

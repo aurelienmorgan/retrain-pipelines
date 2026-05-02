@@ -1,4 +1,6 @@
 
+import logging
+
 from fasthtml.common import Request, Response
 
 from .open_api import rt_api

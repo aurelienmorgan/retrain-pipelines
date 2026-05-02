@@ -345,7 +345,9 @@ def AutoCompleteSelect(
                 document.addEventListener("DOMContentLoaded", function() {{
                     fetch("{options_url}", {{
                         method: 'GET',
-                        headers: {{ "HX-Request": "true" }}
+                        headers: {{ "HX-Request": "true",
+                                    "Cache-Control": "no-cache" }},
+                        cache: 'no-cache'
                     }})
                     .then(function(resp) {{ return resp.json(); }})
                     .then(function(list) {{
@@ -977,246 +979,6 @@ def register(app, rt, prefix=""):
                                     /* ************************************* */
                                 });
                             """),
-                            Script(f"""// SSE multiplexed events : new retraining-pipeline execution
-                                let executionEventSource;
-                                function registerExecEventsSrc() {{
-                                    executionEventSource = new EventSource(
-                                        `{prefix}/executions_events`
-                                    );
-
-                                    executionEventSource.onerror = (err) => {{
-                                        console.error('SSE error:', err);
-                                    }};
-                                    // Force close EventSource when leaving the page
-                                    window.addEventListener('pagehide', () => {{
-                                        executionEventSource.close();
-                                    }});
-
-                                    // Listen for incoming "new execution started" messages from the server
-                                    executionEventSource.addEventListener('newExecution', (event) => {{
-                                        let payload;
-                                        try {{
-                                            // Parse the server data, assuming it's JSON
-                                            payload = JSON.parse(event.data);
-                                        }} catch (e) {{
-                                            console.error('Error parsing SSE message data:', e);
-                                            return;
-                                        }}
-                                        //console.log("executionEventSource 'newExecution'", payload);
-
-                                        /* ***********************************************
-                                        * Keep autocomplete comboboxes dropdowns in sync *
-                                        *********************************************** */
-                                        // Helper to add and keep list sorted without duplicates
-                                        function addAndSortUnique(arr, newItem) {{
-                                            if (!newItem) return arr;
-                                            // Only add if not present
-                                            if (!arr.includes(newItem)) {{
-                                                arr.push(newItem);
-                                                arr.sort((a, b) => a.localeCompare(b));
-                                            }}
-                                            return arr;
-                                        }}
-                                        window["_options_pipeline_name_autocomplete"] = 
-                                            addAndSortUnique(
-                                                window["_options_pipeline_name_autocomplete"] || [],
-                                                payload.name
-                                            );
-                                        window["_options_pipeline_user_autocomplete"] = 
-                                            addAndSortUnique(
-                                                window["_options_pipeline_user_autocomplete"] || [],
-                                                payload.username
-                                            );
-                                        /* ************************************************* */
-
-                                        /* ****************************************************
-                                        * Add "newExecutionElement" to "executions-container" *
-                                        **************************************************** */
-                                        const newExecutionStart = new Date(payload.start_timestamp);
-                                        const template = document.createElement('template');
-                                        template.innerHTML = payload.html.trim();
-                                        const newExecutionElement = template.content.firstElementChild;
-
-                                        // apply page filters
-                                        const cookies = document.cookie.split("; ");
-                                        for (const cookie of cookies) {{
-                                            const [key, val] = cookie.split("=");
-                                            if (key === COOKIE_PREFIX + 'pipeline-name-autocomplete') {{
-                                                const pipelineNameFilter = decodeURIComponent(val||"");
-                                                if (
-                                                    pipelineNameFilter > "" &&
-                                                    newExecutionElement.dataset.pipelineName !=
-                                                        pipelineNameFilter
-                                                ) return;
-                                            }} else if (key === COOKIE_PREFIX + 'pipeline-user-autocomplete') {{
-                                                const userNameFilter = decodeURIComponent(val||"");
-                                                if (
-                                                    userNameFilter > "" &&
-                                                    newExecutionElement.dataset.username != userNameFilter
-                                                ) return;
-                                            }} else if (key === COOKIE_PREFIX + 'pipeline-before-datetime') {{
-                                                const pipelineBeforeDatetimeSelected =
-                                                    document.getElementById(
-                                                        "pipeline-before-datetime-selected").value;
-                                                if (pipelineBeforeDatetimeSelected > "") {{
-                                                    pipelineBeforeDatetime = new Date(before_datetime_str);
-                                                    if (
-                                                        new Date(newExecutionElement.dataset.startTimestamp)
-                                                        > pipelineBeforeDatetime
-                                                    ) return;
-                                                }}
-                                            }} else if (
-                                                key === COOKIE_PREFIX + 'pipeline-status-bandit-toggle'
-                                            ) {{
-                                                // if filtering on status
-                                                const statusFilter = decodeURIComponent(val||"");
-                                                if ('success' in newExecutionElement.dataset) {{
-                                                    // ('success (y/n)', i.e.
-                                                    // if the streamed newExecutionElement
-                                                    // has end_timestamp
-                                                    // (which may happen when we programatically
-                                                    //  fired that event, which we do
-                                                    // if execution-end event occurs
-                                                    //  while user filters on execution-status)
-                                                    const successBool =
-                                                        newExecutionElement.dataset.success.toLowerCase()
-                                                        === "true";
-                                                    const isMatch =
-                                                        (statusFilter === "success" && successBool)
-                                                         || (statusFilter === "failure" && !successBool);
-                                                    if (!isMatch) return;
-                                                }} else {{
-                                                    // filtering on status and
-                                                    // execution is not completed yet
-                                                    return;
-                                                }}
-                                            }}
-                                        }}
-
-                                        // Find where to insert the newExecutionElement
-                                        // assuming async from different seeders may occur
-                                        let inserted = false;
-                                        const children = 
-                                            execContainer.getElementsByClassName('execution');
-                                        for (let i = 0; i < children.length; ++i) {{
-                                            const existingDiv = children[i];
-                                            const existingStartTS = existingDiv.dataset.startTimestamp;
-                                            if (!existingStartTS) continue;
-                                            const existingStart = new Date(existingStartTS);
-
-                                            // Descending: insert before the first older item
-                                            if (newExecutionStart > existingStart) {{
-                                                execContainer.insertBefore(
-                                                    newExecutionElement, existingDiv);
-                                                inserted = true;
-                                                break;
-                                            }}
-                                        }}
-                                        // If not inserted anywhere
-                                        // (all items are newer or container is empty),
-                                        // append at the end
-                                        if (!inserted) {{
-                                            execContainer.appendChild(newExecutionElement);
-                                        }}
-                                        /* ************************************************* */
-                                    }});
-
-
-                                    function formatTimeDelta(start, end) {{
-                                        const startDate = new Date(start);
-                                        const endDate = new Date(end);
-
-                                        const diffMs = endDate - startDate;
-                                        if (isNaN(diffMs)) {{
-                                            throw new Error("Invalid date(s) provided");
-                                        }}
-
-                                        const totalSeconds = Math.floor(diffMs / 1000);
-                                        const milliseconds = diffMs % 1000;
-                                        const seconds = totalSeconds % 60;
-                                        const minutes = Math.floor((totalSeconds % 3600) / 60);
-                                        const hours = Math.floor(totalSeconds / 3600);
-
-                                        return `${{hours}}:${{String(minutes).padStart(2, '0')}}:${{String(seconds).padStart(2, '0')}}.${{String(milliseconds).padStart(6, '0')}}`;
-                                    }}
-
-                                    // Listen for incoming "an execution ended" messages from the server
-                                    executionEventSource.addEventListener('executionEnded', (event) => {{
-                                        let payload;
-                                        try {{
-                                            // Parse the server data, assuming it's JSON
-                                            payload = JSON.parse(event.data);
-                                        }} catch (e) {{
-                                            console.error('Error parsing SSE message data:', e);
-                                            return;
-                                        }}
-                                        //console.log("executionEventSource 'executionEnded'", payload);
-
-                                        const executionElement = document.getElementById("_"+payload.id);
-                                        if (executionElement) {{
-                                            const endTimestampElement =
-                                                executionElement.querySelector('.end_timestamp');
-                                            endTimestampElement.innerText = formatTimeDelta(
-                                                executionElement.dataset.startTimestamp,
-                                                payload.end_timestamp
-                                            );
-                                            endTimestampElement.classList.add(
-                                                payload.success ? 'success' : 'failure');
-                                        }} else {{
-                                            // execution not found in container,
-                                            // dispatching to newExecEventSource
-                                            const simulatedEvent = new MessageEvent(
-                                                'newExecution', {{data: event.data}});
-                                            executionEventSource.dispatchEvent(simulatedEvent);
-                                        }}
-                                    }});
-                                }}
-                                registerExecEventsSrc();
-                            """),
-                            Script("""// executions list reload on window history.back()
-                                window.addEventListener('pageshow', function(event) {
-                                    if (event.persisted) {
-                                        loadExecs();
-                                        registerExecEventsSrc();
-                                    }
-                                });
-                            """),
-                            Script("""// handling & recovering from server-loss
-                                const statusCircle = document.getElementById('status-circle');
-                                let previousClasses =
-                                    Array.from(statusCircle.classList); // remember initial classes
-                                function onClassChange(mutationsList) {
-                                    for (let mutation of mutationsList) {
-                                        if (
-                                            mutation.type === 'attributes' &&
-                                            mutation.attributeName === 'class'
-                                        ) {
-                                            const newClasses = Array.from(statusCircle.classList);
-
-                                            if (
-                                                newClasses.includes('disconnected') &&
-                                                !previousClasses.includes('disconnected')
-                                            ) {
-                                                console.log("disconnected");
-                                                executionEventSource.close();
-                                            } else if (
-                                                newClasses.includes('connected') &&
-                                                !previousClasses.includes('connected')
-                                            ) {
-                                                console.log("reconnected");
-                                                loadExecs();
-                                                registerExecEventsSrc();
-                                            }
-
-                                            // Update previousClasses for next mutation check
-                                            previousClasses = newClasses;
-                                        }
-                                    }
-                                }
-
-                                const observer = new MutationObserver(onClassChange);
-                                observer.observe(statusCircle, { attributes: true });
-                            """),
                             id="params_panel",
                             style=(
                                 "position: relative;"
@@ -1240,6 +1002,297 @@ def register(app, rt, prefix=""):
                         )
                     )
                 ),
+                Script(f"""// SSE multiplexed events : new retraining-pipeline execution
+                    let executionEventSource;
+                    function registerExecEventsSrc() {{
+                        executionEventSource = new EventSource(
+                            `{prefix}/executions_events`
+                        );
+
+                        executionEventSource.onerror = (err) => {{
+                            console.error('SSE error:', err);
+                        }};
+                        // Force close EventSource when leaving the page
+                        window.addEventListener('pagehide', () => {{
+                            executionEventSource.close();
+                        }});
+
+                        // Listen for incoming "new execution started" messages from the server
+                        let ongoingNewInsertCount = 0;
+                        executionEventSource.addEventListener('newExecution', (event) => {{
+                            let payload;
+                            try {{
+                                // Parse the server data, assuming it's JSON
+                                payload = JSON.parse(event.data);
+                            }} catch (e) {{
+                                console.error('Error parsing SSE message data:', e);
+                                return;
+                            }}
+                            //console.log("executionEventSource 'newExecution'", payload);
+
+                            /* ***********************************************
+                            * Keep autocomplete comboboxes dropdowns in sync *
+                            *********************************************** */
+                            // Helper to add and keep list sorted without duplicates
+                            function addAndSortUnique(arr, newItem) {{
+                                if (!newItem) return arr;
+                                // Only add if not present
+                                if (!arr.includes(newItem)) {{
+                                    arr.push(newItem);
+                                    arr.sort((a, b) => a.localeCompare(b));
+                                }}
+                                return arr;
+                            }}
+                            window["_options_pipeline_name_autocomplete"] =
+                                addAndSortUnique(
+                                    window["_options_pipeline_name_autocomplete"] || [],
+                                    payload.name
+                                );
+                            window["_options_pipeline_user_autocomplete"] =
+                                addAndSortUnique(
+                                    window["_options_pipeline_user_autocomplete"] || [],
+                                    payload.username
+                                );
+                            /* ************************************************* */
+
+                            /* ****************************************************
+                            * Add "newExecutionElement" to "executions-container" *
+                            **************************************************** */
+                            const newExecutionStart = new Date(payload.start_timestamp);
+                            const template = document.createElement('template');
+                            template.innerHTML = payload.html.trim();
+                            const newExecutionElement = template.content.firstElementChild;
+
+                            // apply page filters
+                            const cookies = document.cookie.split("; ");
+                            for (const cookie of cookies) {{
+                                const [key, val] = cookie.split("=");
+                                if (key === COOKIE_PREFIX + 'pipeline-name-autocomplete') {{
+                                    const pipelineNameFilter = decodeURIComponent(val||"");
+                                    if (
+                                        pipelineNameFilter > "" &&
+                                        newExecutionElement.dataset.pipelineName !=
+                                            pipelineNameFilter
+                                    ) return;
+                                }} else if (key === COOKIE_PREFIX + 'pipeline-user-autocomplete') {{
+                                    const userNameFilter = decodeURIComponent(val||"");
+                                    if (
+                                        userNameFilter > "" &&
+                                        newExecutionElement.dataset.username != userNameFilter
+                                    ) return;
+                                }} else if (key === COOKIE_PREFIX + 'pipeline-before-datetime') {{
+                                    const pipelineBeforeDatetimeSelected =
+                                        document.getElementById(
+                                            "pipeline-before-datetime-selected").value;
+                                    if (pipelineBeforeDatetimeSelected > "") {{
+                                        pipelineBeforeDatetime = new Date(before_datetime_str);
+                                        if (
+                                            new Date(newExecutionElement.dataset.startTimestamp)
+                                            > pipelineBeforeDatetime
+                                        ) return;
+                                    }}
+                                }} else if (
+                                    key === COOKIE_PREFIX + 'pipeline-status-bandit-toggle'
+                                ) {{
+                                    // if filtering on status
+                                    const statusFilter = decodeURIComponent(val||"");
+                                    if ('success' in newExecutionElement.dataset) {{
+                                        // ('success (y/n)', i.e.
+                                        // if the streamed newExecutionElement
+                                        // has end_timestamp
+                                        // (which may happen when we programatically
+                                        //  fired that event, which we do
+                                        // if execution-end event occurs
+                                        //  while user filters on execution-status)
+                                        const successBool =
+                                            newExecutionElement.dataset.success.toLowerCase()
+                                            === "true";
+                                        const isMatch =
+                                            (statusFilter === "success" && successBool)
+                                             || (statusFilter === "failure" && !successBool);
+                                        if (!isMatch) return;
+                                    }} else {{
+                                        // filtering on status and
+                                        // execution is not completed yet
+                                        return;
+                                    }}
+                                }}
+                            }}
+
+                            // Find where to insert the newExecutionElement
+                            // assuming async from different seeders may occur
+                            ongoingNewInsertCount++;
+                            let inserted = false;
+                            const children =
+                                execContainer.getElementsByClassName('execution');
+
+                            function insertExecution() {{
+                                for (let i = 0; i < children.length; ++i) {{
+                                    const existingDiv = children[i];
+                                    const existingStartTS = existingDiv.dataset.startTimestamp;
+                                    if (!existingStartTS) continue;
+                                    const existingStart = new Date(existingStartTS);
+
+                                    // Descending: insert before the first older item
+                                    if (newExecutionStart > existingStart) {{
+                                        execContainer.insertBefore(
+                                            newExecutionElement, existingDiv);
+                                        inserted = true;
+                                        break;
+                                    }}
+                                }}
+                                // If not inserted anywhere
+                                // (all items are newer or container is empty),
+                                // append at the end
+                                if (!inserted) {{
+                                    execContainer.appendChild(newExecutionElement);
+                                }}
+                                ongoingNewInsertCount--;
+                            }}
+
+                            if (
+                                children.length == 0
+                                && loadExecsAbortController !== null
+                            ) {{
+                                // list is in the middle of a refresh
+                                (function waitForLoaded() {{
+                                    if (loadExecsAbortController !== null) {{
+                                        setTimeout(waitForLoaded, 50);
+                                        return;
+                                    }}
+                                    insertExecution();
+                                }})();
+                            }} else {{
+                                insertExecution();
+                            }}
+                            /* ************************************************* */
+                        }});
+
+                        /* ****************************************************
+                        * Update "end_timestamp" of "executionElement"        *
+                        **************************************************** */
+                        function formatTimeDelta(start, end) {{
+                            const startDate = new Date(start);
+                            const endDate = new Date(end);
+
+                            const diffMs = endDate - startDate;
+                            if (isNaN(diffMs)) {{
+                                throw new Error("Invalid date(s) provided");
+                            }}
+
+                            const totalSeconds = Math.floor(diffMs / 1000);
+                            const milliseconds = diffMs % 1000;
+                            const seconds = totalSeconds % 60;
+                            const minutes = Math.floor((totalSeconds % 3600) / 60);
+                            const hours = Math.floor(totalSeconds / 3600);
+
+                            return `${{hours}}:${{String(minutes).padStart(2, '0')}}:${{String(seconds).padStart(2, '0')}}.${{String(milliseconds).padStart(3, '0')}}`;
+                        }}
+
+                        // Listen for incoming "an execution ended" messages from the server
+                        executionEventSource.addEventListener('executionEnded', (event) => {{
+                            let payload;
+                            try {{
+                                // Parse the server data, assuming it's JSON
+                                payload = JSON.parse(event.data);
+                            }} catch (e) {{
+                                console.error('Error parsing SSE message data:', e);
+                                return;
+                            }}
+                            //console.log("executionEventSource 'executionEnded'", payload);
+
+                            function updateExecution() {{
+                                const executionElement = document.getElementById("_"+payload.id);
+                                if (executionElement) {{
+                                    const endTimestampElement =
+                                        executionElement.querySelector('.end_timestamp');
+                                    endTimestampElement.innerText = formatTimeDelta(
+                                        executionElement.dataset.startTimestamp,
+                                        payload.end_timestamp
+                                    );
+                                    endTimestampElement.classList.add(
+                                        payload.success ? 'success' : 'failure');
+                                }} else {{
+                                    // execution not found in container,
+                                    // dispatching to newExecEventSource
+                                    const simulatedEvent = new MessageEvent(
+                                        'newExecution', {{data: event.data}});
+                                    executionEventSource.dispatchEvent(simulatedEvent);
+                                }}
+                            }}
+                            if (
+                                loadExecsAbortController !== null ||
+                                ongoingNewInsertCount > 0
+                            ) {{
+                                // list is in the middle of a refresh
+                                // or appending items
+                                // Note: "newExecution" insert events
+                                //       (which take precendence)
+                                //       might be waiting too.
+                                (function waitForLoaded() {{
+                                    // console.log("ongoingNewInsertCount", ongoingNewInsertCount);
+                                    if (
+                                        loadExecsAbortController !== null ||
+                                        ongoingNewInsertCount > 0
+                                    ) {{
+                                        setTimeout(waitForLoaded, 50);
+                                        return;
+                                    }}
+                                    updateExecution();
+                                }})();
+                            }} else {{
+                                updateExecution();
+                            }}
+
+                        }});
+                        /* ************************************************* */
+                    }}
+                    registerExecEventsSrc();
+                """),
+                Script("""// executions list reload on window history.back()
+                    window.addEventListener('pageshow', function(event) {
+                        if (event.persisted) { // page reloaded from bfcache
+                            loadExecs();
+                            registerExecEventsSrc();
+                        }
+                    });
+                """),
+                Script("""// handling & recovering from server-loss
+                    const statusCircle = document.getElementById('status-circle');
+                    let previousClasses =
+                        Array.from(statusCircle.classList); // remember initial classes
+                    function onClassChange(mutationsList) {
+                        for (let mutation of mutationsList) {
+                            if (
+                                mutation.type === 'attributes' &&
+                                mutation.attributeName === 'class'
+                            ) {
+                                const newClasses = Array.from(statusCircle.classList);
+
+                                if (
+                                    newClasses.includes('disconnected') &&
+                                    !previousClasses.includes('disconnected')
+                                ) {
+                                    console.log("disconnected");
+                                    executionEventSource.close();
+                                } else if (
+                                    newClasses.includes('connected') &&
+                                    !previousClasses.includes('connected')
+                                ) {
+                                    console.log("reconnected");
+                                    loadExecs();
+                                    registerExecEventsSrc();
+                                }
+
+                                // Update previousClasses for next mutation check
+                                previousClasses = newClasses;
+                            }
+                        }
+                    }
+
+                    const observer = new MutationObserver(onClassChange);
+                    observer.observe(statusCircle, { attributes: true });
+                """),
                 Div(# Actual list
                     Div(
                         Div(# load-more
@@ -1426,12 +1479,17 @@ def register(app, rt, prefix=""):
                     const execContainer = document.getElementById("executions-container");
                     const loader = document.getElementById("loader");
                     const loaderContainer = document.getElementById("loader-container");
-                    let isLoadExecsRunning = false;
+                    let loadExecsAbortController = null;
 
                     function loadExecs(event, append = false) {
                         if (append && loaderContainer.style.display === "none") return;
-                        if (isLoadExecsRunning) return;
-                        isLoadExecsRunning = true;
+
+                        if (loadExecsAbortController !== null) {
+                            loadExecsAbortController.abort();
+                        }
+
+                        loadExecsAbortController = new AbortController();
+                        var signal = loadExecsAbortController.signal;
 
                         const server_status_circle = document.getElementById('status-circle');
                         server_status_circle.classList.add('spinning');
@@ -1454,7 +1512,7 @@ def register(app, rt, prefix=""):
                         const COOKIE_PREFIX = "executions_dashboard:";
 
                         var pipeline_name = "";
-                        const pipeline_name_input = 
+                        const pipeline_name_input =
                             document.getElementById("pipeline-name-autocomplete-input");
                         if (
                             // not an 'unselected' of the 3-states
@@ -1469,9 +1527,9 @@ def register(app, rt, prefix=""):
                                 // (init from cookie didn't occur yet)
                                 const pipeline_name_cookieKey = COOKIE_PREFIX + 'pipeline-name-autocomplete';
                                 for (const cookie of cookies) {
-                                    const [key, val] = cookie.split("=");
-                                    if (key === pipeline_name_cookieKey) {
-                                        pipeline_name = decodeURIComponent(val || "");
+                                    const parts = cookie.split("=");
+                                    if (parts[0] === pipeline_name_cookieKey) {
+                                        pipeline_name = decodeURIComponent(parts[1] || "");
                                     }
                                 }
                             } else {
@@ -1483,7 +1541,7 @@ def register(app, rt, prefix=""):
                         // console.log("pipeline_name : ", pipeline_name);
 
                         var username = "";
-                        const username_input = 
+                        const username_input =
                             document.getElementById("pipeline-user-autocomplete-input");
                         if (
                             // not an 'unselected' of the 3-states
@@ -1498,9 +1556,9 @@ def register(app, rt, prefix=""):
                                 // (init from cookie didn't occur yet)
                                 const username_cookieKey = COOKIE_PREFIX + 'pipeline-user-autocomplete';
                                 for (const cookie of cookies) {
-                                    const [key, val] = cookie.split("=");
-                                    if (key === username_cookieKey) {
-                                        username = decodeURIComponent(val || "");
+                                    const parts = cookie.split("=");
+                                    if (parts[0] === username_cookieKey) {
+                                        username = decodeURIComponent(parts[1] || "");
                                     }
                                 }
                             } else {
@@ -1512,7 +1570,7 @@ def register(app, rt, prefix=""):
                         // console.log("username : ", username);
 
                         // retrieve last validated datetime value from hidden input
-                        before_datetime_str = 
+                        before_datetime_str =
                             document.getElementById("pipeline-before-datetime-selected").value;
 
                         // retrieve executions status filter
@@ -1532,7 +1590,6 @@ def register(app, rt, prefix=""):
                             execsStatus = execs_status_togglerValue.getAttribute("data-execs-status");
                         }
                         // console.log("execsStatus", execsStatus);
-
 
                         // form data for the html POST
                         const formData = new FormData();
@@ -1558,10 +1615,16 @@ def register(app, rt, prefix=""):
                         fetch('/{prefix}load_executions', {
                             method: 'POST',
                             headers: { "HX-Request": "true" },
-                            body: formData
+                            body: formData,
+                            signal: signal
                         })
-                        .then(response => response.text())
-                        .then(async (html) => {
+                        .then(response => {
+                            if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
+                            return response.text();
+                        })
+                        .then(async function (html) {
+                            if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
+
                             const tempDiv = document.createElement('div');
                             tempDiv.innerHTML = html;
 
@@ -1569,8 +1632,13 @@ def register(app, rt, prefix=""):
                             const divs = Array.from(tempDiv.querySelectorAll(':scope > div'));
                             const executionsCount = divs.length;
 
-                            const delay = (delayMs) => new Promise(resolve => setTimeout(resolve, delayMs));
+                            const delay = function (delayMs) {
+                                return new Promise(function (resolve) {
+                                    setTimeout(resolve, delayMs);
+                                });
+                            };
                             for (const div of divs) {
+                                if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
                                 execContainer.insertBefore(div, loaderContainer);
                                 await delay(1);
                             }
@@ -1584,14 +1652,18 @@ def register(app, rt, prefix=""):
 
                             server_status_circle.classList.remove('spinning');
                         })
-                        .catch(error => {
+                        .catch(function (error) {
+                            if (error.name === 'AbortError') return;
                             console.error("Error fetching executions:", error);
                             loader.classList.remove('loading');
                             loader.classList.add('idle');
                             loader.querySelector('.shimmer-text').textContent = "load more";
+                            server_status_circle.classList.remove('spinning');
                         })
-                        .finally(() => {
-                            isLoadExecsRunning = false;
+                        .finally(function () {
+                            if (!signal.aborted) {
+                                loadExecsAbortController = null;
+                            }
                         });
                     }
 
@@ -1616,9 +1688,4 @@ def register(app, rt, prefix=""):
                 )
             )
         )
-
-
-    @rt(f"{prefix}/a_page_in_error", methods=["GET"])
-    def throw_error():
-        raise Exception("DEBUG");
 

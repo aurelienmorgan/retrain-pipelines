@@ -13,8 +13,6 @@ def header(current_page="/"):
     nav_items = [
         ("Home", "/", "#ffffff"),
         ("Teams", "/teams", "#ffffff"),
-        # ("Not-Found", "/not-exists", "#ffffff"),
-        # ("Error", "/a_page_in_error", "#ffffff"),
         ("Logs", "/web_server", "#ccc"),
         ("SSE API", "/api/docs", "#ccc")
     ]
@@ -49,7 +47,7 @@ def header(current_page="/"):
         *nav_links,
         style=(
             "position: absolute; top: 12px; left: 16px; "
-            "z-index: 200; display: flex; align-items: center;"
+            "z-index: 198; display: flex; align-items: center;"
         )
     )
 
@@ -191,6 +189,22 @@ def header(current_page="/"):
         """),
         Script("""
             document.addEventListener('htmx:sendError', function(event) {
+                if (event.detail.elt.id === 'status-circle-container') {
+                    const circle = document.getElementById('status-circle');
+                    circle.classList.remove('connected');
+                    circle.classList.add('disconnected', 'pulsing');
+
+                    const container = event.detail.elt;
+                    container.setAttribute('hx-trigger', 'load, every 2s');
+                    htmx.process(container);
+                }
+            });
+
+            document.addEventListener('htmx:responseError', function(event) {
+                // http error > 4xx
+                // (typically example :
+                //  when WebConsole behind a proxy,
+                //  proxy is up, WebConsole is down)
                 if (event.detail.elt.id === 'status-circle-container') {
                     const circle = document.getElementById('status-circle');
                     circle.classList.remove('connected');
@@ -518,7 +532,7 @@ input.gcheckbox:checked::before {
         rgba(77, 0, 102, 0.6) 50%, 
         rgba(77, 0, 102, 0.6) 50%, 
         rgba(77, 0, 102, 0) 100%);
-    z-index: 100;
+    z-index: 200;
 }
 """)
 

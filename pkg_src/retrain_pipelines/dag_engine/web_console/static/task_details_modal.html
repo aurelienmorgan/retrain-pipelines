@@ -1,0 +1,45 @@
+
+<!-- template -->
+<div id="detailsModal">
+    <div id="modal-exec-id" style="display: none;"></div>
+    <div id="modal-task-id" style="display: none;"></div>
+    <div id="modal-tasktype-uuid" style="display: none;"></div>
+    <div class="modal-content">
+        <button class="modal-close">×</button>
+        <div class="task-label-container"></div>
+        <div id="tasktype-docstring" class="collapsed">
+            <div class="content"></div>
+            <div id="tasktype-docstring-show-more"
+                 style="display: none;">Show more</div>
+        </div>
+        <div class="tab-header">
+            <button class="tab-button">Traces</button>
+            <button class="tab-button">Host</button>
+            <button class="tab-button">Other</button>
+        </div>
+        <div class="tab-content-container">
+            <div id="tab-traces" class="tab-content">
+                <div class="traces-log-toolbar hidden">
+                    <div class="toolbar-button" tabindex="0"
+                         onclick="scrollLogs(1, true);">
+                        <span class="arrow-max-bottom">&#xfe3e;</span>
+                    </div>
+                    <div class="toolbar-button" tabindex="0"
+                         onclick="scrollLogs(1, false);">
+                        <span class="arrow-bottom">&#8964;</span>
+                    </div>
+                    <div class="toolbar-button" tabindex="0"
+                         onclick="scrollLogs(-1, false);">
+                        <span class="arrow-top">&#8963;</span>
+                    </div>
+                    <div class="toolbar-button" tabindex="0"
+                         onclick="scrollLogs(-1, true);">
+                        <span class="arrow-max-top">&#xfe3d;</span>
+                    </div>
+                </div>
+            </div>
+            <div id="tab-host" class="tab-content"></div>
+            <div id="tab-other" class="tab-content"></div>
+        </div>
+    </div>
+</div>

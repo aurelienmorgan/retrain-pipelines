@@ -1,0 +1,26 @@
+
+syntax = "proto3";
+
+package tasktraces;
+
+import "google/protobuf/timestamp.proto";
+
+message TaskTrace {
+  int32 id = 1;
+  int32 task_id = 2;
+  google.protobuf.Timestamp timestamp = 3;
+  int32 microsec = 4;
+  int32 microsec_idx = 5;
+  string content = 6;
+  bool is_err = 7;
+}
+
+message TraceAck {
+  bool success = 1;
+  string message = 2;
+}
+
+service TaskTraceService {
+  rpc SendTrace(TaskTrace) returns (TraceAck);
+}
+

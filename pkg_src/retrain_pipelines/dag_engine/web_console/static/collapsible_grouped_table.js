@@ -171,30 +171,13 @@ function toggleRow(table, path) {
     ***************************** */
     // removing bars from previous state
     // and adjusting bottom padding back
-    // (i.e. cleaning header
-    //       if init state was collapsed,
-    //       lastChild if it was expanded)
     var rowsToClean = [];
-
-    if (!isInitiallyCollapsed) {
-        // Was expanded: clean the last visible child only
-        const lastChildPath = findLastVisibleChildOfGroup(table, path);
-        const lastChildRow = table.querySelector(`[data-path="${lastChildPath}"]`);
-        rowsToClean.push(lastChildRow);
-    } else {
-        // Was collapsed: clean the header
-        rowsToClean.push(row);
-
-        // Additionally, if last child is a collapsed header, clean it as well
-        const lastChildPath = findLastVisibleChildOfGroup(table, path);
-        const lastChildRow = table.querySelector(`[data-path="${lastChildPath}"]`);
-        if (
-            lastChildRow.classList.contains("group-header") &&
-            lastChildRow.classList.contains("collapsed")
-        ) {
-            rowsToClean.push(lastChildRow);
-        }
-    }
+    // clean the header
+    rowsToClean.push(row);
+    // Additionally, clean last child as well
+    const lastChildPath = findLastVisibleChildOfGroup(table, path);
+    const lastChildRow = table.querySelector(`[data-path="${lastChildPath}"]`);
+    rowsToClean.push(lastChildRow);
 
     // Loop over all rows to clean
     // remove bottom bars + reset bottom padding
@@ -444,24 +427,25 @@ function applyGroupStyles(table, interBarsSpacing) {
     * bottom bars for each group. *
     **************************** */
     table.querySelectorAll('tbody tr.group-header').forEach(row => {
+
         addBottomBar(row, interBarsSpacing);
 
-        if (!row.classList.contains("collapsed")) {
-            // adjust (once only, for deepest group with that target row as its last)
-            // bottom padding of last child against 1 extra "interBarsSpacing"
-            const lastChildPath = findLastVisibleChildOfGroup(table, row.dataset.path);
-            const targetLevel = parseInt(row.dataset.level) + 1;
-            targetRow = table.querySelector(
-                `[data-path="${lastChildPath}"][data-level="${targetLevel}"]`);
-            if (!targetRow) return;
-            for (let i = 0; i < targetRow.cells.length; i++) {
-                const cell = targetRow.cells[i];
-                cell.style.paddingBottom = (
-                        (Number(getComputedStyle(cell)
-                                  .paddingBottom.toString().replace('px', '')) | 0)
-                        - interBarsSpacing
-                    ) + "px";
-            }
+        // adjust (once only, for deepest group with that target row as its last)
+        // bottom padding of last child against 1 extra "interBarsSpacing"
+        const lastChildPath = findLastVisibleChildOfGroup(table, row.dataset.path);
+        const targetLevel = parseInt(row.dataset.level) + 1;
+        targetRow = table.querySelector(
+            `[data-path="${lastChildPath}"][data-level="${targetLevel}"]`);
+
+        if (!targetRow || targetRow.classList.contains("collapsed")) return;
+
+        for (let i = 0; i < targetRow.cells.length; i++) {
+            const cell = targetRow.cells[i];
+            cell.style.paddingBottom = (
+                    (Number(getComputedStyle(cell)
+                              .paddingBottom.toString().replace('px', '')) | 0)
+                    - interBarsSpacing
+                ) + "px";
         }
     });
 }
@@ -531,8 +515,8 @@ function addBottomBar(row, interBarsSpacing) {
     * more than one bar shall be added (at the proper offset). *
     * Params:                                                  *
     *     - maxSubLevel(int):                                  *
-    *           how many depth sub-groups there are            *
-    *           withing the group having "row" as its header.  *
+    *         how many depth sub-groups there are              *
+    *         withing the group having "row" as its header.    *
     ********************************************************* */
     const table = row.parentNode.parentNode;
     const path = row.getAttribute('data-path');
@@ -620,14 +604,17 @@ function addBottomBar(row, interBarsSpacing) {
     }
 }
 
-function renderRows(data, parentPath = "", level = 0, startIndex = 0) {
+function renderRows(
+    data, parentPath = "", level = 0, startIndex = 0
+) {
     let html = '';
     data.forEach((item, index) => {
         const path = parentPath ?
                     `${parentPath}.${startIndex + index}` :
                     `${startIndex + index}`;
         const hasChildren = item.children && item.children.length > 0;
-        const isTopLevelRow = level == 0 && parentPath === "" && !hasChildren;
+        const isTopLevelRow =
+            level == 0 && parentPath === "" && !hasChildren;
 
         /* ****************************
         * styling for top-level rows. *
@@ -665,8 +652,10 @@ function renderRows(data, parentPath = "", level = 0, startIndex = 0) {
         const extraClasses = item.extraClasses ? " " + (item.extraClasses).join(" ") : "";
         const clickAttr =
             hasChildren ?
-            `onclick="toggleRow(this.closest('table'), this.dataset.path);${callbacks ? ' ' + callbacks + ';' : ''}"` :
-            '';
+            `onclick="toggleRow(this.closest('table'), this.dataset.path);${
+                    callbacks ? ' ' + callbacks + ';' : ''
+                }"` :
+            callbacks ? `onclick="${callbacks};"` : '';
         const dataAttrs =
             `data-path="${path}" data-level="${level}" data-id="${item.id}" data-name="${item.cells.name.value}"`;
         const extraAttrs = item.style
@@ -757,7 +746,8 @@ function collapseAll(tableId) {
         // After all children are collapsed,
         // collapse this group if expanded
         if (!groupRow.classList.contains('collapsed')) {
-            toggleRow(table, groupPath);
+            //toggleRow(table, groupPath);
+            groupRow.click();
         }
     }
 
@@ -789,7 +779,8 @@ function expandAll(tableId) {
 
         // Expand this group first if collapsed
         if (groupRow.classList.contains('collapsed')) {
-            toggleRow(table, groupPath);
+            //toggleRow(table, groupPath);
+            groupRow.click();
         }
 
         // Find all direct children groups
@@ -849,12 +840,7 @@ function insertAt(
         console.error("Invalid group_index:", group_index);
         return;
     }
-    try {
-        checkUnicityOfAllDepthsItems(table, data);
-    } catch (error) {
-        console.error(error);
-        return;
-    }
+    if (!checkUnicityOfAllDepthsItems(table, data)) return;
 
     //////////////////////////////////////////
     // retrieve rows in the targetted group //
@@ -1039,8 +1025,10 @@ function checkUnicityOfAllDepthsItems(table, data) {
             `Duplicate ids found: ${duplicates.join(', ')}. ` +
             'These data-id values already exist in the table.'
         );
-        throw error;
+        console.warn(error.message, error.stack);
+        return false;
     }
+    return true;
 }
 
 function incrementIndexes(table, path, incrementValue) {

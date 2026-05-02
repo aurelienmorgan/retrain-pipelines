@@ -1,36 +1,42 @@
 
 import os
 import re
+import io
 import sys
 import ast
+import copy
 import getpass
 import inspect
 import logging
 import textwrap
 import functools
+import threading
+import traceback
 import contextvars
 import concurrent.futures
 
 from uuid import UUID, uuid4
 from collections import deque
+from contextlib import contextmanager
 from datetime import datetime, timezone, date
+
+from rich.markup import escape
+from rich.console import Console
+from rich.logging import RichHandler
 
 from typing import Callable, List, Optional, Union, \
     Dict, Any, Tuple
 
-try:
-    from pydantic import BaseModel, Field, PrivateAttr, \
-        field_validator, ValidationInfo
-    IS_PYDANTIC_V2 = True
-except ImportError:
-    # maintain backward compatibility here
-    # for sample_pipeline using Seldon Tempo
-    from pydantic import BaseModel, Field, PrivateAttr, \
-        validator
-    IS_PYDANTIC_V2 = False
+from pydantic import BaseModel, Field, PrivateAttr, \
+    field_validator, ValidationInfo
 
-from .db.dao import DAO
-from ..utils.rich_logging import framed_rich_log_str
+from ..db.dao import DAO
+from .trace_buffer import get_trace_buffer
+from ...utils import in_notebook
+from ...utils.rich_logging import framed_rich_log_str
+
+
+logger = logging.getLogger(__name__)
 
 
 # ---- Core Task and Execution Infrastructure ----
@@ -51,6 +57,19 @@ class TaskGroupException(Exception):
     def __init__(self, message):
         super().__init__(message)
 
+
+tasktype_taskgroup_console = Console(
+    width=None, force_terminal=True, legacy_windows=False)
+class RawRichHandler(RichHandler):
+    def emit(self, record):
+        msg = self.format(record)
+        tasktype_taskgroup_console.print(
+            msg, soft_wrap=False)
+tasktype_taskgroup_rich_handler = \
+    RawRichHandler(show_time=False, 
+                   show_level=False, show_path=False)
+tasktype_taskgroup_rich_handler.setFormatter(
+    logging.Formatter("%(message)s"))
 
 class TaskType(BaseModel):
     """Represents a node in the DAG.
@@ -85,11 +104,20 @@ class TaskType(BaseModel):
 
     def __init__(self, **data):
         super().__init__(**data)
+        self._log = logger
+
+        # add custom-rich handler
+        # (since package-logger doesn't hold one when we're here)
+        self._log.addHandler(tasktype_taskgroup_rich_handler)
+        self._log.setLevel(logging.INFO)
         self._log.info(
             "[red on white]" +
             f"{self.name}" +
             f"{f' ([#6f00d6 on white]parallel[/])' if self.is_parallel else f' ([#2d97ba on white]merge[/])' if self.merge_func else ''}" +
             "[/]")
+        self._log.removeHandler(self._log.handlers[-1])
+        self._log.setLevel(logging.NOTSET)
+
         self.func = self._wrap_func(self.func)
         if self.merge_func is not None:
             self.merge_func = self._wrap_merge_func(self.merge_func)
@@ -121,6 +149,157 @@ class TaskType(BaseModel):
         return self._task_group
 
 
+    @staticmethod
+    @contextmanager
+    def _capture_and_stream_trace(task_id):
+        """Capture stdout/stderr/logging AND C-level output, streaming to DB."""
+
+        # Save original file descriptors
+        old_stdout_fd = os.dup(1)
+        old_stderr_fd = os.dup(2)
+
+        # Create pipes for capturing C-level output
+        stdout_pipe_read, stdout_pipe_write = os.pipe()
+        stderr_pipe_read, stderr_pipe_write = os.pipe()
+
+        # Redirect file descriptors at OS level
+        os.dup2(stdout_pipe_write, 1)
+        os.dup2(stderr_pipe_write, 2)
+
+        # Redirect Python streams
+        old_out = sys.stdout
+        old_err = sys.stderr
+        capturer_out = StreamToDb(old_out, task_id, is_err=False)
+        capturer_err = StreamToDb(old_err, task_id, is_err=True)
+        sys.stdout = capturer_out
+        sys.stderr = capturer_err
+
+        ##############################################################
+        # In notebook environments (e.g. Google Colab / Jupyter),
+        # original_stream is ipykernel.iostream.OutStream which routes
+        # "writes" via ZMQ rather than the OS-level file descriptor,
+        # so the (below) "pipe_reader" threads never receive the data.
+        # Detect this and patch the StreamToDb instances so their
+        # write() additionally pushes data into the pipes, letting
+        # the existing pipe_reader threads capture notebook output
+        # exactly as they already do for CLI via the FD dup2.
+        try:
+            from IPython import get_ipython
+            _notebook_mode = (
+                get_ipython() is not None and
+                'IPKernelApp' in get_ipython().config
+            )
+        except:
+            _notebook_mode = False
+
+        if _notebook_mode:
+            _orig_out_write = capturer_out.write
+            _orig_err_write = capturer_err.write
+
+            # threading.local tracks re-entrant calls per thread.
+            # For pure "sys.stdout.write" calls,
+            # on the outer/top-level call, rp_logging intercepts
+            # and writes back formatted ANSI through a recursive call.
+            # We push to pipe only on that inner (recursive) call so
+            # the DB receives the ANSI-formatted string, not the raw one.
+            # If no inner call occurs (rp_logging inactive), we fall
+            # back to pushing raw at the end of the top-level call.
+            _nb_tl = threading.local()
+
+            def _nb_write(data, pipe_fd, orig):
+                is_top = not getattr(_nb_tl, 'active', False)
+                if is_top:
+                    _nb_tl.active = True
+                    _nb_tl.inner_pushed = False
+                try:
+                    result = orig(data)
+                finally:
+                    if is_top:
+                        _nb_tl.active = False
+
+                if data:
+                    encoded = (data.encode('utf-8')
+                               if isinstance(data, str) else data)
+                    if not is_top:
+                        # Inner/recursive call: rp_logging is writing
+                        # back the formatted ANSI output - push to pipe.
+                        os.write(pipe_fd, encoded)
+                        _nb_tl.inner_pushed = True
+                    elif not getattr(_nb_tl, 'inner_pushed', False):
+                        # Top-level call with no inner push: rp_logging
+                        # was not active, push raw as fallback.
+                        os.write(pipe_fd, encoded)
+                return result
+
+            capturer_out.write = lambda data, _fd=stdout_pipe_write, _o=\
+                                    _orig_out_write: _nb_write(data, _fd, _o)
+            capturer_err.write = lambda data, _fd=stderr_pipe_write, _o=\
+                                    _orig_err_write: _nb_write(data, _fd, _o)
+        ##############################################################
+
+        # Thread to read from pipes and write to trace buffer
+        def pipe_reader(pipe_fd, is_err):
+            trace_buffer = get_trace_buffer()
+            line_buffer = ""
+            try:
+                while True:
+                    data = os.read(pipe_fd, 1024).decode('utf-8', errors='replace')
+                    if not data:
+                        break
+                    line_buffer += data
+                    while '\n' in line_buffer:
+                        line, line_buffer = line_buffer.split('\n', 1)
+                        trace_timestamp = datetime.now(timezone.utc)
+                        trace_microsec = trace_timestamp.microsecond%1000
+                        trace_buffer.add_trace(
+                            task_id=task_id,
+                            content=line + '\n',
+                            timestamp=trace_timestamp,
+                            microsec=trace_microsec,
+                            is_err=is_err
+                        )
+                        if not _notebook_mode:
+                            # echo to console
+                            orig_fd = old_stderr_fd if is_err else old_stdout_fd
+                            os.write(orig_fd, (line + '\n').encode())
+                if line_buffer:
+                    trace_timestamp = datetime.now(timezone.utc)
+                    trace_buffer.add_trace(
+                        task_id=task_id,
+                        content=line_buffer,
+                        timestamp=trace_timestamp,
+                        microsec=trace_timestamp.microsecond%1000,
+                        is_err=is_err
+                    )
+            except Exception as ex:
+                pass
+
+        stdout_thread = threading.Thread(
+            target=pipe_reader, args=(stdout_pipe_read, False), daemon=True)
+        stderr_thread = threading.Thread(
+            target=pipe_reader, args=(stderr_pipe_read, True), daemon=True)
+        stdout_thread.start()
+        stderr_thread.start()
+
+        try:
+            yield
+        finally:
+            # Restore everything
+            sys.stdout = old_out
+            sys.stderr = old_err
+            os.dup2(old_stdout_fd, 1)
+            os.dup2(old_stderr_fd, 2)
+            os.close(stdout_pipe_write)
+            os.close(stderr_pipe_write)
+            stdout_thread.join(timeout=1)
+            stderr_thread.join(timeout=1)
+            os.close(stdout_pipe_read)
+            os.close(stderr_pipe_read)
+            os.close(old_stdout_fd)
+            os.close(old_stderr_fd)
+            capturer_out.trace_buffer.flush()
+
+
     def _wrap_merge_func(self, merge_func):
         """Wrap the function
 
@@ -142,6 +321,42 @@ class TaskType(BaseModel):
                 start_timestamp=datetime.now(timezone.utc)
             )
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+            # Register task with registry for interrupt handling
+            from ..runtime import _task_registry
+            import os as _os
+            pid = _os.getpid()
+            _task_registry.register_task(task_id, pid)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
             self.log.info(
                 framed_rich_log_str(
                     f"\N{wrench} Executing Merge "
@@ -156,7 +371,13 @@ class TaskType(BaseModel):
             )
 
             try:
-                result = merge_func(*args, **kwargs)
+                with TaskType._capture_and_stream_trace(task_id):
+                    try:
+                        result = merge_func(*args, **kwargs)
+                    except Exception:
+                        traceback.print_exc()
+                        sys.stderr.flush()
+                        raise
             except Exception as ex:
                 end_timestamp = datetime.now(timezone.utc)
                 dao.update_task(
@@ -164,15 +385,14 @@ class TaskType(BaseModel):
                     end_timestamp=end_timestamp,
                     failed=True
                 )
-                dao.update_execution(
-                    id=exec_id,
-                    end_timestamp=end_timestamp,
-                    context_dump=serialize(ctx._params)
-                )
                 raise TaskMergeFuncException(
                         f"merge `{merge_func.__name__}` " +
                         f"of task `{self.name}` failed"
                     ) from ex
+            finally:
+                dao.dispose()
+                # Unregister task from registry
+                _task_registry.unregister_task(task_id)
 
             return task_id, result
 
@@ -215,6 +435,48 @@ class TaskType(BaseModel):
                 if "task_id" in arg_names:
                     kwargs["task_id"] = task_id
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+            # Register task with registry for interrupt handling
+            from ..runtime import _task_registry
+            import os as _os
+            pid = _os.getpid()
+            _task_registry.register_task(task_id, pid)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
             docstring = '\n'.join(
                 f'[bold green]{line}[/]'
                 for line in filter(None, [
@@ -231,8 +493,8 @@ class TaskType(BaseModel):
                     f"[#D2691E]`{self.name}[{task_id}]"
                     f"{f'[{rank}]' if rank is not None else ''}`[/]:\n"
                     f"Inputs :\n"
-                    f"  \N{BULLET} Positional: {args}\n"
-                    f"  \N{BULLET} Keyword   : {kwargs}" +
+                    f"  \N{BULLET} Positional: {escape(str(args))}\n"
+                    f"  \N{BULLET} Keyword   : {escape(str(kwargs))}" +
                     (f"\n[bold green]{docstring}[/]" if docstring else ""),
                     border_color="#FFFFE0"
                 )
@@ -240,11 +502,17 @@ class TaskType(BaseModel):
 
             task_failed = False
             try:
-                result = func(*args, **kwargs)
+                with TaskType._capture_and_stream_trace(task_id):
+                    try:
+                        result = func(*args, **kwargs)
+                    except Exception:
+                        traceback.print_exc()
+                        sys.stderr.flush()
+                        raise
                 self.log.info(
                     f"\n\N{WHITE HEAVY CHECK MARK} Completed Task [#D2691E]`{self.name}[{task_id}]{f'[{rank}]' if rank is not None else ''}`[/]:\n"
                     f"Results :\n" +
-                    f"  \N{BULLET} {result} {f'({type(result).__name__})' if result is not None else ''}\n"
+                    f"  \N{BULLET} {escape(str(result))} {f'({type(result).__name__})' if result is not None else ''}\n"
                 )
             except Exception as ex:
                 task_failed = True
@@ -257,12 +525,9 @@ class TaskType(BaseModel):
                     end_timestamp=end_timestamp,
                     failed=task_failed
                 )
-                if task_failed or (len(self.children) == 0):
-                    dao.update_execution(
-                        id=exec_id,
-                        end_timestamp=end_timestamp,
-                        context_dump=serialize(ctx._params)
-                    )
+                dao.dispose()
+                # Unregister task from registry
+                _task_registry.unregister_task(task_id)
 
             return task_id, result
 
@@ -312,6 +577,40 @@ class TaskType(BaseModel):
 
     def __repr__(self):
         return f"{self.__str__()}"
+
+
+    @staticmethod
+    def _reconstruct_task_by_name(func_name: str, func_module: str) -> "TaskType":
+        """Reconstruct a TaskType by importing it from its module."""
+        import importlib
+        
+        module = importlib.import_module(func_module)
+        task = getattr(module, func_name)
+        
+        # Should already be a TaskType due to @task decorator
+        if isinstance(task, TaskType):
+            return task
+        
+        # This shouldn't happen, but handle it gracefully
+        raise ValueError(
+            f"Expected {func_name} in {func_module} to be a TaskType, "
+            f"but got {type(task).__name__}"
+        )
+
+    def __reduce__(self):
+        """Enable pickling by referencing the module-level TaskType."""
+        return (
+            TaskType._reconstruct_task_by_name,
+            (self.func.__name__, self.func.__module__)
+        )
+
+
+class DistributionNotSupportedError(Exception):
+    """Raised when attempting to start a distributed sub-DAG
+    (parallel_task) off several direct predecessors.
+    A parallel-task takes a the payload from a single predecessor,
+    which pauyload is expected to be an iterator."""
+    pass
 
 
 class MergeNotSupportedError(Exception):
@@ -377,12 +676,24 @@ class TaskGroup(BaseModel):
                     f"Error instanciating taskgroup `{name}`"
                 ) from ex
 
+        self._log = logger
+
         for elmt in self.elements:
             elmt._task_group = self
 
-        logging.getLogger().info(
-            f"[red on white]{self}[/red on white]"
+        # add custom-rich handler
+        # (since package-logger doesn't hold one when we're here)
+        self._log.addHandler(tasktype_taskgroup_rich_handler)
+        self._log.setLevel(logging.INFO)
+        self._log.info(
+            f"[red on white]" +
+            self.name +
+            str([f"[green]{elemt_name}[/green]"
+                 for elemt_name in self._get_elements_names()]) +
+            "[/red on white]"
         )
+        self._log.removeHandler(self._log.handlers[-1])
+        self._log.setLevel(logging.NOTSET)
 
 
     @property
@@ -402,10 +713,18 @@ class TaskGroup(BaseModel):
         Allows chaining: a >> b >> c or a >> TaskGroup(b, c).
         """
         if isinstance(other, TaskType):
+            if other.is_parallel:
+                raise DistributionNotSupportedError(
+                    "parallel-tasks can only have 1 parent. " +
+                    f"You tried to chain taskgroup '{self.name}' " +
+                    f"before parallel-task '{other.name}' here.")
             if other.merge_func:
                 # Note: TODO, implement support for that someday (or not)
                 raise MergeNotSupportedError(
-                    "merging tasks can only have 1 parent")
+                    "merging-tasks can only have 1 parent. " +
+                    f"You tried to chain taskgroup '{self.name}' " +
+                    f"before merging-task '{other.name}' here.")
+
             self._add_child(other)
             return other
         elif isinstance(other, TaskGroup):
@@ -477,18 +796,64 @@ class DAG(BaseModel):
         """Shall be called programmatically 
         by the DAG execution routine.
         """
-        # Get the calling frame (2 levels up)
-        frame = inspect.currentframe()
-        caller_frame = frame.f_back.f_back
-        if (
-            os.path.basename(caller_frame.f_code.co_filename).split(".")[-2]
-                != "retraining_pipeline"
-        ):
-            pipeline_name = os.path.basename(
-                caller_frame.f_code.co_filename).split(".")[-2]
+        if not in_notebook():
+            # Get the calling frame (3 levels up)
+            frame = inspect.currentframe()
+            caller_frame = frame.f_back.f_back.f_back
+            if (
+                os.path.basename(caller_frame.f_code.co_filename).split(".")[-2]
+                    != "retraining_pipeline"
+            ):
+                pipeline_name = os.path.basename(
+                    caller_frame.f_code.co_filename).split(".")[-2]
+            else:
+                pipeline_name = os.path.basename(
+                    os.path.dirname(caller_frame.f_code.co_filename))
         else:
-            pipeline_name = os.path.basename(
-                os.path.dirname(caller_frame.f_code.co_filename))
+            # note that notebooks cells do get frame filenames
+            # like /tmp/ipykernel_5124/2977828399.py
+            # so we don't rely on that to get the pipeline-name
+            # from python module name
+            pipeline_name = None
+            # when a launcher script is executed
+            # as __main__ from a notebook cell,
+            # __main__.__file__ is the script path.
+            # => that filename IS the pipeline name.
+            main_mod = sys.modules.get("__main__")
+            main_file = getattr(main_mod, "__file__", None)
+            if (main_file and
+                    not re.search(r'ipykernel_\d+/\d+\.py$', main_file)):
+                pipeline_name = os.path.basename(main_file).rsplit(".", 1)[0]
+            # otherwise (plain notebook cell),
+            # we scan for the module that owns this
+            # DAG instance, (skipping all dunder-named
+            # execution namespaces)
+            if pipeline_name is None:
+                for mod_name, mod in list(sys.modules.items()):
+                    if (mod is None or
+                            (
+                                mod_name.startswith("__") and
+                                mod_name.endswith("__")
+                            )
+                    ):
+                        continue
+                    try:
+                        for attr in vars(mod).values():
+                            if attr is self:
+                                pipeline_name = mod_name.split(".")[-1]
+                                break
+                    except Exception:
+                        pass
+                    if pipeline_name:
+                        break
+
+            if pipeline_name is None:
+                pipeline_name = "retraining_pipeline"
+
+            if pipeline_name == "retraining_pipeline":
+                pipeline_name = os.path.basename(os.getcwd())
+
+        username = getpass.getuser()
 
         dao = DAO(os.environ["RP_METADATASTORE_URL"])
         exec_id = dao.add_execution(
@@ -498,7 +863,7 @@ class DAG(BaseModel):
                 name: param.to_serializable_dict()
                 for name, param in self.params.items()
             },
-            username=getpass.getuser(),
+            username=username,
             ui_css=self.ui_css.__dict__ if self.ui_css else None,
             start_timestamp=datetime.now(timezone.utc)
         )
@@ -509,10 +874,13 @@ class DAG(BaseModel):
         for i, taskgroup in enumerate(taskgroups_list):
             dao.add_taskgroup(exec_id=exec_id, order=i,
                              **taskgroup)
+        dao.dispose()
 
         # Update context
         _dag_execution_context_var.get().update(
-            pipeline_name=pipeline_name, exec_id=exec_id
+            pipeline_name=pipeline_name, exec_id=exec_id,
+            username=username,
+            params_definitions=self.params
         )
 
 
@@ -596,9 +964,14 @@ class DAG(BaseModel):
 
     @staticmethod
     def _find_root_tasks(task: TaskType) -> list[TaskType]:
-        """Find all root tasks in the DAG starting from the given task."""
+        """Find all root tasks in the DAG starting from the given task,
+
+        often the DAG tail."""
+
+        # Handle case where DAG ends with a TaskGroup
+        stack = list(task.elements) if isinstance(task, TaskGroup) else [task]
+
         all_tasks = set()
-        stack = [task]
         while stack:
             current = stack.pop()
             if current not in all_tasks:
@@ -609,14 +982,38 @@ class DAG(BaseModel):
 
     def help(self) -> str:
         """Generate help text for DAG parameters."""
-        if not self.params:
-            return "No parameters defined for this DAG."
+        lines = []
 
-        lines = ["DAG Parameter definitions:"]
+        if self.docstring:
+            lines.append(textwrap.dedent(self.docstring))
+            lines.append("")
+
+        if not self.params:
+            lines.append("No parameters defined for this DAG.")
+            return "\n".join(lines)
+
+        lines.append("DAG Parameters definitions:")
         for name, param in self.params.items():
             default = f" [default: {param.default}]" if param.default is not None else ""
-            lines.append(f"  {name}: {param.description}{default}")
+            lines.append(f"  - {name}: {param.description}{default}")
         return "\n".join(lines)
+
+
+    @staticmethod
+    def mark_complete(exec_id: int):
+        """Mark the execution as complete.
+        
+        Shall be called programmatically by the DAG execution routine
+        when the entire DAG execution finishes.
+        """
+        dao = DAO(os.environ["RP_METADATASTORE_URL"])
+        context = _dag_execution_context_var.get()
+        dao.update_execution(
+            id=exec_id,
+            end_timestamp=datetime.now(timezone.utc),
+            context_dump=context.to_serializable_dict()  # Only serialize for DB
+        )
+        dao.dispose()
 
 
 # ---- Decorators for Task Declaration ----
@@ -826,6 +1223,22 @@ class TaskPayload:
         self._data = data
 
     def __getitem__(self, key: str) -> Any:
+        # If single entry, try to delegate to the wrapped value
+        if len(self._data) == 1:
+            # First check if key is in _data (task name lookup)
+            try:
+                if key in self._data:
+                    return self._data[key]
+            except TypeError:
+                # key is unhashable, so it can't be a task name
+                #  => Delegate to the wrapped value
+                pass
+
+            # If not a task name,
+            #  => delegate to wrapped value
+            value = list(self._data.values())[0]
+            return value[key]
+
         return self._data[key]
 
     def __setitem__(self, key: str, value: Any) -> None:
@@ -900,8 +1313,19 @@ class TaskPayload:
         return NotImplemented
 
     def __getattr__(self, name):
-        if len(self._data) == 1:
-            value = list(self._data.values())[0]
+        # Prevent recursion during pickling/unpickling
+        if name == '_data':
+            raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '_data'")
+        
+        # Use object.__getattribute__ to avoid recursion
+        try:
+            _data = object.__getattribute__(self, '_data')
+        except AttributeError:
+            raise AttributeError(
+                f"'{self.__class__.__name__}' object has no attribute '{name}'")
+        
+        if len(_data) == 1:
+            value = list(_data.values())[0]
             return getattr(value, name)
         raise AttributeError(
             f"'{self.__class__.__name__}' object has no attribute '{name}'")
@@ -912,6 +1336,18 @@ class TaskPayload:
     def __repr__(self):
         return self.__str__()
 
+    # METHODS FOR PICKLING
+    def __getstate__(self):
+        """Return state for pickling."""
+        return {'_data': self._data}
+    
+    def __setstate__(self, state):
+        """Restore state from pickling."""
+        self._data = state['_data']
+    
+    def __reduce__(self):
+        """Enable pickling."""
+        return (TaskPayload, (self._data,))
 
 class UiCss(BaseModel):
     background: Optional[str] = Field(
@@ -939,62 +1375,28 @@ class UiCss(BaseModel):
         )
     )
 
-    if IS_PYDANTIC_V2:
-        @field_validator("background", "color", "border")
-        @classmethod
-        def must_be_hex_color(
-            cls, v: Optional[str],
-            info: ValidationInfo
-        ) -> Optional[str]:
-            if (
-                v is not None and
-                not re.match(r'^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$', v)
-            ):
-                raise ValueError(
-                    f"{cls.__name__}.{info.field_name} got invalid value {v!r}: "
-                    "must be a hex color code starting with #."
-                )
-            return v
+    @field_validator("background", "color", "border")
+    @classmethod
+    def must_be_hex_color(
+        cls, v: Optional[str],
+        info: ValidationInfo
+    ) -> Optional[str]:
+        if (
+            v is not None and
+            not re.match(r'^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$', v)
+        ):
+            raise ValueError(
+                f"{cls.__name__}.{info.field_name} got invalid value {v!r}: "
+                "must be a hex color code starting with #."
+            )
+        return v
 
-    else:
-        @validator("background", "color", "border")
-        def must_be_hex_color(cls, v: Optional[str]) -> Optional[str]:
-            if (
-                v is not None and
-                not re.match(r'^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$', v)
-            ):
-                raise ValueError(
-                    f"{cls.__name__}.field got invalid value {v!r}: "
-                    "must be a hex color code starting with #."
-                )
-            return v
 
     def to_dict(self) -> dict:
         # Filter out None values before serializing
         data = {k: v for k, v in self.dict().items() if v is not None}
         return data
 
-
-def serialize(obj: Any) -> Any:
-    """
-    Convert obj into JSON-serializable primitives.
-    """
-    if obj is None:
-        return None
-    if isinstance(obj, (str, int, float, bool)):
-        return obj
-    if isinstance(obj, (datetime, date)):
-        return obj.isoformat()
-    if isinstance(obj, BaseModel):
-        # convert model to plain dict first,
-        # then serialize recursively
-        return serialize(obj.dict())
-    if isinstance(obj, dict):
-        return {k: serialize(v) for k, v in obj.items()}
-    if isinstance(obj, (list, tuple, set)):
-        return [serialize(v) for v in obj]
-    # Safe fallback
-    return str(obj)
 
 class DagParam(BaseModel):
     """Represents a parameter for DAG execution."""
@@ -1003,25 +1405,79 @@ class DagParam(BaseModel):
 
     def to_serializable_dict(self) -> Dict[str, Any]:
         """Return a JSON-serializable dict representation of this DagParam."""
-        return {"description": self.description, "default": serialize(self.default)}
+        return {"description": self.description,
+                "default": DagParam._serialize(self.default)}
+
+    @staticmethod
+    def _serialize(obj: Any) -> Any:
+        """
+        Convert obj into JSON-serializable primitives.
+        """
+        if obj is None:
+            return None
+        if isinstance(obj, (str, int, float, bool)):
+            return obj
+        if isinstance(obj, (datetime, date)):
+            return obj.isoformat()
+        if isinstance(obj, BaseModel):
+            # convert model to plain dict first,
+            # then serialize recursively
+            return DagParam._serialize(obj.dict())
+        if isinstance(obj, dict):
+            return {k: DagParam._serialize(v)
+                    for k, v in obj.items()}
+        if isinstance(obj, (list, tuple, set)):
+            return [DagParam._serialize(v) for v in obj]
+        # Safe fallback
+        return str(obj)
+
 
 # only to be called in the runtime module.
 _dag_execution_context_var = \
-    contextvars.ContextVar('dag_execution_context', default=None)
+    contextvars.ContextVar("dag_execution_context", default=None)
 
 class DagExecutionContext:
     """Container for DAG execution parameters accessible within tasks."""
     def __init__(self, params: Dict[str, Any]):
         self._params = params
+        self._updates = {}  # Track updates made in this context
 
     def __getattr__(self, name: str) -> Any:
         if name.startswith('_'):
             return object.__getattribute__(self, name)
         return self._params.get(name)
 
+    @staticmethod
+    def _deep_update(target: dict, updates: dict):
+        for k, v in updates.items():
+            if k in target and isinstance(target[k], dict) and isinstance(v, dict):
+                DagExecutionContext._deep_update(target[k], v)  # recurse
+            else:
+                target[k] = v
+
     def update(self, **kwargs):
         """Update context parameters."""
-        self._params.update(kwargs)
+        DagExecutionContext._deep_update(self._params, kwargs)
+        DagExecutionContext._deep_update(self._updates, kwargs)
+    
+    def get_updates(self) -> Dict[str, Any]:
+        """Get all updates made in this context."""
+        return self._updates.copy()
+    
+    def merge_updates(self, updates: Dict[str, Any]):
+        """Merge updates from child context (child wins on conflicts)."""
+        DagExecutionContext._deep_update(self._params, updates)
+        DagExecutionContext._deep_update(self._updates, updates)
+    
+    def copy(self):
+        """Create a deep copy of this context for child tasks runs."""
+        new_ctx = DagExecutionContext(copy.deepcopy(self._params))
+        return new_ctx
+    
+    def to_serializable_dict(self) -> Dict[str, Any]:
+        """Convert to serializable format ONLY for database storage."""
+        return {k: DagParam._serialize(v)
+                for k, v in self._params.items()}
 
 class _ContextProxy:
     """Proxy that automatically calls .get() on the ContextVar"""
@@ -1040,10 +1496,66 @@ class _ContextProxy:
                 "DAG execution context not set. " +
                 "Are you calling this outside of a DAG execution?")
         ctx._params[name] = value
+        ctx._updates[name] = value  # Track the updates
 
 ctx = _ContextProxy()
 
-if not IS_PYDANTIC_V2:
-    TaskType.update_forward_refs()
-    DAG.update_forward_refs()
+
+# task-traces
+class StreamToDb(io.TextIOBase):
+    def __init__(self, original_stream, task_id, is_err):
+        super().__init__()
+        self.original_stream = original_stream
+        self.task_id = task_id
+        self.is_err = is_err
+        self.trace_buffer = get_trace_buffer()
+        self.line_buffer = ""
+
+    def write(self, data):
+        if not data:
+            return
+
+        ## DEBUG
+        # self.original_stream.write("StreamToDb.write\n")
+        # self.original_stream.write("'")
+        # self.original_stream.write(data)
+        # self.original_stream.write("'\n")
+
+        self.original_stream.write(data)
+        self.original_stream.flush()
+
+        self.line_buffer += data
+
+        return len(data)
+
+    def flush(self):
+        if self.line_buffer:
+            # Process line_buffer to DB before clearing
+            pass
+        self.line_buffer = ""
+        self.original_stream.flush()
+
+    def isatty(self):
+        return self.original_stream.isatty()
+
+    def close(self):
+        """
+        Note: Rich (and many libraries) call close()
+              on streams during context managers,
+              but we need the original stream
+              to stay alive.
+        """
+        self.flush()
+        pass  # Don't close original_stream
+              # let OS manage it on exit
+
+    def fileno(self):
+        return self.original_stream.fileno()
+
+    def __getattr__(self, name):
+        return getattr(self.original_stream, name)
+
+    def __del__(self):
+        """Close wrapped stream on GC"""
+        self.flush()
 

@@ -10,7 +10,8 @@ import tzlocal
 from http import HTTPStatus
 from datetime import datetime
 from typing import Optional, List
-from fasthtml.common import Div, Span
+from fasthtml.common import Div, Span, \
+    WebSocket
 from pydantic import BaseModel, validator
 from uvicorn.logging import AccessFormatter
 
@@ -91,6 +92,15 @@ def get_log_config():
 # ---- initial state for ui ----
 
 
+# Regex to parse the log string
+LOG_ENTRY_PATTERN = regex.compile(
+    r"^(?P<timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) "
+    r"\[(?P<level>[A-Z]+)\] "
+    r"(?P<client_addr>(?:\d{1,3}(?:\.\d{1,3}){3}|(?:[0-9a-fA-F]{0,4}:)+[0-9a-fA-F]{0,4}):\d+) - "
+    r"'(?P<method>[A-Za-z]+) (?P<message>.+?) HTTP/[\d\.]+' "
+    r"(?P<status_code>\d{3})"
+)
+
 class AccessLogEntry(BaseModel):
     raw_str: str
     timestamp: datetime
@@ -108,15 +118,15 @@ class AccessLogEntry(BaseModel):
     def extract_ip(cls, v):
         # Handles IPv4 and IPv6, with or without port
         # IPv6 addresses may be in [::1]:12345 format
+        # IPv6 addresses may be in ::1:12345 format
         # IPv4: 127.0.0.1:12345 or just 127.0.0.1
-        if v.startswith('['):  # IPv6 with port, e.g. [::1]:12345
-            match = regex.match(r'^\[([^\]]+)\](?::\d+)?$', v)
+        if v.startswith('['): # IPv6 with port, e.g. [::1]:12345
+            match = regex.match(r'^\[([^\\\\]]+)\\\\](?::\\\\d+)?$', v)
             if match:
                 return match.group(1)
         else:
             # IPv4 or IPv6 without brackets
-            return v.split(':')[0]
-        return v  # fallback, should not happen
+            return v.rsplit(':', 1)[0]
 
     def to_json(self) -> str:
         log_entry = {
@@ -153,18 +163,25 @@ class AccessLogEntry(BaseModel):
         )
 
         method_icon = {
-            'GET':     "\N{DOWNWARDS BLACK ARROW}", # fetching data
-            'POST':    "\N{UPWARDS BLACK ARROW}",   # sending data
-            'PUT':     "\N{PENCIL}",                # updating data
-            'DELETE':  "\N{WASTEBASKET}",           # deleting data
-            'PATCH':   "\N{ADHESIVE BANDAGE}",      # patching data
-            'HEAD':    "\N{BRAIN}",                 # "head"
-            'OPTIONS': "\N{GEAR}",                  # options/config
+            "GET":     "\N{DOWNWARDS BLACK ARROW}", # fetching data
+            "POST":    "\N{UPWARDS BLACK ARROW}",   # sending data
+            "PUT":     "\N{PENCIL}",                # updating data
+            "DELETE":  "\N{WASTEBASKET}",           # deleting data
+            "PATCH":   "\N{ADHESIVE BANDAGE}",      # patching data
+            "HEAD":    "\N{BRAIN}",                 # "head"
+            "OPTIONS": "\N{GEAR}",                  # options/config
             # websocket, persistent, bidirectional connection
-            'ws': "\N{ELECTRIC PLUG}",
+            "ws":   "\N{ELECTRIC PLUG}",
             # server-side event, one-way, server-to-client streaming
-            'sse':       "\N{SATELLITE ANTENNA}",
-        }.get(self.method, "\N{TWISTED RIGHTWARDS ARROWS}")
+            "sse":  "\N{SATELLITE ANTENNA}",
+            # gRPC, bidirectional RPC communication
+            "grpc": "\N{UP DOWN ARROW}",
+        }.get(
+            self.method,
+            "\N{TWISTED RIGHTWARDS ARROWS}"
+            # "\N{ANTENNA WITH BARS}"
+            # "\N{TRIDENT EMBLEM}"
+        )
 
         timestamp_local = self.timestamp.replace(tzinfo=server_tz)
 
@@ -258,6 +275,7 @@ class AccessLogEntry(BaseModel):
             cls=["log-entry", "wavy-list-item", "wavy-list-item-body"],
             title="WebSocket" if self.method == "ws" else \
                   "Server-Side Event" if self.method == "sse" else \
+                  "gRPC" if self.method == "grpc" else \
                   f"{self.status_code} - {HTTPStatus(self.status_code).phrase}"
         )
 
@@ -269,15 +287,7 @@ class AccessLogEntry(BaseModel):
         Parse a classic access log string like:
         2025-07-06 15:41:53 [INFO] 127.0.0.1:36042 - 'POST /ui/update HTTP/1.1' 200 OK
         """
-        # Regex to parse the log string
-        pattern = regex.compile(
-            r"^(?P<timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) "
-            r"\[(?P<level>[A-Z]+)\] "
-            r"(?P<client_addr>\d{1,3}(?:\.\d{1,3}){3}:\d+) - "
-            r"'(?P<method>[A-Za-z]+) (?P<message>.+?) HTTP/[\d\.]+' "
-            r"(?P<status_code>\d{3})"
-        )
-        match = regex.match(pattern, log)
+        match = regex.match(LOG_ENTRY_PATTERN, log)
         if not match:
             raise ValueError(
                 f"Log string `{log}` does not match expected format"
@@ -315,7 +325,8 @@ def _read_last_n_lines(
     regex_filter: str | None
 ) -> list[bytes]:
     matches = []
-    pattern = regex.compile(regex_filter) if regex_filter else None
+    filtering_pattern = regex.compile(regex_filter) if regex_filter \
+                        else None
 
     try:
         with open('/proc/version', 'r') as f:
@@ -341,7 +352,8 @@ def _read_last_n_lines(
             lines = result.stdout.strip().split('\n')
             lines = [line for line in lines if line.strip()]
             if regex_filter:
-                filtered = [line for line in reversed(lines) if pattern.match(line)]
+                filtered = [line for line in reversed(lines)
+                            if filtering_pattern.match(line)]
                 if len(filtered) >= n:
                     return [l.encode('utf-8') for l in reversed(filtered[:n])]
                 # Not enough matches, read more lines next time
@@ -368,7 +380,9 @@ def _read_last_n_lines(
                 # Only scan new lines added in this block
                 for line in reversed(lines):
                     if regex_filter:
-                        if pattern.match(line.decode('utf-8', 'replace')):
+                        if filtering_pattern.match(
+                            line.decode('utf-8', 'replace')
+                        ):
                             matches.append(line)
                             if len(matches) == n:
                                 return list(reversed(matches))
@@ -509,7 +523,7 @@ def get_log_websocket_endpoint(
 
     ws_log_handler = WebSocketLogHandler(route)
 
-    async def websocket_endpoint(websocket):
+    async def websocket_endpoint(websocket: WebSocket):
         await websocket.accept()
 
         # Only add handlers once
@@ -561,6 +575,10 @@ def get_log_websocket_endpoint(
             )
         finally:
             ws_log_handler.unregister(websocket)
+            try:
+                await websocket.close()
+            except:
+                pass
 
     return websocket_endpoint
 

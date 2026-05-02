@@ -16,10 +16,68 @@ from .executions import execution_to_html
 new_exec_subscribers = []
 exec_end_subscribers = []
 
+
 uvicorn_logger = logging.getLogger("uvicorn.access")
 
 
+###### clean shutdown on hard thread kill ######################################
+
+# Sentinel pushed into every subscriber queue on server shutdown,
+# so each generator exits cleanly and its finally-block fires.
+_SHUTDOWN = object()
+
+# The asyncio event loop the server runs on.
+# Set by the first generator that starts; cleared on reset.
+_server_loop = None
+
+
+def notify_server_shutdown():
+    """Push the shutdown sentinel into every active subscriber queue.
+
+    Called from the main (notebook) thread before the server thread
+    is killed, giving generators time to exit and run their finally-blocks
+    (which remove them from the subscriber lists).
+    """
+    global _server_loop
+    if not (_server_loop is None or _server_loop.is_closed()):
+        for queue, _ in (
+            list(new_exec_subscribers) +
+            list(exec_end_subscribers)
+        ):
+            try:
+                _server_loop.call_soon_threadsafe(
+                    queue.put_nowait, _SHUTDOWN)
+            except RuntimeError:
+                pass
+    else:
+        # No live loop — just wipe the lists directly as a safety net.
+        pass
+    new_exec_subscribers.clear()
+    exec_end_subscribers.clear()
+
+
+def reset_for_restart():
+    """Wipe any stale subscriber state before a new server start.
+
+    Safety net for the case where notify_server_shutdown() didn't manage
+    to drain everything (e.g. hard kernel restart).
+    """
+    global _server_loop
+    _server_loop = None
+    new_exec_subscribers.clear()
+    exec_end_subscribers.clear()
+
+
+################################################################################
+
+
 async def multiplexed_event_generator(client_info: ClientInfo):
+    global new_exec_subscribers, exec_end_subscribers, \
+           _server_loop
+
+    if _server_loop is None:
+        _server_loop = asyncio.get_event_loop()
+
     queues = {
         "newExecution": asyncio.Queue(),
         "executionEnded": asyncio.Queue()
@@ -27,7 +85,8 @@ async def multiplexed_event_generator(client_info: ClientInfo):
 
     new_exec_subscribers.append((queues["newExecution"], client_info))
     exec_end_subscribers.append((queues["executionEnded"], client_info))
-    print(f"executions subscribers [{len(new_exec_subscribers)}] : {new_exec_subscribers}")
+    print(f"executions subscribers [{len(new_exec_subscribers)}] : " +
+          f"{new_exec_subscribers}")
 
     try:
         # Initial get asyncio tasks
@@ -42,7 +101,17 @@ async def multiplexed_event_generator(client_info: ClientInfo):
             for finished in done:
                 # Identify which asyncio queue/task finished
                 key = next(k for k, v in get_tasks.items() if v == finished)
-                data = copy.copy(finished.result())
+                result = finished.result()
+
+                # Server shutdown signal — exit cleanly so finally runs.
+                if result is _SHUTDOWN:
+                    for task in get_tasks.values():
+                        task.cancel()
+                    await asyncio.gather(*get_tasks.values(),
+                                         return_exceptions=True)
+                    return
+
+                data = copy.copy(result)
                 if key == "newExecution":
                     event_type = "newExecution"
                     execution = Execution(data)
@@ -73,7 +142,14 @@ async def multiplexed_event_generator(client_info: ClientInfo):
         # (ensuring the asyncio task is cancelled)
         raise
     finally:
-        new_exec_subscribers.remove((queues["newExecution"], client_info))
-        exec_end_subscribers.remove((queues["executionEnded"], client_info))
-        print(f"executions subscribers [{len(new_exec_subscribers)}] : {new_exec_subscribers}")
+        try:
+            new_exec_subscribers.remove((queues["newExecution"], client_info))
+        except Exception:
+            pass
+        try:
+            exec_end_subscribers.remove((queues["executionEnded"], client_info))
+        except Exception:
+            pass
+        print(f"executions subscribers [{len(new_exec_subscribers)}] : " +
+              f"{new_exec_subscribers}")
 

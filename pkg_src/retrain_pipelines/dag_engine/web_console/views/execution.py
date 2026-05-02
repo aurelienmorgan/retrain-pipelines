@@ -1,13 +1,14 @@
 
 import os
+import logging
 import asyncio
 
 from typing import List, Tuple
 from fasthtml.common import H1, H2, Div, P, \
-    Link, Script, Style, Button, \
+    Span, A, Link, Script, Style, Button, \
     Table, Colgroup, Col, Thead, Tr, Th, Tbody, \
     Request, Response, JSONResponse, \
-    StreamingResponse
+    StreamingResponse, HTMLResponse, HTTPException
 from jinja2 import Environment, FileSystemLoader
 
 
@@ -125,6 +126,7 @@ def register(app, rt, prefix=""):
         env.globals['get_text_pixel_width'] = get_text_pixel_width
         template = env.get_template("svg_template.html")
         rendering_content = template.render(
+            id_prefix="00000",
             nodes=tasktypes_list,
             taskgroups=taskgroups_list or []
         )
@@ -181,6 +183,97 @@ def register(app, rt, prefix=""):
         execution_number_response = await execution_number(execution_id)
 
         return execution_number_response
+
+
+    @rt(f"{prefix}/tasktype_docstring", methods=["GET"])
+    async def tasktype_docstring(request: Request):
+        tasktype_uuid = request.query_params.get("uuid")
+        try:
+            tasktype_uuid = str(tasktype_uuid)
+        except (TypeError, ValueError):
+            return Response(
+                f"Invalid tasktype UUID {tasktype_uuid}", 500)
+
+        dao = AsyncDAO(
+            db_url=os.environ["RP_METADATASTORE_ASYNC_URL"]
+        )
+        tasktype_docstring = \
+            await dao.get_tasktype_docstring(tasktype_uuid)
+
+        return JSONResponse(tasktype_docstring)
+
+
+    @rt(f"{prefix}/pipeline-card", methods=["GET"])
+    async def pipeline_card(request: Request):
+        exec_id = request.query_params.get("exec_id")
+        try:
+            execution_id = int(exec_id)
+        except (TypeError, ValueError):
+            raise HTTPException(
+                status_code=500,
+                detail=f"exec_id '{exec_id}'"
+            )
+
+        dao = AsyncDAO(
+            db_url=os.environ["RP_METADATASTORE_ASYNC_URL"]
+        )
+        try:
+            execution_name = (
+                await dao.get_execution(execution_id)).name
+        except AttributeError as ex:
+            raise HTTPException(
+                status_code=500,
+                detail=f"exec_id '{exec_id}' not valid."
+            )
+
+        filename = os.path.join(
+            os.environ["RP_ARTIFACTS_STORE"],
+            execution_name, str(execution_id),
+            "pipeline_card.html"
+        )
+        if not os.path.exists(filename):
+            uvicorn_logger = logging.getLogger("uvicorn")
+            client_info = ClientInfo(
+                ip=request.client.host,
+                port=request.client.port,
+                url=request.url.path
+            )
+            uvicorn_logger.info(
+                f"{client_info['ip']}:{client_info['port']}" +
+                f"{client_info['url']} pipeline-card not found "+
+                filename
+            )
+            raise HTTPException(
+                status_code=404,
+                detail="pipeline-card not found"
+            )
+
+        with open(filename, 'r', encoding='utf-8') as f:
+            html_content = f.read()
+
+        return HTMLResponse(
+            content=html_content, status_code=200)
+
+
+    @rt(f"{prefix}/task_traces", methods=["GET"])
+    async def get_task_traces(request: Request):
+        task_id = request.query_params.get("task_id")
+        try:
+            task_id = int(task_id)
+        except (TypeError, ValueError):
+            return Response(
+                f"Invalid task ID {task_id}", 500)
+
+        dao = AsyncDAO(
+            db_url=os.environ["RP_METADATASTORE_ASYNC_URL"]
+        )
+        task_traces = await dao.get_task_traces(task_id)
+        if task_traces:
+            for task_trace in task_traces:
+                task_trace["timestamp"] = int(
+                    task_trace["timestamp"].timestamp() * 1_000)
+
+        return JSONResponse(task_traces)
 
 
     @rt(f"{prefix}/execution_events", methods=["GET"])
@@ -252,6 +345,249 @@ def register(app, rt, prefix=""):
                     ),
                     id="subtitle"
                 ),
+                Div(# pipeline-card button
+                    A(
+                        Div(
+                            Div(
+                                "pipeline-card"
+                            ),
+                            Div(
+                                "\U0001F5D7", # &#x1f5d7;
+                                style=(
+                                    "display: inline-block; "
+                                    "vertical-align: top; "
+                                    "margin-top: -5px;"
+                                )
+                            ),
+                            style="""
+                                font-size: 16px;
+                                font-weight: 700;
+                                line-height: 1;
+                                display: inline-flex;
+                                width: 100%;
+                                justify-content: center;
+                                align-items: center;
+                                gap: 6px;
+                                background: linear-gradient(
+                                    145deg,
+                                    #d4a9f2 0%,
+                                    #c28be8 20%,
+                                    #a55ccc 40%,
+                                    #8a3fb8 50%,
+                                    #a55ccc 60%,
+                                    #c28be8 80%,
+                                    #d4a9f2 100%
+                                );
+                                -webkit-background-clip: text;
+                                background-clip: text;
+                                -webkit-text-fill-color: transparent;
+                                filter:
+                                    drop-shadow(0 1px 1px rgba(77,0,102,0.4))
+                                    drop-shadow(0 2px 4px rgba(77,0,102,0.3))
+                                    drop-shadow(0 0 10px rgba(77,0,102,0.2))
+                                    drop-shadow(0 4px 8px rgba(77,0,102,0.25))
+                                    drop-shadow(3px 3px 6px rgba(77,0,102,0.4));
+                            """
+                        ),
+                        tabindex="0",
+                        cls=["pill-button"],
+                        style=(
+                            "text-decoration: none; "
+                            "margin-right: 6em;"
+                        ),
+                        href=f"/pipeline-card?exec_id={execution_id}",
+                        _onkeydown="""
+                            if(
+                                event.ctrlKey && (
+                                    event.key===' '||event.key==='Spacebar'||event.key==='Enter'
+                                )
+                            ){
+                                event.preventDefault();
+                                window.open(this.href, '_blank', 'noopener,noreferrer');
+                            } else if(
+                                event.key===' '||event.key==='Spacebar'||event.key==='Enter'
+                            ){
+                                event.preventDefault();
+                                this.click();
+                            }
+                        """
+                    ),
+                    Style(""" /* pill-button */
+                        .pill-button {
+                            display: inline-flex;
+                            align-items: center;
+                            justify-content: center;
+                            padding: 8px 24px;
+                            border-radius: 12px;
+                            cursor: pointer;
+                            position: relative;
+                            backdrop-filter: blur(14px) saturate(160%);
+                            -webkit-backdrop-filter: blur(14px) saturate(160%);
+                            transition: all 0.15s ease-in-out;
+
+                            background:
+                                radial-gradient(
+                                    ellipse at 30% 30%,
+                                    rgba(255,255,255,0.25),
+                                    rgba(255,255,255,0.08) 25%,
+                                    rgba(255,255,255,0.0) 45%
+                                ),
+                                radial-gradient(
+                                    ellipse at 70% 70%,
+                                    rgba(77,0,102,0.9),
+                                    rgba(77,0,102,0.5) 30%,
+                                    rgba(77,0,102,0.2) 55%,
+                                    rgba(77,0,102,0.0) 75%
+                                ),
+                                linear-gradient(
+                                    180deg,
+                                    rgba(255,255,255,0.12) 0%,
+                                    rgba(255,255,255,0.04) 35%,
+                                    rgba(0,0,0,0.2) 100%
+                                );
+                            box-shadow:
+                                inset 0 2px 2px rgba(255,255,255,0.25),
+                                inset 0 -6px 12px rgba(77,0,102,0.55),
+                                inset 0 0 18px rgba(255,255,255,0.18),
+                                0 6px 14px rgba(77,0,102,0.45),
+                                0 12px 28px rgba(77,0,102,0.35),
+                                0 0 24px rgba(77,0,102,0.35);
+                        }
+
+                        .pill-button:hover {
+                            background:
+                                radial-gradient(
+                                    ellipse at 25% 25%,
+                                    rgba(255,255,255,0.35),
+                                    rgba(255,255,255,0.12) 25%,
+                                    rgba(255,255,255,0.0) 45%
+                                ),
+                                radial-gradient(
+                                    ellipse at 75% 75%,
+                                    rgba(77,0,102,0.95),
+                                    rgba(77,0,102,0.6) 30%,
+                                    rgba(77,0,102,0.25) 55%,
+                                    rgba(77,0,102,0.0) 75%
+                                ),
+                                linear-gradient(
+                                    180deg,
+                                    rgba(255,255,255,0.18) 0%,
+                                    rgba(255,255,255,0.06) 35%,
+                                    rgba(0,0,0,0.22) 100%
+                                );
+                            box-shadow:
+                                inset 0 2px 4px rgba(255,255,255,0.35),
+                                inset 0 -6px 14px rgba(77,0,102,0.65),
+                                inset 0 0 20px rgba(255,255,255,0.25),
+                                0 8px 18px rgba(77,0,102,0.5),
+                                0 14px 32px rgba(77,0,102,0.45),
+                                0 0 28px rgba(77,0,102,0.4);
+                        }
+
+                        .pill-button:focus {
+                            outline: none;
+                            background:
+                                radial-gradient(
+                                    ellipse at 25% 25%,
+                                    rgba(255,255,255,0.38),
+                                    rgba(255,255,255,0.15) 25%,
+                                    rgba(255,255,255,0.0) 45%
+                                ),
+                                radial-gradient(
+                                    ellipse at 75% 75%,
+                                    rgba(77,0,102,0.97),
+                                    rgba(77,0,102,0.63) 30%,
+                                    rgba(77,0,102,0.28) 55%,
+                                    rgba(77,0,102,0.0) 75%
+                                ),
+                                linear-gradient(
+                                    180deg,
+                                    rgba(255,255,255,0.2) 0%,
+                                    rgba(255,255,255,0.08) 35%,
+                                    rgba(0,0,0,0.23) 100%
+                                );
+                            box-shadow:
+                                inset 0 3px 5px rgba(255,255,255,0.37),
+                                inset 0 -6px 16px rgba(77,0,102,0.67),
+                                inset 0 0 22px rgba(255,255,255,0.27),
+                                0 10px 20px rgba(77,0,102,0.53),
+                                0 16px 30px rgba(77,0,102,0.48),
+                                0 0 30px rgba(77,0,102,0.45);
+                        }
+
+                        .pill-button:hover:focus {
+                            background:
+                                radial-gradient(
+                                    ellipse at 20% 20%,
+                                    rgba(255,255,255,0.45),
+                                    rgba(255,255,255,0.18) 25%,
+                                    rgba(255,255,255,0.0) 45%
+                                ),
+                                radial-gradient(
+                                    ellipse at 80% 80%,
+                                    rgba(77,0,102,1),
+                                    rgba(77,0,102,0.7) 30%,
+                                    rgba(77,0,102,0.35) 55%,
+                                    rgba(77,0,102,0.0) 75%
+                                ),
+                                linear-gradient(
+                                    180deg,
+                                    rgba(255,255,255,0.22) 0%,
+                                    rgba(255,255,255,0.1) 35%,
+                                    rgba(0,0,0,0.25) 100%
+                                );
+                            box-shadow:
+                                inset 0 4px 6px rgba(255,255,255,0.45),
+                                inset 0 -8px 18px rgba(77,0,102,0.72),
+                                inset 0 0 26px rgba(255,255,255,0.32),
+                                0 12px 24px rgba(77,0,102,0.58),
+                                0 18px 36px rgba(77,0,102,0.52),
+                                0 0 36px rgba(77,0,102,0.5);
+                        }
+
+                        .pill-button:active {
+                            background:
+                                radial-gradient(
+                                    ellipse at 20% 20%,
+                                    rgba(255,255,255,0.85),
+                                    rgba(255,255,255,0.5) 25%,
+                                    rgba(255,255,255,0.0) 45%
+                                ),
+                                radial-gradient(
+                                    ellipse at 80% 80%,
+                                    rgba(255,255,255,0.85),
+                                    rgba(255,255,255,0.5) 25%,
+                                    rgba(255,255,255,0.0) 45%
+                                ),
+                                radial-gradient(
+                                    ellipse at 80% 80%,
+                                    rgba(77,0,102,1),
+                                    rgba(77,0,102,0.9) 30%,
+                                    rgba(77,0,102,0.65) 55%,
+                                    rgba(77,0,102,0.0) 75%
+                                ),
+                                linear-gradient(
+                                    180deg,
+                                    rgba(255,255,255,0.65) 0%,
+                                    rgba(255,255,255,0.35) 35%,
+                                    rgba(0,0,0,0.45) 100%
+                                ) !important;
+                            box-shadow:
+                                inset 0 10px 20px rgba(255,255,255,0.85) !important,
+                                inset 0 -22px 40px rgba(77,0,102,0.95) !important,
+                                inset 0 0 60px rgba(255,255,255,0.6) !important,
+                                0 28px 56px rgba(77,0,102,0.8) !important,
+                                0 36px 72px rgba(77,0,102,0.75) !important,
+                                0 0 72px rgba(77,0,102,0.7) !important;
+                            transform: translateY(1px) !important;
+                        }
+                    """),
+                    id="pipeline-card",
+                    style=(
+                        "width: 100%; "
+                        "text-align-last: right;"
+                    )
+                ),
                 Script(f"""// async get execution-info (name, etc.)
                     function updateExecutionNumber(executionNumberJson) {{
                         // Update the executions counters (incl. tooltip)
@@ -301,13 +637,15 @@ def register(app, rt, prefix=""):
                             // execution-name & username & start-date-time
                             fetch("{prefix}/execution_info?id={execution_id}", {{
                                 method: 'GET',
-                                headers: {{ "HX-Request": "true" }}
+                                headers: {{ "HX-Request": "true",
+                                            "Cache-Control": "no-cache" }},
+                                cache: 'no-cache'
                             }})
                             .then(function(resp) {{
                                 if (!resp.ok) {{
-                                  return resp.text().then(text => {{
-                                    throw new Error(text || resp.statusText || 'Unknown error');
-                                  }});
+                                    return resp.text().then(text => {{
+                                        throw new Error(text || resp.statusText || 'Unknown error');
+                                    }});
                                 }}
                                 return resp.json();
                             }})
@@ -318,8 +656,10 @@ def register(app, rt, prefix=""):
                                 executionName.title = execution_info.username;
                                 if (execution_info.docstring) {{
                                     const dagDocstring = document.getElementById("dag-docstring");
-                                    const dagDocstringContentDiv = document.querySelector("#dag-docstring .content");
-                                    dagDocstringContentDiv.innerText = execution_info.docstring;
+                                    const dagDocstringContentDiv =
+                                        document.querySelector("#dag-docstring .content");
+                                    dagDocstringContentDiv.innerText =
+                                        (execution_info.docstring || "").trim();
                                     dagDocstring.classList.add('showing');
                                     checkDocstringOverflow();
                                 }}
@@ -334,7 +674,9 @@ def register(app, rt, prefix=""):
                             // execution-number
                             fetch("{prefix}/execution_number?id={execution_id}", {{
                                 method: 'GET',
-                                headers: {{ "HX-Request": "true" }}
+                                headers: {{ "HX-Request": "true",
+                                            "Cache-Control": "no-cache" }},
+                                cache: 'no-cache'
                             }})
                             .then(function(resp) {{
                                 if (!resp.ok) {{
@@ -359,16 +701,20 @@ def register(app, rt, prefix=""):
                         const dagDocstringContentDiv = document.querySelector("#dag-docstring .content");
                         const showMore = document.getElementById('dag-docstring-show-more');
 
-                        // Calculating two lines of text height (safer: use computed styles)
+                        // Calculating two lines of text height
                         const lineHeight = parseFloat(getComputedStyle(dagDocstringContentDiv).lineHeight);
                         const maxTwoLinesHeight = lineHeight * 2;
                         //console.log("checkDocstringOverflow", lineHeight, maxTwoLinesHeight, dagDocstringContentDiv.scrollHeight);
 
-                        if (dagDocstringContentDiv.scrollHeight > maxTwoLinesHeight + 2) {
-                            showMore.style.display = 'block';
-                            dagDocstring.classList.add('collapsed');
+                        const overflows =
+                            dagDocstringContentDiv.scrollHeight > maxTwoLinesHeight + 2;
+                        if (overflows) {
+                            if (showMore.style.display != "block") {
+                                showMore.style.display = "block";
+                                dagDocstring.classList.add("collapsed");
+                            }
                         } else {
-                            showMore.style.display = 'none';
+                            showMore.style.display = "none";
                         }
                     }
 
@@ -409,6 +755,7 @@ def register(app, rt, prefix=""):
                         return es._listenerStore;
                     }}
 
+                    // actually register source of Execution events
                     function registerExecEventsSrc() {{
                         executionEventsSource = new EventSource(
                             `{prefix}/execution_events`
@@ -482,13 +829,15 @@ def register(app, rt, prefix=""):
                 """),
                 Script(f"""// re-register SSE source on window history.back()
                     window.addEventListener('pageshow', function(event) {{
-                        if (event.persisted) {{
+                        if (event.persisted) {{ // page reloaded from bfcache
                             // inject up-to-date Gantt chart
                             const targetDiv = document.getElementById("gantt-script-placeholder");
                             fetch("{prefix}/exec_current_progress?id={execution_id}",
                                   {{
                                         method: 'GET',
-                                        headers: {{ "HX-Request": "true" }}
+                                        headers: {{ "HX-Request": "true",
+                                                    "Cache-Control": "no-cache" }},
+                                        cache: 'no-cache'
                                   }}
                                 ).then(response => response.text())
                                  .then(html =>
@@ -535,23 +884,126 @@ def register(app, rt, prefix=""):
                                     fetch("{prefix}/exec_current_progress?id={execution_id}",
                                           {{
                                                 method: 'GET',
-                                                headers: {{ "HX-Request": "true" }}
+                                                headers: {{ "HX-Request": "true",
+                                                            "Cache-Control": "no-cache" }},
+                                                cache: 'no-cache'
                                           }}
                                         ).then(response => response.text())
                                          .then(html =>
                                         {{
                                             targetDiv.innerHTML = "";
                                             const script = document.createElement("script");
-                                            const inlineCode = html.replace(/<script[\s\S]*?>|<\/script>/gi, '');
+                                            const inlineCode = html.replace(
+                                                /<script[\s\S]*?>|<\/script>/gi,
+                                                ""
+                                            );
                                             script.textContent = inlineCode;
                                             targetDiv.appendChild(script);
                                         }}
                                     );
 
+                                    // inject up-to-date task traces
+                                    const existingModal = document.getElementById('detailsModal');
+                                        const visible = existingModal && !!(
+                                            existingModal.offsetWidth ||
+                                            existingModal.offsetHeight ||
+                                            existingModal.getClientRects().length
+                                        );
+                                    if (visible) {{
+                                        const tracesContainer =
+                                            existingModal.querySelector(".traces-log-container");
+                                        if (tracesContainer) {{
+                                            // case "log-traces" TAB
+                                            // has been initialized/loaded before
+                                            // => needs refreshing
+                                            //console.log("needs refreshing");
+                                            const container = existingModal.querySelector("#tab-traces");
+                                            const taskId =
+                                                existingModal.querySelector("#modal-task-id").textContent;
+                                            const tracesContainer =
+                                                container.querySelector(".traces-log-container");
+
+                                            const wasAutoscroll =
+                                                tracesContainer.classList.contains("autoscroll");
+                                            // index of the first log-trace in the viewport
+                                            let firstVisibleIndex = 0;
+                                            if (!wasAutoscroll) {{
+                                                const lines =
+                                                    tracesContainer.querySelectorAll(".trace-line");
+                                                const visibleRect = tracesContainer.getBoundingClientRect();
+                                                if (visibleRect.height > 0) {{
+                                                    const scrollTop = tracesContainer.scrollTop;
+                                                    for (let i = 0; i < lines.length; i++) {{
+                                                        if (lines[i].offsetTop >= scrollTop) {{
+                                                            firstVisibleIndex = i;
+                                                            break;
+                                                        }}
+                                                    }}
+                                                }} else {{
+                                                    // case "traces tab not showing"
+                                                    const execId =
+                                                        existingModal.querySelector(
+                                                            "#modal-exec-id").textContent;
+                                                    const taskId = existingModal.querySelector(
+                                                        "#modal-task-id").textContent;
+                                                    const tasktypeUuid =
+                                                        existingModal.querySelector(
+                                                            "#modal-tasktype-uuid").textContent;
+                                                    //console.log("(execId, tasktypeUuid, taskId)", "  -  ",
+                                                    //            execId, "  -  ", tasktypeUuid, "  -  ", taskId);
+                                                    const entry =
+                                                        getTaskTracesCookieEntry(
+                                                            execId, tasktypeUuid, taskId);
+                                                    //console.log("taskTracesCookieEntry", entry);
+                                                    firstVisibleIndex = entry.viewPortTopLineIndex;
+                                                }}
+                                            }}
+
+                                            // clean start
+                                            existingModal.querySelectorAll(
+                                                    '#tab-traces > *:not(.traces-log-toolbar)'
+                                                ).forEach(el => el.remove());
+
+                                            loadTracesTabContent(
+                                                container, taskId
+                                            ).then(({{ tracesContainer }}) => {{
+                                                if (tracesContainer) {{
+                                                    // scoll even if another TAB is showing
+                                                    waitForVisible(
+                                                        "#tab-traces .traces-log-container"
+                                                    ).then(() => {{
+                                                        if (wasAutoscroll) {{
+                                                            tracesContainer.scrollTop =
+                                                                tracesContainer.scrollHeight;
+                                                        }} else {{
+                                                            //console.log(
+                                                            //    "firstVisibleIndex", firstVisibleIndex);
+                                                            const lines =
+                                                                tracesContainer.querySelectorAll(
+                                                                    ".trace-line");
+                                                            const target = lines[firstVisibleIndex];
+                                                            if (target) {{
+                                                                tracesContainer.scrollTop =
+                                                                    target.offsetTop -
+                                                                        tracesContainer.offsetTop;
+                                                            }}
+                                                        }}
+                                                    }}).catch(err => {{
+                                                        console.warn(err);
+                                                    }});
+
+                                                }}
+                                            }}).catch(err => {{
+                                                console.error('loadTracesTabContent failed:', err);
+                                            }});
+                                        }}
+                                    }}
+
                                     registerExecEventsSrc();
                                     registerTaskEvents();
                                     document.dispatchEvent(
-                                        new Event("DOMContentLoaded", {{ bubbles: true, cancelable: true }}));
+                                        new Event("DOMContentLoaded",
+                                                  {{ bubbles: true, cancelable: true }}));
                                 }}
 
                                 // Update previousClasses for next mutation check
@@ -707,7 +1159,7 @@ def register(app, rt, prefix=""):
                         }
                     }
                 """),
-                Button("Save Page", onclick="savePageAsSingleFile()"),
+                # Button("Save Page", onclick="savePageAsSingleFile()"),
 
                 ## TODO, add stuff here (pipeline-card sections)
 
@@ -834,180 +1286,246 @@ def register(app, rt, prefix=""):
                     }
                 """),
                 Style(""" /* timelines */
-                    .gantt-timeline-cell {
-                        position: relative;
-                        min-height: 50px;
-                        vertical-align: middle;
-                    }
+                .gantt-timeline-cell {
+                    position: relative;
+                    min-height: 50px;
+                    vertical-align: middle;
+                }
 
-                    .gantt-timeline-container {
-                        position: relative;
-                        width: 100%;
-                        height: 25px;
-                        line-height: 1em;
-                        background: #e8e8e8;
-                        border-radius: 4px;
-                        overflow: visible;
-                    }
+                .gantt-timeline-container {
+                    position: relative;
+                    width: 100%;
+                    height: 25px;
+                    line-height: 1em;
+                    background: #e8e8e8;
+                    border-radius: 4px;
+                    overflow: visible;
+                }
 
-                    .gantt-timeline-bar {
-                        position: absolute;
-                        height: 100%;
-                        top: 0;
-                        border-radius: 4px;
-                        display: flex;
-                        align-items: center;
-                        justify-content: center;
-                        color: white;
-                        font-size: 11px;
+                .gantt-timeline-bar {
+                    position: absolute;
+                    height: 100%;
+                    top: 0;
+                    border-radius: 4px;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    color: #4d0066;
+                    font-size: 11px;
+                    box-shadow:
+                        0 2px 4px rgba(0,0,0,0.2),
+                        0 8px 16px rgba(0,0,0,0.1),
+                        inset 0 1px 0 rgba(255,255,255,0.4),
+                        inset 0 -1px 0 rgba(0,0,0,0.2);
+                    transition: box-shadow 0.3s ease, filter 0.3s ease,
+                                border 0.3s ease, transform 0.3s ease;
+
+                    /* GOLD BAR */
+                    background: linear-gradient(
+                        135deg,
+                        #ffd700 0%,     /* bright gold */
+                        #d4af37 60%,    /* mid warm gold */
+                        #a67c00 100%    /* deep gold */
+                    );
+
+                    position: relative;
+                    overflow: hidden;
+                    border: 1px solid rgba(255,255,255,0.2);
+                }
+
+                /* Ice crystal texture overlay */
+                .gantt-timeline-bar::after {
+                    content: '';
+                    position: absolute;
+                    top: 0;
+                    left: 0;
+                    width: 100%;
+                    height: 100%;
+                    background:
+                        linear-gradient(180deg, rgba(255,255,255,0.3) 0%,
+                                                transparent 50%, rgba(0,0,0,0.1) 100%),
+                        radial-gradient(
+                            circle at 20% 30%, rgba(255,255,255,0.4) 0%, transparent 40%),
+                        radial-gradient(
+                            circle at 80% 70%, rgba(255,255,255,0.3) 0%, transparent 40%),
+                        radial-gradient(
+                            circle at 50% 50%, rgba(255,255,255,0.15) 0%, transparent 60%);
+                    pointer-events: none;
+                    z-index: 1;
+                }
+
+                /* PURPLE STARTUP SHINE */
+                .gantt-timeline-bar:not(.ongoing)::before {
+                    content: '';
+                    position: absolute;
+                    top: -50%;
+                    left: -100%;
+                    width: 80%;
+                    height: 200%;
+
+                    background: linear-gradient(
+                        90deg,
+                        transparent,
+                        rgba(122,0,179,0.6), /* #7a00b3 @ 0.6 */
+                        rgba(77,0,102,0.8),  /* #4d0066 @ 0.8 */
+                        rgba(122,0,179,0.6),
+                        transparent
+                    );
+
+                    transform: skewX(-25deg);
+                    pointer-events: none;
+                    z-index: 100;
+                    animation: timeline-bar-shine-start 0.5s ease-out 0.1s;
+                    animation-fill-mode: forwards;
+                }
+
+                /* Hover shine trigger */
+                tr:hover .gantt-timeline-bar .gantt-timeline-bar-hover-shine {
+                    animation: timeline-bar-shine-hover 0.8s ease-out;
+                    animation-fill-mode: forwards;
+                }
+
+                .gantt-timeline-bar:hover {
+                    box-shadow:
+                        0 4px 12px rgba(0,0,0,0.3),
+                        0 12px 32px rgba(0,0,0,0.15),
+                        inset 0 2px 0 rgba(255,255,255,0.6),
+                        inset 0 -2px 0 rgba(0,0,0,0.3),
+                        inset 0 0 20px rgba(255,255,255,0.2);
+                    filter: brightness(1.15) saturate(1.1);
+                    border: 1px solid rgba(255,255,255,0.4);
+                    transform: translateY(-1px);
+                }
+
+                .gantt-timeline-bar.ongoing {
+                    background: linear-gradient(135deg, #00b3a3 0%, #006b66 100%);
+                    animation: timeline-bar-pulse 2s ease-in-out infinite;
+                }
+
+                .gantt-timeline-bar.failed {
+                    background: linear-gradient(135deg, #cc3333 0%, #800020 100%);
+                }
+
+                /* PURPLE HOVER SHINE */
+                .gantt-timeline-bar-hover-shine {
+                    content: '';
+                    position: absolute;
+                    top: -50%;
+                    left: -100%;
+                    width: 80%;
+                    height: 200%;
+                    background: linear-gradient(
+                        90deg,
+                        transparent,
+                        rgba(122,0,179,0.6),
+                        rgba(77,0,102,0.8),
+                        rgba(122,0,179,0.6),
+                        transparent
+                    );
+                    transform: skewX(-25deg);
+                    pointer-events: none;
+                    z-index: 100;
+                    opacity: 0;
+                }
+
+                /* Animations */
+                @keyframes timeline-bar-pulse {
+                    0%, 100% {
+                        opacity: 1;
                         box-shadow: 
                             0 2px 4px rgba(0,0,0,0.2),
                             0 8px 16px rgba(0,0,0,0.1),
                             inset 0 1px 0 rgba(255,255,255,0.4),
                             inset 0 -1px 0 rgba(0,0,0,0.2);
-                        transition: box-shadow 0.3s ease, filter 0.3s ease,
-                                    border 0.3s ease, transform 0.3s ease;
-                        background: linear-gradient(135deg, #7a00b3 0%, #4d0066 100%);
-                        position: relative;
-                        overflow: hidden;
-                        border: 1px solid rgba(255,255,255,0.2);
                     }
-
-                    /* Ice crystal texture overlay */
-                    .gantt-timeline-bar::after {
-                        content: '';
-                        position: absolute;
-                        top: 0;
-                        left: 0;
-                        width: 100%;
-                        height: 100%;
-                        background: 
-                            linear-gradient(180deg, rgba(255,255,255,0.3) 0%,
-                                                    transparent 50%, rgba(0,0,0,0.1) 100%),
-                            radial-gradient(
-                                circle at 20% 30%, rgba(255,255,255,0.4) 0%, transparent 40%),
-                            radial-gradient(
-                                circle at 80% 70%, rgba(255,255,255,0.3) 0%, transparent 40%),
-                            radial-gradient(
-                                circle at 50% 50%, rgba(255,255,255,0.15) 0%, transparent 60%);
-                        pointer-events: none;
-                        z-index: 1;
-                    }
-
-                    /* Startup shine - runs only once on first load */
-                    .gantt-timeline-bar:not(.ongoing)::before {
-                        content: '';
-                        position: absolute;
-                        top: -50%;
-                        left: -100%;
-                        width: 80%;
-                        height: 200%;
-                        background: linear-gradient(
-                            90deg,
-                            transparent,
-                            rgba(255,215,0,0.6),
-                            rgba(255,215,0,0.8),
-                            rgba(255,215,0,0.6),
-                            transparent
-                        );
-                        transform: skewX(-25deg);
-                        pointer-events: none;
-                        z-index: 100;
-                        animation: timeline-bar-shine-start 0.5s ease-out 0.1s;
-                        animation-fill-mode: forwards;
-                    }
-
-                    /* Hover shine - separate element that only appears on hover */
-                    tr:hover .gantt-timeline-bar .gantt-timeline-bar-hover-shine {
-                        animation: timeline-bar-shine-hover 0.8s ease-out;
-                        animation-fill-mode: forwards;
-                    }
-
-                    .gantt-timeline-bar:hover {
+                    50% {
+                        opacity: 0.85;
                         box-shadow: 
-                            0 4px 12px rgba(0,0,0,0.3),
-                            0 12px 32px rgba(0,0,0,0.15),
-                            inset 0 2px 0 rgba(255,255,255,0.6),
-                            inset 0 -2px 0 rgba(0,0,0,0.3),
-                            inset 0 0 20px rgba(255,255,255,0.2);
-                        filter: brightness(1.15) saturate(1.1);
-                        border: 1px solid rgba(255,255,255,0.4);
-                        transform: translateY(-1px);
+                            0 2px 8px rgba(0,107,102,0.4),
+                            0 8px 20px rgba(0,179,163,0.3),
+                            inset 0 1px 0 rgba(255,255,255,0.5),
+                            inset 0 -1px 0 rgba(0,0,0,0.2);
                     }
+                }
 
-                    .gantt-timeline-bar.ongoing {
-                        background: linear-gradient(135deg, #00b3a3 0%, #006b66 100%);
-                        animation: timeline-bar-pulse 2s ease-in-out infinite;
-                    }
-
-                    .gantt-timeline-bar.failed {
-                        background: linear-gradient(135deg, #cc3333 0%, #800020 100%);
-                    }
-
-                    /* Hover shine element */
-                    .gantt-timeline-bar-hover-shine {
-                        content: '';
-                        position: absolute;
-                        top: -50%;
+                @keyframes timeline-bar-shine-start {
+                    0% {
                         left: -100%;
-                        width: 80%;
-                        height: 200%;
-                        background: linear-gradient(
-                            90deg,
-                            transparent,
-                            rgba(255,215,0,0.6),
-                            rgba(255,215,0,0.8),
-                            rgba(255,215,0,0.6),
-                            transparent
-                        );
-                        transform: skewX(-25deg);
-                        pointer-events: none;
-                        z-index: 100;
-                        opacity: 0;
+                        opacity: 1;
                     }
-
-                    @keyframes timeline-bar-pulse {
-                        0%, 100% {
-                            opacity: 1;
-                            box-shadow: 
-                                0 2px 4px rgba(0,0,0,0.2),
-                                0 8px 16px rgba(0,0,0,0.1),
-                                inset 0 1px 0 rgba(255,255,255,0.4),
-                                inset 0 -1px 0 rgba(0,0,0,0.2);
-                        }
-                        50% {
-                            opacity: 0.85;
-                            box-shadow: 
-                                0 2px 8px rgba(0,107,102,0.4),
-                                0 8px 20px rgba(0,179,163,0.3),
-                                inset 0 1px 0 rgba(255,255,255,0.5),
-                                inset 0 -1px 0 rgba(0,0,0,0.2);
-                        }
+                    100% {
+                        left: 150%;
+                        opacity: 1;
                     }
+                }
 
-                    @keyframes timeline-bar-shine-start {
-                        0% {
-                            left: -100%;
-                            opacity: 1;
-                        }
-                        100% {
-                            left: 150%;
-                            opacity: 1;
-                        }
+                @keyframes timeline-bar-shine-hover {
+                    0% {
+                        left: -100%;
+                        opacity: 1;
                     }
-
-                    @keyframes timeline-bar-shine-hover {
-                        0% {
-                            left: -100%;
-                            opacity: 1;
-                        }
-                        100% {
-                            left: 150%;
-                            opacity: 1;
-                        }
+                    100% {
+                        left: 150%;
+                        opacity: 1;
+                    }
+                }
+                """),
+                Style(""" /* gantt-events */
+                    .task {
+                        cursor: pointer;
                     }
                 """),
                 Div(# Gantt diagram
+                    Div(# collapse/expand all
+                        Span(
+                            "collapse all",
+                            style=(
+                                "padding-left: 2px; display: inline-block; "
+                                "text-align: center; "
+                                "width: 106px; flex: 0 0 106px; "
+                                "cursor: pointer; user-select: none;"
+                            ),
+                            _onmousedown=(
+                                "this.style.transform='translateY(1px)'; "
+                                "this.style.textShadow='0 1px 0 rgba(255, 255, 255, 0.5)'"
+                            ),
+                            _onmouseup="this.style.transform=''; this.style.textShadow=''",
+                            _onmouseleave="this.style.transform=''; this.style.textShadow=''",
+                            _onclick=f"collapseAll('gantt-{execution_id}');"
+                        ),
+                        Span("|", style="flex: 0 0 auto;"),
+                        Span(
+                            "expand all",
+                            style=(
+                                "padding-right: 2px; display: inline-block; "
+                                "text-align: center; "
+                                "width: 95px; flex: 0 0 95px; "
+                                "cursor: pointer; user-select: none;"
+                            ),
+                            _onmousedown=(
+                                "this.style.transform='translateY(1px)'; "
+                                "this.style.textShadow='0 1px 0 rgba(255, 255, 255, 0.5)'"
+                            ),
+                            _onmouseup="this.style.transform=''; this.style.textShadow=''",
+                            _onmouseleave="this.style.transform=''; this.style.textShadow=''",
+                            _onclick=f"expandAll('gantt-{execution_id}');"
+                        ),
+                        cls="glass-engraved",
+                        style=(
+                            "display: flex; align-items: flex-start; "
+                            "margin-left: auto; width: 250px; "
+                            "justify-content: space-between; "
+                            "align-items: baseline; "
+                            "margin-bottom: 4px; padding: 0px 6px; "
+                            "background: linear-gradient(135deg, "
+                                "rgba(77,0,102,0.2) 0%, "
+                                "rgba(77,0,102,0.7) 100%); "
+                            "border: 1px solid rgba(222,226,230,0.5); "
+                            "border-radius: 6px; "
+                            "box-shadow: 0 2px 8px rgba(77,0,102,0.3), "
+                                "inset 0 1px 0 rgba(77,0,102,0.95);"
+                        )
+                    ),
                     Div(
                         Table(
                             Colgroup(
@@ -1027,13 +1545,13 @@ def register(app, rt, prefix=""):
                         style="""
                             border-radius: 12px;
                             overflow: hidden;
-                            box-sizing: border-box; /* ensure padding affects size correctly */
+                            box-sizing: border-box;
 
-                            background: rgba(255, 255, 255, 0.2); /* translucent white */
-                            backdrop-filter: blur(8px);           /* blur the content behind the table */
-                            border: 1px solid rgba(255, 255, 255, 0.3); /* subtle white border */
+                            background: rgba(255, 255, 255, 0.2);
+                            backdrop-filter: blur(8px);
+                            border: 1px solid rgba(255, 255, 255, 0.3);
                             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1),
-                                        inset 0 1px 0 rgba(255, 255, 255, 0.6); /* some shadow for depth *
+                                        inset 0 1px 0 rgba(255, 255, 255, 0.6);
                         """
                     ),
                     style="""
@@ -1053,9 +1571,11 @@ def register(app, rt, prefix=""):
                     id="gantt-script-placeholder",
                     hx_get=f"{prefix}/exec_current_progress?id={execution_id}",
                     hx_trigger="load",
-                    hx_swap="innerHTML"
+                    hx_swap="innerHTML",
+                    hx_headers='{"Cache-Control": "no-cache"}'
                 ),
                 Script(f"""// SSE events : retraining-pipeline task events
+                    // additional event listeners to existing executionEventsSource
                     function registerTaskEvents() {{
                         /* *****************
                         * "a task started" *
@@ -1084,9 +1604,9 @@ def register(app, rt, prefix=""):
                                     *   treating events twice                *
                                     *   if they occur in the middle of the   *
                                     *   initial response.                    *
-                                    *   (but if we don't wait,               *
-                                    *    the gantt object may not exists yet *
-                                    *    here)                               *
+                                    *   (which we can handle and,            *
+                                    *    if we don't wait, the gantt object  *
+                                    *    may not exists yet here)            *
                                     *************************************** */
                                     if (window.execGanttTimelineObj) {{
                                         ganttInsert('execGanttTimelineObj', payload, interBarsSpacing);
@@ -1099,6 +1619,42 @@ def register(app, rt, prefix=""):
                             }}
                         }});
                         /* ************** */
+
+                        /* **********************
+                        * "a task trace logged" *
+                        ********************** */
+                        executionEventsSource.addEventListener("taskTrace", (event) => {{
+                            let payload;
+                            try {{
+                                // Parse the server data, assuming it's JSON
+                                payload = JSON.parse(event.data);
+                            }} catch (e) {{
+                                console.error('Error parsing SSE message data:', event.data);
+                                console.error(e);
+                                return;
+                            }}
+                            //console.log("taskTrace", payload);
+                            function checkAndUpdate() {{
+                                /* *************************************
+                                * Ensure the task details script is    *
+                                * loaded before handling new events.   *
+                                *                                      *
+                                * BEWARE :                             *
+                                *   This will lead to                  *
+                                *   treating events twice              *
+                                *   if they occur in the middle of the *
+                                *   initial response.                  *
+                                *   (which we can handle)              *
+                                ************************************* */
+                                if (insertTraceToTable) {{
+                                    insertTraceToTable(payload);
+                                }} else {{
+                                    requestAnimationFrame(checkAndUpdate);
+                                }}
+                            }}
+                            requestAnimationFrame(checkAndUpdate);
+                        }});
+                        /* ******************* */
 
                         /* ***************
                         * "a task ended" *
@@ -1127,9 +1683,9 @@ def register(app, rt, prefix=""):
                                     *   treating events twice                *
                                     *   if they occur in the middle of the   *
                                     *   initial response.                    *
-                                    *   (but if we don't wait,               *
-                                    *    the gantt object may not exists yet *
-                                    *    here)                               *
+                                    *   (which we can handle and,            *
+                                    *    if we don't wait, the gantt object  *
+                                    *    may not exists yet here)            *
                                     *************************************** */
                                     if (window.execGanttTimelineObj) {{
                                         ganttUpdate('execGanttTimelineObj', payload, interBarsSpacing);
@@ -1147,6 +1703,13 @@ def register(app, rt, prefix=""):
                     registerTaskEvents();
                     console.log("event-source listeners", listEventSourceListeners(executionEventsSource));
                 """),
+
+                Script(f"""// AnsiUp dependency (ascii to html)
+                    import {{ AnsiUp }} from '{prefix}/ansi_up.js';
+                    window.AnsiUp = AnsiUp;
+                """, type="module"),
+                Script(src="/task_details_modal.js"),
+                Link(rel="stylesheet", href="/task_details_modal.css"),
 
                 H1(# DAG
                     "Execution DAG",
@@ -1183,7 +1746,7 @@ def register(app, rt, prefix=""):
                         overflow: hidden;
                     }
                     #dag-docstring.expanded {
-                        height: 150px;
+                        max-height: 150px;
                         overflow-y: auto;
                     }
 
@@ -1211,15 +1774,67 @@ def register(app, rt, prefix=""):
                     }
                 """),
                 Div(# DAG renderer
+                    # herein div will be async-dropped and
+                    # tags from svg_template async-inserted to DOM here
                     P("\u00A0 Loading DAG...", style="color: white;"),
                     hx_get=f"{prefix}/dag_rendering?id={execution_id}",
                     hx_trigger="load",
-                    hx_swap="outerHTML"
+                    hx_swap="outerHTML",
+                    id="dag-anchor"
                 ),
-                Link(
-                    rel="stylesheet",
-                    href=f"{prefix}/svg_dag.css"
-                )
+                Script(""" // hide pipeline-card button on no eponyme DAG task
+                    function hasNoPipelineCard(svg) {
+                        const texts = svg.querySelectorAll("g.node text.label");
+                        return Array.from(
+                                texts).every(t => t.textContent.trim() !== "pipeline_card"
+                        );
+                    }
+
+                    function hidePipelineCard() {
+                        const pipelineCard = document.getElementById("pipeline-card");
+                        if (pipelineCard) {
+                            pipelineCard.style.display = "none";
+                        }
+                    }
+
+                    (function checkDagOnce() {
+                        const anchor = document.getElementById("dag-anchor");
+                        const svg = document.getElementById("dag");
+                        //console.log("Initial check:", { anchor: !!anchor, svg: !!svg });
+
+                        if (svg && hasNoPipelineCard(svg)) {
+                            console.log("SVG ready, no pipeline_card");
+                            hidePipelineCard();
+                            return;
+                        }
+
+                        if (!anchor) {
+                            // No anchor
+                            hidePipelineCard();
+                            return;
+                        }
+
+                        // Watch anchor's PARENT for anchor child removal + SVG creation
+                        const parent = anchor.parentElement;
+                        const observer = new MutationObserver(function(mutations) {
+                            const newSvg = document.getElementById('dag-00000');
+                            if (newSvg && hasNoPipelineCard(newSvg)) {
+                                console.log(
+                                    "SVG appeared after anchor vanished,",
+                                    "no pipeline_card"
+                                );
+                                hidePipelineCard();
+                                observer.disconnect();
+                            }
+                        });
+
+                        observer.observe(parent, {
+                            childList: true,
+                            subtree: true
+                        });
+                    })();
+                """),
+                Link(rel="stylesheet", href=f"{prefix}/svg_dag.css")
             ),
             body_cls=["body-execution"]
         )
