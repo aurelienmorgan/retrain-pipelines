@@ -66,7 +66,7 @@ def execution_to_html(execution_ext: Union[Execution, ExecutionExt]) -> Div:
                     cls=["execution-body"]
                 ),
                 Div(
-                    (execution_ext.end_timestamp - execution_ext.start_timestamp) 
+                    str(execution_ext.end_timestamp - execution_ext.start_timestamp)[:-3]
                         if execution_ext.end_timestamp else "",
                     cls="end_timestamp" + ((
                         " success" if execution_ext.success else " failure"

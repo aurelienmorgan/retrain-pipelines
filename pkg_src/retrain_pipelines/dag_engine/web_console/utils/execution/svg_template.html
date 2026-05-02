@@ -142,7 +142,34 @@
     {%- endif -%}
 {%- endmacro %}
 
-<svg id="dag">
+{% macro parallel_rect_box(x, y, width, height, rx=6, ry=6,
+                           fill=None, stroke="rgb(254, 175, 255)",
+                           stroke_width=1.5, opacity=0.2) -%}
+    {% if fill and fill|trim != '' -%}
+        {%- set gradient_id = "parallelGradient_" ~ fill|replace("#", "") -%}
+        <defs>
+            <linearGradient id="{{ gradient_id }}" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0%" stop-color="{{ fill }}" stop-opacity="0.2" />
+                <stop offset="100%" stop-color="{{ fill }}" stop-opacity="0.3" />
+            </linearGradient>
+        </defs>
+        <rect class="box parallel-container"
+              x="{{ x }}" y="{{ y }}" width="{{ width }}" height="{{ height }}"
+              rx="{{ rx }}" ry="{{ ry }}"
+              style="fill: url(#{{ gradient_id }});
+                     {% if stroke and stroke|trim != '' %}stroke: {{ stroke }}; stroke-opacity: 1.0;{%- endif %}"
+              stroke-width="{{ stroke_width }}" />
+    {%- else -%}
+        <rect class="box parallel-container"
+              x="{{ x }}" y="{{ y }}" width="{{ width }}" height="{{ height }}"
+              rx="{{ rx }}" ry="{{ ry }}"
+              style="fill: #000000; fill-opacity: {{ opacity }};
+                     {% if stroke and stroke|trim != '' %}stroke: {{ stroke }}; stroke-opacity: 1.0;{%- endif %}"
+              stroke-width="{{ stroke_width }}" />
+    {%- endif -%}
+{%- endmacro %}
+
+<svg id="dag-{{ id_prefix }}">
     <defs>
         <marker id="arrow" markerWidth="10" markerHeight="10"
                 refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
@@ -157,15 +184,17 @@
         </linearGradient>
     </defs>
 
-    <g id="canvas-group" transform="translate(0,0) scale(1)" visibility="hidden">
+    <g id="canvas-group-{{ id_prefix }}" transform="translate(0,0) scale(1)" visibility="hidden">
         {%- set spacing_x = 130 %}
         {%- set spacing_y = 80 %}
-        {%- set node_width = 96 %}
+        {%- set node_width = 114 %}
         {%- set node_height = 32 %}
         {%- set tg_margin_x = 15 -%}
         {%- set tg_label_margin_top = 10 -%}
         {%- set tg_margin_bottom = 4 -%}
         {%- set tg_label_height = 15 -%}
+        {%- set parallel_margin_y = 10 -%}
+        {%- set parallel_margin_x = 10 -%}
         {%- set tooltip_y_offset = -80 -%}
 
         {%- set id_to_node = {} %}
@@ -302,19 +331,159 @@
         {%- endmacro %}
         {{- compute_pd(nodes[0].uuid) }}
 
+        {#- Calculate sub-DAG bounds (parallel regions) #}
+        {%- set parallel_bounds = {} %}
+        {%- set parallel_max_depths = {} %}
+        {%- for node in nodes %}
+            {%- if node.is_parallel %}
+                {# Find the merge node for this parallel region #}
+                {%- set merge_found = {'node': none, 'depth': parallel_depths[node.uuid]} %}
+                {%- macro find_merge(current_id, target_depth) %}
+                    {%- set current = id_to_node[current_id] %}
+                    {%- if current.merge_func is not none and not current.is_parallel and parallel_depths[current_id] == target_depth - 1 %}
+                        {%- set _ = merge_found.update({'node': current}) %}
+                    {%- else %}
+                        {%- for child in current.children %}
+                            {%- if merge_found.node is none %}
+                                {{- find_merge(child, target_depth) }}
+                            {%- endif %}
+                        {%- endfor %}
+                    {%- endif %}
+                {%- endmacro %}
+                {{- find_merge(node.uuid, merge_found.depth) }}
+
+                {# Collect all nodes between parallel and merge (inclusive) #}
+                {%- set parallel_nodes = [node.uuid] %}
+                {%- if merge_found.node %}
+                    {%- macro collect_region_nodes(current_id, merge_id, min_depth, collected) %}
+                        {%- set current = id_to_node[current_id] %}
+                        {%- if current_id != merge_id %}
+                            {%- for child in current.children %}
+                                {%- if child not in collected and parallel_depths[child] >= min_depth %}
+                                    {%- set _ = collected.append(child) %}
+                                    {{- collect_region_nodes(child, merge_id, min_depth, collected) }}
+                                {%- endif %}
+                            {%- endfor %}
+                        {%- endif %}
+                    {%- endmacro %}
+                    {{- collect_region_nodes(node.uuid, merge_found.node.uuid, merge_found.depth - 1, parallel_nodes) }}
+                    {%- set _ = parallel_nodes.append(merge_found.node.uuid) %}
+                {%- endif %}
+
+                {# Calculate bounds accounting for underlays and taskgroup margins #}
+                {%- if parallel_nodes %}
+                    {%- set p_coords = {'min_x': 999999, 'max_x': -999999, 'min_y': 999999, 'max_y': -999999} %}
+                    {%- set max_depth = {'value': parallel_depths[node.uuid]} %}
+                    {%- for p_node_id in parallel_nodes %}
+                        {%- set pos = id_to_pos[p_node_id] %}
+                        {%- set node_obj = id_to_node[p_node_id] %}
+                        {%- set pd = parallel_depths[p_node_id] %}
+                        {%- if pd > max_depth.value %}
+                            {%- set _ = max_depth.update({'value': pd}) %}
+                        {%- endif %}
+                        {%- set underlay_offset = 3 * pd %}
+                        {# If node is in a taskgroup, use taskgroup bounds #}
+                        {%- if node_obj.taskgroup_uuid and node_obj.taskgroup_uuid in taskgroup_bounds %}
+                            {%- set tg_bounds = taskgroup_bounds[node_obj.taskgroup_uuid] %}
+                            {%- set tg_underlay_offset = 3.5 * pd %}
+                            {%- set effective_min_x = tg_bounds.min_x - tg_margin_x - tg_underlay_offset %}
+                            {%- set effective_max_x = tg_bounds.max_x + tg_margin_x + tg_underlay_offset %}
+                            {%- set effective_min_y = tg_bounds.min_y - (tg_label_height + tg_label_margin_top) %}
+                            {%- set effective_max_y = pos.y + underlay_offset %}
+                        {%- else %}
+                            {%- set effective_min_x = pos.x - underlay_offset %}
+                            {%- set effective_max_x = pos.x + node_width + underlay_offset %}
+                            {%- set effective_min_y = pos.y %}
+                            {%- set effective_max_y = pos.y + underlay_offset %}
+                        {%- endif %}
+                        {%- if effective_min_x < p_coords.min_x %}
+                            {%- set _ = p_coords.update({'min_x': effective_min_x}) %}
+                        {%- endif %}
+                        {%- if effective_max_x > p_coords.max_x %}
+                            {%- set _ = p_coords.update({'max_x': effective_max_x}) %}
+                        {%- endif %}
+                        {%- if effective_min_y < p_coords.min_y %}
+                            {%- set _ = p_coords.update({'min_y': effective_min_y}) %}
+                        {%- endif %}
+                        {%- if effective_max_y > p_coords.max_y %}
+                            {%- set _ = p_coords.update({'max_y': effective_max_y}) %}
+                        {%- endif %}
+                    {%- endfor %}
+                    {%- set _ = parallel_bounds.update({node.uuid: p_coords}) %}
+                    {%- set _ = parallel_max_depths.update({node.uuid: max_depth.value}) %}
+                {%- endif %}
+            {%- endif %}
+        {%- endfor %}
+
+        {# Draw sub-DAG (parallel) containers #}
+        <!-- DEBUG parallel_bounds keys: {{ parallel_bounds.keys()|list }} -->
+        <!-- DEBUG parallel_max_depths: {{ parallel_max_depths }} -->
+        <!-- DEBUG parallel_depths: {{ parallel_depths }} -->
+        {%- for node in nodes %}
+            {%- if node.is_parallel and node.uuid in parallel_bounds %}
+                {%- set p_coords = parallel_bounds[node.uuid] %}
+                {%- set level = parallel_depths[node.uuid] %}
+                {%- set max_depth = parallel_max_depths.get(node.uuid, level) %}
+                {%- set level_margin_x = parallel_margin_x * (max_depth - level + 1) %}
+                <!-- DEBUG rendering parallel {{ node.uuid }} at level {{ level }} with max_depth {{ max_depth }} -->
+                <g class="parallel-dag" id="parallel-{{ node.uuid }}">
+                    {{ parallel_rect_box(
+                        p_coords.min_x - level_margin_x,
+                        p_coords.min_y - parallel_margin_y,
+                        p_coords.max_x - p_coords.min_x + 2*level_margin_x,
+                        p_coords.max_y - p_coords.min_y + node_height + 2*parallel_margin_y,
+                        fill=node.ui_css.background if node.ui_css and node.ui_css.background else None
+                    ) }}
+                </g>
+            {%- endif %}
+        {%- endfor %}
+
         {#- Draw arrows #}
         {#- --- ARROW LOGIC FOR TASKGROUPS --- #}
         {#- To ensure only one outgoing (and one incoming) arrow per taskgroup: #}
         {%- set tg_outs = {} %}
         {%- set tg_ins = {} %}
         {%- set tg_link_pairs = [] %}
+        {%- set parallel_outs = {} %}
+        {%- set parallel_ins = {} %}
+        {%- set parallel_link_pairs = [] %}
         {%- set normal_arrows = [] %}
+
+        {# Build map of merge nodes to their parallel regions #}
+        {%- set merge_to_parallel = {} %}
+        {%- for node in nodes %}
+            {%- if node.is_parallel and node.uuid in parallel_bounds %}
+                {# Find the merge for this parallel #}
+                {%- set merge_found = {'node': none, 'depth': parallel_depths[node.uuid]} %}
+                {%- macro find_merge_for_map(current_id, target_depth) %}
+                    {%- set current = id_to_node[current_id] %}
+                    {%- if current.merge_func is not none and not current.is_parallel and parallel_depths[current_id] == target_depth - 1 %}
+                        {%- set _ = merge_found.update({'node': current}) %}
+                    {%- else %}
+                        {%- for child in current.children %}
+                            {%- if merge_found.node is none %}
+                                {{- find_merge_for_map(child, target_depth) }}
+                            {%- endif %}
+                        {%- endfor %}
+                    {%- endif %}
+                {%- endmacro %}
+                {{- find_merge_for_map(node.uuid, merge_found.depth) }}
+                {%- if merge_found.node %}
+                    {%- set _ = merge_to_parallel.update({merge_found.node.uuid: node.uuid}) %}
+                {%- endif %}
+            {%- endif %}
+        {%- endfor %}
 
         {%- for node in nodes %}
             {%- set src_tg = node.taskgroup_uuid %}
+            {%- set src_parallel = merge_to_parallel.get(node.uuid, none) %}
             {%- for child_id in node.children %}
                 {%- set child_node = id_to_node[child_id] %}
                 {%- set tgt_tg = child_node.taskgroup_uuid %}
+                {%- set tgt_parallel = none %}
+                {%- if child_node.is_parallel and child_node.uuid in parallel_bounds %}
+                    {%- set tgt_parallel = child_node.uuid %}
+                {%- endif %}
                 {%- if src_tg and tgt_tg and src_tg == tgt_tg %}
                     {%- set _ = normal_arrows.append((node.uuid, child_id)) %}
                 {%- elif src_tg and (not tgt_tg or src_tg != tgt_tg) %}
@@ -328,6 +497,18 @@
                     {%- if pair not in tg_ins %}
                         {%- set _ = tg_ins.update({pair: (node.uuid, child_id)}) %}
                         {%- set _ = tg_link_pairs.append(('in', pair, node.uuid, child_id)) %}
+                    {%- endif %}
+                {%- elif src_parallel and (not tgt_parallel or src_parallel != tgt_parallel) %}
+                    {%- set pair = (src_parallel, tgt_parallel or '__NONE__') %}
+                    {%- if pair not in parallel_outs %}
+                        {%- set _ = parallel_outs.update({pair: (node.uuid, child_id)}) %}
+                        {%- set _ = parallel_link_pairs.append(('out', pair, node.uuid, child_id)) %}
+                    {%- endif %}
+                {%- elif tgt_parallel and (not src_parallel or src_parallel != tgt_parallel) %}
+                    {%- set pair = (src_parallel or '__NONE__', tgt_parallel) %}
+                    {%- if pair not in parallel_ins %}
+                        {%- set _ = parallel_ins.update({pair: (node.uuid, child_id)}) %}
+                        {%- set _ = parallel_link_pairs.append(('in', pair, node.uuid, child_id)) %}
                     {%- endif %}
                 {%- else %}
                     {%- set _ = normal_arrows.append((node.uuid, child_id)) %}
@@ -365,6 +546,43 @@
                     {%- set src_x = id_to_pos[src].x + node_width/2 %}
                     {%- set src_y = id_to_pos[src].y + node_height %}
                     <line id="arrow-{{ src }}-{{ id_to_taskgroup[tgt_tg].uuid }}"
+                          x1="{{ src_x }}" y1="{{ src_y }}" x2="{{ tgt_x }}" y2="{{ tgt_y }}"
+                          marker-end="url(#arrow)" />
+                {%- endif %}
+            {%- endif %}
+        {% endfor -%}
+
+        {#- Draw one arrow for each stored pair for incoming/outgoing parallel pairs #}
+        <!-- DEBUG parallel_link_pairs: {{ parallel_link_pairs }} -->
+        {%- for kind, pair, src, tgt in parallel_link_pairs %}
+            {%- set src_parallel = pair[0] %}
+            {%- set tgt_parallel = pair[1] %}
+            {%- if kind == 'out' and src_parallel != '__NONE__' %}
+                {%- set p_bounds = parallel_bounds[src_parallel] %}
+                {%- set src_x = (p_bounds.min_x + p_bounds.max_x) / 2 %}
+                {%- set src_y = p_bounds.max_y + node_height + parallel_margin_y %}
+                {%- set tgt_x = id_to_pos[tgt].x + node_width/2 %}
+                {%- set tgt_y = id_to_pos[tgt].y %}
+                {%- if tgt_parallel != '__NONE__' and tgt_parallel in parallel_bounds %}
+                    {%- set tgt_p_bounds = parallel_bounds[tgt_parallel] %}
+                    {%- set tgt_x = (tgt_p_bounds.min_x + tgt_p_bounds.max_x) / 2 %}
+                    {%- set tgt_y = tgt_p_bounds.min_y - parallel_margin_y %}
+                    <line id="arrow-parallel-{{ src_parallel }}-{{ tgt_parallel }}"
+                          x1="{{ src_x }}" y1="{{ src_y }}" x2="{{ tgt_x }}" y2="{{ tgt_y }}"
+                          marker-end="url(#arrow)" />
+                {%- else %}
+                    <line id="arrow-parallel-{{ src_parallel }}-{{ tgt }}"
+                          x1="{{ src_x }}" y1="{{ src_y }}" x2="{{ tgt_x }}" y2="{{ tgt_y }}"
+                          marker-end="url(#arrow)" />
+                {%- endif %}
+            {%- elif kind == 'in' and tgt_parallel != '__NONE__' %}
+                {%- if src_parallel == '__NONE__' %}
+                    {%- set tgt_p_bounds = parallel_bounds[tgt_parallel] %}
+                    {%- set tgt_x = (tgt_p_bounds.min_x + tgt_p_bounds.max_x) / 2 %}
+                    {%- set tgt_y = tgt_p_bounds.min_y - parallel_margin_y %}
+                    {%- set src_x = id_to_pos[src].x + node_width/2 %}
+                    {%- set src_y = id_to_pos[src].y + node_height %}
+                    <line id="arrow-{{ src }}-parallel-{{ tgt_parallel }}"
                           x1="{{ src_x }}" y1="{{ src_y }}" x2="{{ tgt_x }}" y2="{{ tgt_y }}"
                           marker-end="url(#arrow)" />
                 {%- endif %}
@@ -519,12 +737,35 @@
                         fill=node.ui_css.background if node.ui_css and node.ui_css.background else None,
                         stroke=node.ui_css.border if node.ui_css and node.ui_css.border else None
                     ) }}
-                    <rect x="-8" y="-3" width="80" height="10" fill="url(#glassGradient)"
-                          rx="3" ry="3" stroke="#ffd700" stroke-width="0.5" opacity="0.9" />
-                    <text class="label" x="-6" y="5" text-anchor="left"
-                          font-family="sans-serif" font-size="11"
-                          style="fill: #ffd700; stroke: none; filter: drop-shadow(0 0 2px rgba(0,0,0,0.3));">
-                       {{ node.merge_func.name }}
+
+                    {%- set merge_text = node.merge_func.name -%}
+                    {%- set merge_font = "sans-serif" -%}
+                    {%- set merge_font_size = 11 -%}
+                    {%- set merge_padding_x = 6 -%}
+                    {%- set merge_text_width =
+                        get_text_pixel_width(merge_text, merge_font, merge_font_size)
+                    -%}
+                    {%- set merge_rect_width = merge_text_width + 2 * merge_padding_x -%}
+
+                    <rect x="0"
+                          y="-3"
+                          width="{{ merge_rect_width }}"
+                          height="10"
+                          fill="url(#glassGradient)"
+                          rx="3" ry="3"
+                          stroke="#ffd700"
+                          stroke-width="0.5"
+                          opacity="0.9" />
+
+                    <text class="label"
+                          x="{{ merge_rect_width / 2 }}"
+                          y="5"
+                          text-anchor="middle"
+                          font-family="{{ merge_font }}"
+                          font-size="{{ merge_font_size }}"
+                          style="fill: #ffd700; stroke: none;
+                                 filter: drop-shadow(0 0 2px rgba(0,0,0,0.3));">
+                        {{ merge_text }}
                     </text>
                 {%- else %}
                     {{ node_rect_box(
@@ -592,564 +833,579 @@
 </svg>
 
 <script>
-    // Node tooltips
-    {%- for node in nodes %}
-        {%- if node.docstring %}
-        (function() {
-            const nodeEl = document.getElementById('node-{{ node.uuid }}');
-            const tooltip = document.getElementById('tooltip-node-{{ node.uuid }}');
+    // Wrap the script body in an IIFE to scope all declarations locally
+    (function() {
+        // Node tooltips
+        {%- for node in nodes %}
+            {%- if node.docstring %}
+            (function() {
+                const nodeEl = document.getElementById('node-{{ node.uuid }}');
+                const tooltip = document.getElementById('tooltip-node-{{ node.uuid }}');
 
-            if (tooltip) {
-                let hoverAnchor = false;
-                let hoverTooltip = false;
+                if (tooltip) {
+                    let hoverAnchor = false;
+                    let hoverTooltip = false;
 
-                const updateVisibility = () => {
-                    tooltip.style.visibility = (hoverAnchor || hoverTooltip) ? 'visible' : 'hidden';
-                };
+                    const updateVisibility = () => {
+                        tooltip.style.visibility = (hoverAnchor || hoverTooltip) ? 'visible' : 'hidden';
+                    };
 
-                nodeEl.addEventListener('mouseenter', () => {
-                    hoverAnchor = true;
-                    updateVisibility();
+                    nodeEl.addEventListener('mouseenter', () => {
+                        hoverAnchor = true;
+                        updateVisibility();
+                    });
+
+                    nodeEl.addEventListener('mouseleave', () => {
+                        hoverAnchor = false;
+                        setTimeout(updateVisibility, 10);
+                    });
+
+                    tooltip.addEventListener('mouseenter', () => {
+                        hoverTooltip = true;
+                        updateVisibility();
+                    });
+
+                    tooltip.addEventListener('mouseleave', () => {
+                        hoverTooltip = false;
+                        setTimeout(updateVisibility, 10);
+                    });
+
+                    tooltip.style.pointerEvents = 'auto';
+                }
+            })();
+            {%- endif %}
+        {%- endfor %}
+
+        // Taskgroup tooltips
+        {%- for tg in taskgroups %}
+            {%- if tg.docstring %}
+            (function() {
+                const taskgroupEl = document.getElementById('taskgroup-{{ tg.uuid }}');
+                const tooltip = document.getElementById('tooltip-taskgroup-{{ tg.uuid }}');
+
+                if (tooltip) {
+                    let hoverAnchor = false;
+                    let hoverTooltip = false;
+
+                    const updateVisibility = () => {
+                        tooltip.style.visibility = (hoverAnchor || hoverTooltip) ? 'visible' : 'hidden';
+                    };
+
+                    taskgroupEl.addEventListener('mouseenter', () => {
+                        hoverAnchor = true;
+                        updateVisibility();
+                    });
+
+                    taskgroupEl.addEventListener('mouseleave', () => {
+                        hoverAnchor = false;
+                        setTimeout(updateVisibility, 10);
+                    });
+
+                    tooltip.addEventListener('mouseenter', () => {
+                        hoverTooltip = true;
+                        updateVisibility();
+                    });
+
+                    tooltip.addEventListener('mouseleave', () => {
+                        hoverTooltip = false;
+                        setTimeout(updateVisibility, 10);
+                    });
+
+                    tooltip.style.pointerEvents = 'auto';
+                }
+            })();
+            {%- endif %}
+        {%- endfor %}
+
+        // Hide all tooltips on ESC keypress
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                document.querySelectorAll('[id^="tooltip-"]').forEach(t => {
+                    t.style.visibility = 'hidden';
                 });
-
-                nodeEl.addEventListener('mouseleave', () => {
-                    hoverAnchor = false;
-                    setTimeout(updateVisibility, 10);
-                });
-
-                tooltip.addEventListener('mouseenter', () => {
-                    hoverTooltip = true;
-                    updateVisibility();
-                });
-
-                tooltip.addEventListener('mouseleave', () => {
-                    hoverTooltip = false;
-                    setTimeout(updateVisibility, 10);
-                });
-
-                tooltip.style.pointerEvents = 'auto';
             }
-        })();
-        {%- endif %}
-    {%- endfor %}
-
-    // Taskgroup tooltips
-    {%- for tg in taskgroups %}
-        {%- if tg.docstring %}
-        (function() {
-            const taskgroupEl = document.getElementById('taskgroup-{{ tg.uuid }}');
-            const tooltip = document.getElementById('tooltip-taskgroup-{{ tg.uuid }}');
-
-            if (tooltip) {
-                let hoverAnchor = false;
-                let hoverTooltip = false;
-
-                const updateVisibility = () => {
-                    tooltip.style.visibility = (hoverAnchor || hoverTooltip) ? 'visible' : 'hidden';
-                };
-
-                taskgroupEl.addEventListener('mouseenter', () => {
-                    hoverAnchor = true;
-                    updateVisibility();
-                });
-
-                taskgroupEl.addEventListener('mouseleave', () => {
-                    hoverAnchor = false;
-                    setTimeout(updateVisibility, 10);
-                });
-
-                tooltip.addEventListener('mouseenter', () => {
-                    hoverTooltip = true;
-                    updateVisibility();
-                });
-
-                tooltip.addEventListener('mouseleave', () => {
-                    hoverTooltip = false;
-                    setTimeout(updateVisibility, 10);
-                });
-
-                tooltip.style.pointerEvents = 'auto';
-            }
-        })();
-        {%- endif %}
-    {%- endfor %}
-
-    // Hide all tooltips on ESC keypress
-    document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') {
-            document.querySelectorAll('[id^="tooltip-"]').forEach(t => {
-                t.style.visibility = 'hidden';
-            });
-        }
-    });
+        });
+    })();
 </script>
 
 <script>
-    /* ***************
-    * Nodes-dragging *
-    *************** */
-    const nodeWidth = {{ node_width }};
-    const nodeHeight = {{ node_height }};
+    // Wrap the script body in an IIFE to scope all declarations locally
+    (function() {
+        /* ***************
+        * Nodes-dragging *
+        *************** */
+        const nodeWidth = {{ node_width }};
+        const nodeHeight = {{ node_height }};
 
-    const tgMarginX = {{ tg_margin_x }};
-    const tgLabelHeight = {{ tg_label_height }};
-    const tgLabelMarginTop = {{ tg_label_margin_top }};
-    const tgMarginBottom = {{ tg_margin_bottom }};
+        const tgMarginX = {{ tg_margin_x }};
+        const tgLabelHeight = {{ tg_label_height }};
+        const tgLabelMarginTop = {{ tg_label_margin_top }};
+        const tgMarginBottom = {{ tg_margin_bottom }};
 
-    const tooltipYOffset = {{ tooltip_y_offset }};
+        const tooltipYOffset = {{ tooltip_y_offset }};
 
-    const svg = document.getElementById('dag');
-    const canvasGroup = document.getElementById('canvas-group');
+        const svg = document.getElementById("dag-{{ id_prefix }}");
+        const canvasGroup = document.getElementById("canvas-group-{{ id_prefix }}");
 
-    // Transform state
-    let currentTransform = {
-        x: 0,
-        y: 0,
-        scale: 1
-    };
-
-    let selected = null;
-    let selectedTaskgroup = null;
-    let startMouse = null;               // mouse position at drag start {x, y}
-    let startPos = null;                 // node position at drag start {x, y}
-    let taskgroupStartPositions = null;  // taskgroup position at drag start {x, y}
-
-    function getMouseSVGCoords(evt) {
-        const pt = svg.createSVGPoint();
-        pt.x = evt.clientX;
-        pt.y = evt.clientY;
-        const transformed = pt.matrixTransform(svg.getScreenCTM().inverse());
-
-        // Convert to canvas coordinate system (account for pan and zoom)
-        return {
-            x: (transformed.x - currentTransform.x) / currentTransform.scale,
-            y: (transformed.y - currentTransform.y) / currentTransform.scale
+        // Transform state
+        let currentTransform = {
+            x: 0,
+            y: 0,
+            scale: 1.2 // 120% magnifying at initial load time
         };
-    }
 
-    function updateTransform() {
-        canvasGroup.setAttribute(
-            'transform',
-            `translate(${currentTransform.x},
-                       ${currentTransform.y}) scale(${currentTransform.scale})`
-        );
-    }
+        let selected = null;
+        let selectedTaskgroup = null;
+        let startMouse = null;               // mouse position at drag start {x, y}
+        let startPos = null;                 // node position at drag start {x, y}
+        let taskgroupStartPositions = null;  // taskgroup position at drag start {x, y}
 
-    function updateLines(elementId, x, y) {
-        // Helper to get position and size info of an element (node or taskgroup)
-        function getPosAndSize(el) {
-            if (!el) return null;
+        function getMouseSVGCoords(evt) {
+            const pt = svg.createSVGPoint();
+            pt.x = evt.clientX;
+            pt.y = evt.clientY;
+            const transformed = pt.matrixTransform(svg.getScreenCTM().inverse());
 
-            let posX = 0, posY = 0, width = 0, height = 0;
-
-            // For nodes, position is from transform translate, size fixed as nodeWidth, nodeHeight
-            if (el.classList.contains('node')) {
-                const transform = el.getAttribute('transform');
-                if (!transform) return null;
-                const match = transform.match(/translate\(([-\d.]+),\s*([-\d.]+)\)/);
-                if (!match) return null;
-                posX = parseFloat(match[1]);
-                posY = parseFloat(match[2]);
-                width = nodeWidth;
-                height = nodeHeight;
-            }
-            // For taskgroups, position and size come from <rect> inside the group
-            else if (el.classList.contains('taskgroup')) {
-                const rect = el.querySelector('rect');
-                if (!rect) return null;
-                posX = parseFloat(rect.getAttribute('x'));
-                posY = parseFloat(rect.getAttribute('y'));
-                width = parseFloat(rect.getAttribute('width'));
-                height = parseFloat(rect.getAttribute('height'));
-            }
-            // fallback, try transform + nodeWidth/nodeHeight
-            else {
-                const transform = el.getAttribute('transform');
-                if (!transform) return null;
-                const match = transform.match(/translate\(([-\d.]+),\s*([-\d.]+)\)/);
-                if (!match) return null;
-                posX = parseFloat(match[1]);
-                posY = parseFloat(match[2]);
-                width = nodeWidth;
-                height = nodeHeight;
-            }
-
-            return { x: posX, y: posY, width: width, height: height };
-        }
-
-        // Update lines where element is source (start)
-        document.querySelectorAll(`line[id^="arrow-${elementId}-"]`).forEach(line => {
-            const targetId = line.id.slice(`arrow-${elementId}-`.length);
-            const targetEl =
-                document.getElementById('taskgroup-' + targetId) ||
-                document.getElementById('node-' + targetId);
-
-            if (!targetEl) return;
-
-            const sourceInfo = getPosAndSize(document.getElementById(elementId) || document.getElementById('node-' + elementId) || document.getElementById('taskgroup-' + elementId));
-            if (!sourceInfo) return;
-
-            const targetInfo = getPosAndSize(targetEl);
-            if (!targetInfo) return;
-
-            // Arrow goes from bottom center of source to top center of target
-            const x1 = sourceInfo.x + sourceInfo.width / 2;
-            const y1 = sourceInfo.y + sourceInfo.height;
-            const x2 = targetInfo.x + targetInfo.width / 2;
-            const y2 = targetInfo.y;
-
-            line.setAttribute('x1', x1);
-            line.setAttribute('y1', y1);
-            line.setAttribute('x2', x2);
-            line.setAttribute('y2', y2);
-        });
-
-        // Update lines where element is target (end)
-        document.querySelectorAll(`line[id$="-${elementId}"]`).forEach(line => {
-            // line id format: arrow-source-target
-            const prefix = 'arrow-';
-            const srcId = line.id.slice(prefix.length, -(`-${elementId}`).length);
-            const srcEl =
-                document.getElementById('taskgroup-' + srcId) ||
-                document.getElementById('node-' + srcId);
-
-            if (!srcEl) return;
-
-            const sourceInfo = getPosAndSize(srcEl);
-            if (!sourceInfo) return;
-
-            const targetInfo = getPosAndSize(document.getElementById(elementId) || document.getElementById('node-' + elementId) || document.getElementById('taskgroup-' + elementId));
-            if (!targetInfo) return;
-
-            // Arrow goes from bottom center of source to top center of target
-            const x1 = sourceInfo.x + sourceInfo.width / 2;
-            const y1 = sourceInfo.y + sourceInfo.height;
-            const x2 = targetInfo.x + targetInfo.width / 2;
-            const y2 = targetInfo.y;
-
-            line.setAttribute('x1', x1);
-            line.setAttribute('y1', y1);
-            line.setAttribute('x2', x2);
-            line.setAttribute('y2', y2);
-        });
-    }
-
-    function updateTaskgroupBounds(taskgroupId) {
-        const tgEl = document.getElementById(taskgroupId);
-        if (!tgEl) return;
-        const nodes = tgEl.dataset.nodes.split(',');
-        let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-
-        nodes.forEach(nodeId => {
-            const nodeEl = document.getElementById(`node-${nodeId}`);
-            if (!nodeEl) return;
-            const match = nodeEl.getAttribute('transform')
-                ?.match(/translate\(([-\d.]+),\s*([-\d.]+)\)/);
-            if (!match) return;
-            const x = parseFloat(match[1]);
-            const y = parseFloat(match[2]);
-            minX = Math.min(minX, x);
-            maxX = Math.max(maxX, x + nodeWidth);
-            minY = Math.min(minY, y);
-            maxY = Math.max(maxY, y + nodeHeight);
-        });
-
-        const offsetX = minX - tgMarginX;
-        const offsetY = minY - (tgLabelHeight + tgLabelMarginTop);
-        const width = maxX - minX + 2*tgMarginX;
-        const height = maxY - minY + nodeHeight + tgMarginBottom;
-
-        // Update all rects (underlays + container)
-        tgEl.querySelectorAll('rect').forEach(r => {
-            r.setAttribute('x', offsetX);
-            r.setAttribute('y', offsetY);
-            r.setAttribute('width', width);
-            r.setAttribute('height', height);
-        });
-
-        // Update all labels
-        tgEl.querySelectorAll('text').forEach(t => {
-            t.setAttribute('x', minX + (maxX - minX) / 2);
-            t.setAttribute('y', minY - 10);
-        });
-
-        // Move taskgroup tooltip
-        const tgTooltip = document.getElementById('tooltip-' + taskgroupId);
-        if (tgTooltip) {
-            tgTooltip.setAttribute('x', minX);
-            tgTooltip.setAttribute('y', minY - (tgLabelHeight + tgLabelMarginTop) + tooltipYOffset);
-        }
-    }
-
-    // Dragging logic
-    svg.querySelectorAll('.node').forEach(node => {
-        node.addEventListener('mousedown', (e) => {
-            selected = node;
-            startMouse = getMouseSVGCoords(e);
-
-            const transform = selected.getAttribute('transform');
-            const match = transform.match(/translate\(([-\d.]+),\s*([-\d.]+)\)/);
-            startPos = {
-                x: parseFloat(match[1]),
-                y: parseFloat(match[2])
+            // Convert to canvas coordinate system (account for pan and zoom)
+            return {
+                x: (transformed.x - currentTransform.x) / currentTransform.scale,
+                y: (transformed.y - currentTransform.y) / currentTransform.scale
             };
+        }
 
-            selected.style.cursor = 'grabbing';
-            e.preventDefault();
-            e.stopPropagation();
-        });
-    });
+        function updateTransform() {
+            canvasGroup.setAttribute(
+                'transform',
+                `translate(${currentTransform.x},
+                           ${currentTransform.y}) scale(${currentTransform.scale})`
+            );
+        }
 
-    svg.querySelectorAll('.taskgroup-container').forEach(container => {
-        container.addEventListener('mousedown', (e) => {
-            selectedTaskgroup = container.closest('.taskgroup');
-            startMouse = getMouseSVGCoords(e);
-            taskgroupStartPositions = { rects: [], labels: [], underlays: [], nodes: {} };
+        function updateLines(elementId, x, y) {
+            // Helper to get position and size info of an element (node or taskgroup)
+            function getPosAndSize(el) {
+                if (!el) return null;
 
-            selectedTaskgroup.querySelectorAll('rect').forEach(r => {
-                taskgroupStartPositions.rects.push({
-                    el: r,
-                    x: parseFloat(r.getAttribute('x')),
-                    y: parseFloat(r.getAttribute('y'))
-                });
+                let posX = 0, posY = 0, width = 0, height = 0;
+
+                // For nodes, position is from transform translate, size fixed as nodeWidth, nodeHeight
+                if (el.classList.contains('node')) {
+                    const transform = el.getAttribute('transform');
+                    if (!transform) return null;
+                    const match = transform.match(/translate\(([-\d.]+),\s*([-\d.]+)\)/);
+                    if (!match) return null;
+                    posX = parseFloat(match[1]);
+                    posY = parseFloat(match[2]);
+                    width = nodeWidth;
+                    height = nodeHeight;
+                }
+                // For taskgroups, position and size come from <rect> inside the group
+                else if (el.classList.contains('taskgroup')) {
+                    const rect = el.querySelector('rect');
+                    if (!rect) return null;
+                    posX = parseFloat(rect.getAttribute('x'));
+                    posY = parseFloat(rect.getAttribute('y'));
+                    width = parseFloat(rect.getAttribute('width'));
+                    height = parseFloat(rect.getAttribute('height'));
+                }
+                // fallback, try transform + nodeWidth/nodeHeight
+                else {
+                    const transform = el.getAttribute('transform');
+                    if (!transform) return null;
+                    const match = transform.match(/translate\(([-\d.]+),\s*([-\d.]+)\)/);
+                    if (!match) return null;
+                    posX = parseFloat(match[1]);
+                    posY = parseFloat(match[2]);
+                    width = nodeWidth;
+                    height = nodeHeight;
+                }
+
+                return { x: posX, y: posY, width: width, height: height };
+            }
+
+            // Update lines where element is source (start)
+            document.querySelectorAll(`line[id^="arrow-${elementId}-"]`).forEach(line => {
+                const targetId = line.id.slice(`arrow-${elementId}-`.length);
+                const targetEl =
+                    document.getElementById('taskgroup-' + targetId) ||
+                    document.getElementById('node-' + targetId);
+
+                if (!targetEl) return;
+
+                const sourceInfo = getPosAndSize(document.getElementById(elementId) || document.getElementById('node-' + elementId) || document.getElementById('taskgroup-' + elementId));
+                if (!sourceInfo) return;
+
+                const targetInfo = getPosAndSize(targetEl);
+                if (!targetInfo) return;
+
+                // Arrow goes from bottom center of source to top center of target
+                const x1 = sourceInfo.x + sourceInfo.width / 2;
+                const y1 = sourceInfo.y + sourceInfo.height;
+                const x2 = targetInfo.x + targetInfo.width / 2;
+                const y2 = targetInfo.y;
+
+                line.setAttribute('x1', x1);
+                line.setAttribute('y1', y1);
+                line.setAttribute('x2', x2);
+                line.setAttribute('y2', y2);
             });
-            selectedTaskgroup.querySelectorAll('text').forEach(t => {
-                taskgroupStartPositions.labels.push({
-                    el: t,
-                    x: parseFloat(t.getAttribute('x')),
-                    y: parseFloat(t.getAttribute('y'))
-                });
-            });
 
-            selectedTaskgroup.dataset.nodes.split(',').forEach(nodeId => {
+            // Update lines where element is target (end)
+            document.querySelectorAll(`line[id$="-${elementId}"]`).forEach(line => {
+                // line id format: arrow-source-target
+                const prefix = 'arrow-';
+                const srcId = line.id.slice(prefix.length, -(`-${elementId}`).length);
+                const srcEl =
+                    document.getElementById('taskgroup-' + srcId) ||
+                    document.getElementById('node-' + srcId);
+
+                if (!srcEl) return;
+
+                const sourceInfo = getPosAndSize(srcEl);
+                if (!sourceInfo) return;
+
+                const targetInfo = getPosAndSize(document.getElementById(elementId) || document.getElementById('node-' + elementId) || document.getElementById('taskgroup-' + elementId));
+                if (!targetInfo) return;
+
+                // Arrow goes from bottom center of source to top center of target
+                const x1 = sourceInfo.x + sourceInfo.width / 2;
+                const y1 = sourceInfo.y + sourceInfo.height;
+                const x2 = targetInfo.x + targetInfo.width / 2;
+                const y2 = targetInfo.y;
+
+                line.setAttribute('x1', x1);
+                line.setAttribute('y1', y1);
+                line.setAttribute('x2', x2);
+                line.setAttribute('y2', y2);
+            });
+        }
+
+        function updateTaskgroupBounds(taskgroupId) {
+            const tgEl = document.getElementById(taskgroupId);
+            if (!tgEl) return;
+            const nodes = tgEl.dataset.nodes.split(',');
+            let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+
+            nodes.forEach(nodeId => {
                 const nodeEl = document.getElementById(`node-${nodeId}`);
                 if (!nodeEl) return;
-                const match = nodeEl.getAttribute('transform').match(/translate\(([-\d.]+),\s*([-\d.]+)\)/);
-                taskgroupStartPositions.nodes[nodeId] = { x: parseFloat(match[1]), y: parseFloat(match[2]) };
-            });
-
-            selectedTaskgroup.style.cursor = 'grabbing';
-            e.preventDefault();
-            e.stopPropagation();
-        });
-    });
-
-    window.addEventListener('mousemove', (e) => {
-        if (selected) {
-            const coords = getMouseSVGCoords(e);
-            const dx = coords.x - startMouse.x;
-            const dy = coords.y - startMouse.y;
-            const newX = startPos.x + dx;
-            const newY = startPos.y + dy;
-
-            selected.setAttribute('transform', `translate(${newX},${newY})`);
-            updateLines(selected.id.replace(/^node-/, ''), newX, newY);
-
-            // Move node tooltip
-            const nodeUuid = selected.id.replace(/^node-/, '');
-            const tooltip = document.getElementById('tooltip-node-' + nodeUuid);
-            if (tooltip) {
-                tooltip.setAttribute('x', newX);
-                tooltip.setAttribute('y', newY + tooltipYOffset);
-            }
-
-            // Update taskgroup boundaries
-            const tgId = selected.dataset.taskgroup;
-            if (tgId) {
-                const taskgroupEl = document.getElementById('taskgroup-' + tgId);
-                updateTaskgroupBounds('taskgroup-' + tgId);
-                const rect = taskgroupEl.querySelector('rect');
-                updateLines(tgId, rect.getAttribute('x'), rect.getAttribute('y'));
-            }
-        } else if (selectedTaskgroup) {
-            const coords = getMouseSVGCoords(e);
-            const dx = coords.x - startMouse.x;
-            const dy = coords.y - startMouse.y;
-
-            taskgroupStartPositions.rects.forEach(r => {
-                r.el.setAttribute('x', r.x + dx);
-                r.el.setAttribute('y', r.y + dy);
-            });
-
-            taskgroupStartPositions.labels.forEach(t => {
-                t.el.setAttribute('x', t.x + dx);
-                t.el.setAttribute('y', t.y + dy);
-            });
-
-            Object.entries(taskgroupStartPositions.nodes).forEach(([nodeId, start]) => {
-                const nodeEl = document.getElementById(`node-${nodeId}`);
-                nodeEl.setAttribute('transform', `translate(${start.x + dx},${start.y + dy})`);
-                // Move node tooltip
-                const tooltip = document.getElementById('tooltip-node-' + nodeId);
-                if (tooltip) {
-                    tooltip.setAttribute('x', start.x + dx);
-                    tooltip.setAttribute('y', start.y + dy + tooltipYOffset);
-                }
-            });
-
-            updateTaskgroupBounds(selectedTaskgroup.id);
-            updateLines(selectedTaskgroup.id.replace(/^taskgroup-/, ''), null, null);
-        }
-    });
-
-    window.addEventListener('mouseup', () => {
-        if (selected) selected.style.cursor = 'grab';
-        if (selectedTaskgroup) selectedTaskgroup.style.cursor = 'grab';
-        selected = null;
-        selectedTaskgroup = null;
-        startMouse = null;
-        startPos = null;
-        taskgroupStartPositions = null;
-    });
-    /* ************ */
-
-    /* ***************************
-    * DAG-centering at load time *
-    *************************** */
-    function adjustSVGHeight() {
-        const nodes = svg.querySelectorAll('.node');
-        if (!nodes.length) return;
-        let minY = Infinity, maxY = -Infinity;
-        nodes.forEach(node => {
-            const match = node.getAttribute('transform').match(/translate\(([-\d.]+),\s*([-\d.]+)\)/);
-            const y = parseFloat(match[2]);
-            minY = Math.min(minY, y);
-            maxY = Math.max(maxY, y + nodeHeight);
-        });
-
-        // Calculate dagHeight and add top/bottom margin
-        const dagHeight = maxY - minY;
-        const newHeight = dagHeight + 2 * {{ -tooltip_y_offset}}; // top & bottom margin
-
-        // Set new SVG height (in pixels)
-        svg.setAttribute('height', newHeight);
-    }
-
-    function centerDAG() {
-        const nodes = svg.querySelectorAll('.node');
-        if (nodes.length === 0) return;
-
-        let minX = Infinity, maxX = -Infinity;
-        let minY = Infinity;
-
-        nodes.forEach(node => {
-            const transform = node.getAttribute('transform');
-            const match = transform.match(/translate\(([-\d.]+),\s*([-\d.]+)\)/);
-            if (match) {
+                const match = nodeEl.getAttribute('transform')
+                    ?.match(/translate\(([-\d.]+),\s*([-\d.]+)\)/);
+                if (!match) return;
                 const x = parseFloat(match[1]);
                 const y = parseFloat(match[2]);
-
                 minX = Math.min(minX, x);
                 maxX = Math.max(maxX, x + nodeWidth);
                 minY = Math.min(minY, y);
+                maxY = Math.max(maxY, y + nodeHeight);
+            });
+
+            const offsetX = minX - tgMarginX;
+            const offsetY = minY - (tgLabelHeight + tgLabelMarginTop);
+            const width = maxX - minX + 2*tgMarginX;
+            const height = maxY - minY + nodeHeight + tgMarginBottom;
+
+            // Update all rects (underlays + container)
+            tgEl.querySelectorAll('rect').forEach(r => {
+                r.setAttribute('x', offsetX);
+                r.setAttribute('y', offsetY);
+                r.setAttribute('width', width);
+                r.setAttribute('height', height);
+            });
+
+            // Update all labels
+            tgEl.querySelectorAll('text').forEach(t => {
+                t.setAttribute('x', minX + (maxX - minX) / 2);
+                t.setAttribute('y', minY - 10);
+            });
+
+            // Move taskgroup tooltip
+            const tgTooltip = document.getElementById('tooltip-' + taskgroupId);
+            if (tgTooltip) {
+                tgTooltip.setAttribute('x', minX);
+                tgTooltip.setAttribute('y', minY - (tgLabelHeight + tgLabelMarginTop) + tooltipYOffset);
+            }
+        }
+
+        // Dragging logic
+        svg.querySelectorAll('.node').forEach(node => {
+            node.addEventListener('mousedown', (e) => {
+                selected = node;
+                startMouse = getMouseSVGCoords(e);
+
+                const transform = selected.getAttribute('transform');
+                const match = transform.match(/translate\(([-\d.]+),\s*([-\d.]+)\)/);
+                startPos = {
+                    x: parseFloat(match[1]),
+                    y: parseFloat(match[2])
+                };
+
+                selected.style.cursor = 'grabbing';
+                e.preventDefault();
+                e.stopPropagation();
+            });
+        });
+
+        svg.querySelectorAll('.taskgroup-container').forEach(container => {
+            container.addEventListener('mousedown', (e) => {
+                selectedTaskgroup = container.closest('.taskgroup');
+                startMouse = getMouseSVGCoords(e);
+                taskgroupStartPositions = { rects: [], labels: [], underlays: [], nodes: {} };
+
+                selectedTaskgroup.querySelectorAll('rect').forEach(r => {
+                    taskgroupStartPositions.rects.push({
+                        el: r,
+                        x: parseFloat(r.getAttribute('x')),
+                        y: parseFloat(r.getAttribute('y'))
+                    });
+                });
+                selectedTaskgroup.querySelectorAll('text').forEach(t => {
+                    taskgroupStartPositions.labels.push({
+                        el: t,
+                        x: parseFloat(t.getAttribute('x')),
+                        y: parseFloat(t.getAttribute('y'))
+                    });
+                });
+
+                selectedTaskgroup.dataset.nodes.split(',').forEach(nodeId => {
+                    const nodeEl = document.getElementById(`node-${nodeId}`);
+                    if (!nodeEl) return;
+                    const match = nodeEl.getAttribute('transform').match(/translate\(([-\d.]+),\s*([-\d.]+)\)/);
+                    taskgroupStartPositions.nodes[nodeId] = { x: parseFloat(match[1]), y: parseFloat(match[2]) };
+                });
+
+                selectedTaskgroup.style.cursor = 'grabbing';
+                e.preventDefault();
+                e.stopPropagation();
+            });
+        });
+
+        window.addEventListener('mousemove', (e) => {
+            if (selected) {
+                const coords = getMouseSVGCoords(e);
+                const dx = coords.x - startMouse.x;
+                const dy = coords.y - startMouse.y;
+                const newX = startPos.x + dx;
+                const newY = startPos.y + dy;
+
+                selected.setAttribute('transform', `translate(${newX},${newY})`);
+                updateLines(selected.id.replace(/^node-/, ''), newX, newY);
+
+                // Move node tooltip
+                const nodeUuid = selected.id.replace(/^node-/, '');
+                const tooltip = document.getElementById('tooltip-node-' + nodeUuid);
+                if (tooltip) {
+                    tooltip.setAttribute('x', newX);
+                    tooltip.setAttribute('y', newY + tooltipYOffset);
+                }
+
+                // Update taskgroup boundaries
+                const tgId = selected.dataset.taskgroup;
+                if (tgId) {
+                    const taskgroupEl = document.getElementById('taskgroup-' + tgId);
+                    updateTaskgroupBounds('taskgroup-' + tgId);
+                    const rect = taskgroupEl.querySelector('rect');
+                    updateLines(tgId, rect.getAttribute('x'), rect.getAttribute('y'));
+                }
+            } else if (selectedTaskgroup) {
+                const coords = getMouseSVGCoords(e);
+                const dx = coords.x - startMouse.x;
+                const dy = coords.y - startMouse.y;
+
+                taskgroupStartPositions.rects.forEach(r => {
+                    r.el.setAttribute('x', r.x + dx);
+                    r.el.setAttribute('y', r.y + dy);
+                });
+
+                taskgroupStartPositions.labels.forEach(t => {
+                    t.el.setAttribute('x', t.x + dx);
+                    t.el.setAttribute('y', t.y + dy);
+                });
+
+                Object.entries(taskgroupStartPositions.nodes).forEach(([nodeId, start]) => {
+                    const nodeEl = document.getElementById(`node-${nodeId}`);
+                    nodeEl.setAttribute('transform', `translate(${start.x + dx},${start.y + dy})`);
+                    // Move node tooltip
+                    const tooltip = document.getElementById('tooltip-node-' + nodeId);
+                    if (tooltip) {
+                        tooltip.setAttribute('x', start.x + dx);
+                        tooltip.setAttribute('y', start.y + dy + tooltipYOffset);
+                    }
+                });
+
+                updateTaskgroupBounds(selectedTaskgroup.id);
+                updateLines(selectedTaskgroup.id.replace(/^taskgroup-/, ''), null, null);
             }
         });
 
-        const contentWidth = maxX - minX;
-        const contentCenterX = minX + contentWidth / 2;
+        window.addEventListener('mouseup', () => {
+            if (selected) selected.style.cursor = 'grab';
+            if (selectedTaskgroup) selectedTaskgroup.style.cursor = 'grab';
+            selected = null;
+            selectedTaskgroup = null;
+            startMouse = null;
+            startPos = null;
+            taskgroupStartPositions = null;
+        });
+        /* ************ */
 
-        const svgRect = svg.getBoundingClientRect();
-        const viewportCenterX = svgRect.width / 2;
+        /* ***************************
+        * DAG-centering at load time *
+        *************************** */
+        function adjustSVGHeight() {
+            const nodes = svg.querySelectorAll('.node');
+            if (!nodes.length) return;
+            let minY = Infinity, maxY = -Infinity;
+            nodes.forEach(node => {
+                const match = node.getAttribute('transform').match(/translate\(([-\d.]+),\s*([-\d.]+)\)/);
+                const y = parseFloat(match[2]);
+                minY = Math.min(minY, y);
+                maxY = Math.max(maxY, y + nodeHeight);
+            });
 
-        // Horizontal centering
-        currentTransform.x = viewportCenterX - contentCenterX * currentTransform.scale;
-        // Vertical top alignment (e.g. top of DAG starts at, from top of viewport)
-        const desiredTopOffset = {{ -tooltip_y_offset }};
-        currentTransform.y = desiredTopOffset - minY * currentTransform.scale;
+            // Calculate dagHeight and add top/bottom margin
+            const dagHeight = maxY - minY;
+            const newHeight = (dagHeight + 2 * {{ -tooltip_y_offset}}) * currentTransform.scale; // top & bottom margin, scaled
 
-        updateTransform();
-    }
-
-    adjustSVGHeight();
-    centerDAG();
-    canvasGroup.style.visibility = 'visible';
-    // Also center on resize
-    window.addEventListener('resize', centerDAG);
-    /* ************************ */
-
-    /* ****************
-    * Canvas-dragging *
-    **************** */
-    let canvasDrag = false;
-    let canvasStartMouse = null;
-    let canvasStartTransform = {x: 0, y: 0};
-
-    svg.addEventListener('mousedown', (e) => {
-        // Only start if not clicking on a node
-        if (e.target === svg) {
-            canvasDrag = true;
-            const pt = svg.createSVGPoint();
-            pt.x = e.clientX;
-            pt.y = e.clientY;
-            canvasStartMouse = pt.matrixTransform(svg.getScreenCTM().inverse());
-
-            canvasStartTransform = {
-                x: currentTransform.x,
-                y: currentTransform.y
-            };
-            svg.style.cursor = 'move';
-            e.preventDefault();
+            // Set new SVG height (in pixels)
+            svg.setAttribute('height', newHeight);
         }
-    });
 
-    window.addEventListener('mousemove', (e) => {
-        if (canvasDrag) {
-            const pt = svg.createSVGPoint();
-            pt.x = e.clientX;
-            pt.y = e.clientY;
-            const coords = pt.matrixTransform(svg.getScreenCTM().inverse());
+        function centerDAG() {
+            const nodes = svg.querySelectorAll('.node');
+            if (nodes.length === 0) return;
 
-            const dx = coords.x - canvasStartMouse.x;
-            const dy = coords.y - canvasStartMouse.y;
+            let minX = Infinity, maxX = -Infinity;
+            let minY = Infinity;
 
-            currentTransform.x = canvasStartTransform.x + dx;
-            currentTransform.y = canvasStartTransform.y + dy;
+            nodes.forEach(node => {
+                const transform = node.getAttribute('transform');
+                const match = transform.match(/translate\(([-\d.]+),\s*([-\d.]+)\)/);
+                if (match) {
+                    const x = parseFloat(match[1]);
+                    const y = parseFloat(match[2]);
+
+                    minX = Math.min(minX, x);
+                    maxX = Math.max(maxX, x + nodeWidth);
+                    minY = Math.min(minY, y);
+                }
+            });
+
+            const contentWidth = maxX - minX;
+            const contentCenterX = minX + contentWidth / 2;
+
+            const svgRect = svg.getBoundingClientRect();
+            const viewportCenterX = svgRect.width / 2;
+
+            // Horizontal centering
+            currentTransform.x = viewportCenterX - contentCenterX * currentTransform.scale;
+            // Vertical top alignment (e.g. top of DAG starts at, from top of viewport)
+            const desiredTopOffset = {{ -tooltip_y_offset }} * currentTransform.scale;
+            currentTransform.y = desiredTopOffset - minY * currentTransform.scale;
 
             updateTransform();
         }
-    });
 
-    window.addEventListener('mouseup', () => {
-        if (canvasDrag) {
-            svg.style.cursor = 'default';
-        }
-        canvasDrag = false;
-        canvasStartMouse = null;
-    });
-    /* ************ */
+        adjustSVGHeight();
+        centerDAG();
+        canvasGroup.style.visibility = 'visible';
+        // Also center on resize
+        window.addEventListener('resize', centerDAG);
+        // Also center on becoming visible
+        const intersectionObserver = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    centerDAG();
+                }
+            });
+        }, { threshold: 0.01 }); // trigger as soon as a tiny part is visible
+        intersectionObserver.observe(canvasGroup);
+        /* ************************ */
 
-    /* ***************
-    * Canvas-zooming *
-    *************** */
-    svg.addEventListener('wheel', (e) => {
-        if (!e.ctrlKey) return; // Only zoom when Ctrl is held
-        e.preventDefault();
+        /* ****************
+        * Canvas-dragging *
+        **************** */
+        let canvasDrag = false;
+        let canvasStartMouse = null;
+        let canvasStartTransform = {x: 0, y: 0};
 
-        // Get mouse position in SVG coordinates before zoom
-        const pt = svg.createSVGPoint();
-        pt.x = e.clientX;
-        pt.y = e.clientY;
-        const svgPoint = pt.matrixTransform(svg.getScreenCTM().inverse());
+        svg.addEventListener('mousedown', (e) => {
+            // Only start if not clicking on a node
+            if (e.target === svg) {
+                canvasDrag = true;
+                const pt = svg.createSVGPoint();
+                pt.x = e.clientX;
+                pt.y = e.clientY;
+                canvasStartMouse = pt.matrixTransform(svg.getScreenCTM().inverse());
 
-        // Calculate zoom factor
-        const zoomFactor = e.deltaY < 0 ? 1.1 : 0.9;
-        const newScale = Math.max(0.1, Math.min(5, currentTransform.scale * zoomFactor));
+                canvasStartTransform = {
+                    x: currentTransform.x,
+                    y: currentTransform.y
+                };
+                svg.style.cursor = 'move';
+                e.preventDefault();
+            }
+        });
 
-        // Calculate the point in canvas coordinates before zoom
-        const canvasPointBefore = {
-            x: (svgPoint.x - currentTransform.x) / currentTransform.scale,
-            y: (svgPoint.y - currentTransform.y) / currentTransform.scale
-        };
+        window.addEventListener('mousemove', (e) => {
+            if (canvasDrag) {
+                const pt = svg.createSVGPoint();
+                pt.x = e.clientX;
+                pt.y = e.clientY;
+                const coords = pt.matrixTransform(svg.getScreenCTM().inverse());
 
-        // Update scale
-        currentTransform.scale = newScale;
+                const dx = coords.x - canvasStartMouse.x;
+                const dy = coords.y - canvasStartMouse.y;
 
-        // Calculate new translation to keep the mouse point fixed
-        currentTransform.x = svgPoint.x - canvasPointBefore.x * currentTransform.scale;
-        currentTransform.y = svgPoint.y - canvasPointBefore.y * currentTransform.scale;
+                currentTransform.x = canvasStartTransform.x + dx;
+                currentTransform.y = canvasStartTransform.y + dy;
 
-        updateTransform();
-    });
-    /* ************ */
+                updateTransform();
+            }
+        });
+
+        window.addEventListener('mouseup', () => {
+            if (canvasDrag) {
+                svg.style.cursor = 'default';
+            }
+            canvasDrag = false;
+            canvasStartMouse = null;
+        });
+        /* ************ */
+
+        /* ***************
+        * Canvas-zooming *
+        *************** */
+        svg.addEventListener('wheel', (e) => {
+            if (!e.ctrlKey) return; // Only zoom when Ctrl is held
+            e.preventDefault();
+
+            // Get mouse position in SVG coordinates before zoom
+            const pt = svg.createSVGPoint();
+            pt.x = e.clientX;
+            pt.y = e.clientY;
+            const svgPoint = pt.matrixTransform(svg.getScreenCTM().inverse());
+
+            // Calculate zoom factor
+            const zoomFactor = e.deltaY < 0 ? 1.1 : 0.9;
+            const newScale = Math.max(0.1, Math.min(5, currentTransform.scale * zoomFactor));
+
+            // Calculate the point in canvas coordinates before zoom
+            const canvasPointBefore = {
+                x: (svgPoint.x - currentTransform.x) / currentTransform.scale,
+                y: (svgPoint.y - currentTransform.y) / currentTransform.scale
+            };
+
+            // Update scale
+            currentTransform.scale = newScale;
+
+            // Calculate new translation to keep the mouse point fixed
+            currentTransform.x = svgPoint.x - canvasPointBefore.x * currentTransform.scale;
+            currentTransform.y = svgPoint.y - canvasPointBefore.y * currentTransform.scale;
+
+            updateTransform();
+        });
+        /* ************ */
+    })();
 </script>
 

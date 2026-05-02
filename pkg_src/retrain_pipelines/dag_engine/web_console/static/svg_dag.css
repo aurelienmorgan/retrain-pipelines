@@ -1,5 +1,5 @@
 
-svg {
+svg[id^="dag-"] {
     border: 1px solid #ccc;
     user-select: none;
     width: 90vw;
