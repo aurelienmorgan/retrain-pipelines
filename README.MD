@@ -6,12 +6,29 @@
 
 ![logo_large](https://github.com/user-attachments/assets/19725866-13f9-48c1-b958-35c2e014351a)
 
+[![GoFundMe](https://img.shields.io/badge/Donate-GoFundMe-FF69B4.svg)](https://www.gofundme.com/f/donate-retrainpipelines-opensource-ml-retraining-framework) |
+Follow us on <b>Hugging&nbsp;Face</b>&nbsp;!&nbsp;[![GitHub Stars](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fhuggingface.co%2Fapi%2Forganizations%2Fretrain-pipelines%2Foverview&query=%24.numFollowers&logo=huggingface&label=followers)](https://hf.co/retrain-pipelines)
+
 <b>retrain-pipelines</b> simplifies the creation and management of machine learning retraining pipelines. 
 The package is designed to remove the complexity of building end-to-end ML retraining pipelines, allowing users to focus on their data and model-architecture. 
 With pre-built, highly adaptable pipeline examples that work out of the box, users can easily integrate their own data and begin retraining models with minimal-to-no setup. 
 
-<center><a href="https://hf.co/retrain-pipelines" target="_blank"><img src="https://github.com/user-attachments/assets/d34a9f58-309f-4c1f-9cd1-f576a56c3b24" width="40%"/><br />
-https://hf.co/retrain-pipelines</a></center>
+
+## Getting Started
+
+You can trigger a <b>retrain-pipelines</b> launch from many different places.
+
+<a href="https://raw.githubusercontent.com/aurelienmorgan/retrain-pipelines/refs/heads/master/.github/assets/local_launcher.gif" target="_blank"><img width="700" alt="internal DAG engine | local launcher" src="https://raw.githubusercontent.com/aurelienmorgan/retrain-pipelines/refs/heads/master/.github/assets/local_launcher.gif" /></a>
+
+You can launch a local instance of the <b>WebConsole</b>  from the cli&nbsp;:
+```bash
+pip install retrain-pipelines[local]
+webconsole_start
+```
+
+<a href="https://raw.githubusercontent.com/aurelienmorgan/retrain-pipelines/refs/heads/master/.github/assets/WebConsole.png" target="_blank"><img width="200" alt="WebConsole Home page | executions list" src="https://raw.githubusercontent.com/aurelienmorgan/retrain-pipelines/refs/heads/master/.github/assets/WebConsole.png" /></a> | <a href="https://raw.githubusercontent.com/aurelienmorgan/retrain-pipelines/refs/heads/master/.github/assets/dag__example_wf_7.png" target="_blank"><img width="75" alt="DAG rendering | example_wf_7" src="https://raw.githubusercontent.com/aurelienmorgan/retrain-pipelines/refs/heads/master/.github/assets/dag__example_wf_7.png" /></a> | <a href="https://raw.githubusercontent.com/aurelienmorgan/retrain-pipelines/refs/heads/master/.github/assets/gantt__example_wf_11.png" target="_blank"><img width="90" alt="Gantt Chart | execution timeline | example_wf_11" src="https://raw.githubusercontent.com/aurelienmorgan/retrain-pipelines/refs/heads/master/.github/assets/gantt__example_wf_11.png" /></a>
+
+<hr />
 
 ### Key features of retrain-pipelines include&nbsp;:
 - **Model version blessing**: Automatically compare the performance of retrained models against previous best versions to ensure only superior models are deployed.
@@ -30,22 +47,19 @@ In essence, <b>retrain-pipelines</b> offers a seamless solution: "Come with your
 <b>retrain-pipelines</b> doesn't just streamline the retraining process, it empowers teams to innovate faster, iterate smarter, and deploy more robust models with confidence. Whether you're looking for an out-of-the-box solution or a highly customizable pipeline, <b>retrain-pipelines</b> is your ultimate companion for continuous model improvement.
 
 
-## Getting Started
-
-You can trigger a <b>retrain-pipelines</b> launch from many different places.
-
-[local_launcher.webm](https://github.com/user-attachments/assets/4164abfd-4cd6-4e8a-a720-07267241b9f6)
+<center><a href="https://hf.co/retrain-pipelines" target="_blank"><img src="https://github.com/user-attachments/assets/d34a9f58-309f-4c1f-9cd1-f576a56c3b24" width="40%"/><br />
+https://hf.co/retrain-pipelines</a></center>
 
 
 ## Sample pipelines
 
 the <b>retrain-pipelines</b> package comes with off-the-shelf Machine Learning retraining pipelines. Find them at <code><a href="https://github.com/aurelienmorgan/retrain-pipelines/tree/master/sample_pipelines" target="_blank">/sample_pipelines</a></code>. For instance&nbsp;:
 
-| framework | modality | task | model lib | Serving |  |
-|----------|----------|----------|----------|----------|--|
-| <a href="https://metaflow.org/" target="_blank">Metaflow</a> <img src="https://github.com/user-attachments/assets/30f4f382-3032-4bf7-b697-f6dbcab35fd7" height=20px /> | text, NLP   | function&nbsp;calling | <a href="https://unsloth.ai/" target="_blank">Unsloth</a> <img src="https://github.com/user-attachments/assets/3bb9244b-8c89-41fa-8b38-c4862763eea1" width=20px /> / <a href="https://github.com/dreamquark-ai/tabnet/tree/develop" target="_blank">Qwen&nbsp;2.5</a>&nbsp;<img src="https://github.com/user-attachments/assets/3067f88e-3064-470f-9c8e-2d80c40b3d5c" width=20px /> | <a href="https://lightning.ai/docs/litserve/home/" target="_blank">LitServe</a> <img src="https://github.com/user-attachments/assets/b5abcd66-9cb4-420c-ad2c-29bafb0f3b62" width=20px /> | <b><a href="https://github.com/aurelienmorgan/retrain-pipelines/tree/master/sample_pipelines/Unsloth_Qwen_FuncCall" target="_blank">starter-kit</a></b> |
-| <a href="https://metaflow.org/" target="_blank">Metaflow</a> <img src="https://github.com/user-attachments/assets/30f4f382-3032-4bf7-b697-f6dbcab35fd7" height=20px /> | Tabular   | regression   | <a href="https://www.dask.org/" target="_blank">Dask</a> <img src="https://github.com/user-attachments/assets/a94807e7-cc67-4415-9a9e-da1ed4755cb1" width=20px /> / <a href="https://lightgbm.readthedocs.io/en/stable/" target="_blank">LightGBM</a> <img src="https://github.com/user-attachments/assets/92ac0b53-17f8-470d-9c73-619657db42bd" width=20px />   | <a href="https://www.seldon.io/solutions/seldon-mlserver" target="_blank">ML Server</a> <img src="https://github.com/user-attachments/assets/69c57bce-cd38-4f8c-8730-e5171e842d13" width=20px /> | <b><a href="https://github.com/aurelienmorgan/retrain-pipelines/tree/master/sample_pipelines/LightGBM_hp_cv_WandB" target="_blank">starter-kit</a></b> |
-| <a href="https://metaflow.org/" target="_blank">Metaflow</a> <img src="https://github.com/user-attachments/assets/30f4f382-3032-4bf7-b697-f6dbcab35fd7" height=20px /> | Tabular   | classification | <a href="https://pytorch.org/" target="_blank">Pytorch</a> <img src="https://github.com/user-attachments/assets/bfa9b38e-e9b3-41ff-8370-e64a0a0a4a93" width=20px /> / <a href="https://github.com/dreamquark-ai/tabnet/tree/develop" target="_blank">TabNet</a> | <a href="https://pytorch.org/serve/" target="_blank">TorchServe</a>&nbsp;<img src="https://github.com/user-attachments/assets/bfa9b38e-e9b3-41ff-8370-e64a0a0a4a93" width=20px /> | <b><a href="https://github.com/aurelienmorgan/retrain-pipelines/tree/master/sample_pipelines/TabNet_hp_cv_WandB" target="_blank">starter-kit</a></b> |
+|modality | task | model lib | Serving |  |
+|----------|----------|----------|----------|--|
+| text, NLP   | function&nbsp;calling | <a href="https://unsloth.ai/" target="_blank">Unsloth</a> <img src="https://github.com/user-attachments/assets/3bb9244b-8c89-41fa-8b38-c4862763eea1" width=20px /> / <a href="https://github.com/dreamquark-ai/tabnet/tree/develop" target="_blank">Qwen&nbsp;2.5</a>&nbsp;<img src="https://github.com/user-attachments/assets/3067f88e-3064-470f-9c8e-2d80c40b3d5c" width=20px /> | <a href="https://lightning.ai/docs/litserve/home/" target="_blank">LitServe</a> <img src="https://github.com/user-attachments/assets/b5abcd66-9cb4-420c-ad2c-29bafb0f3b62" width=20px /> | <b><a href="https://github.com/aurelienmorgan/retrain-pipelines/tree/master/sample_pipelines/Unsloth_Qwen_FuncCall" target="_blank">starter-kit</a></b> |
+| Tabular   | regression   | <a href="https://www.dask.org/" target="_blank">Dask</a> <img src="https://github.com/user-attachments/assets/a94807e7-cc67-4415-9a9e-da1ed4755cb1" width=20px /> / <a href="https://lightgbm.readthedocs.io/en/stable/" target="_blank">LightGBM</a> <img src="https://github.com/user-attachments/assets/92ac0b53-17f8-470d-9c73-619657db42bd" width=20px />   | <a href="https://www.seldon.io/solutions/seldon-mlserver" target="_blank">ML Server</a> <img src="https://github.com/user-attachments/assets/69c57bce-cd38-4f8c-8730-e5171e842d13" width=20px /> | <b><a href="https://github.com/aurelienmorgan/retrain-pipelines/tree/master/sample_pipelines/LightGBM_hp_cv_WandB" target="_blank">starter-kit</a></b> |
+| Tabular   | classification | <a href="https://pytorch.org/" target="_blank">Pytorch</a> <img src="https://github.com/user-attachments/assets/bfa9b38e-e9b3-41ff-8370-e64a0a0a4a93" width=20px /> / <a href="https://github.com/dreamquark-ai/tabnet/tree/develop" target="_blank">TabNet</a> | <a href="https://pytorch.org/serve/" target="_blank">TorchServe</a>&nbsp;<img src="https://github.com/user-attachments/assets/bfa9b38e-e9b3-41ff-8370-e64a0a0a4a93" width=20px /> | <b><a href="https://github.com/aurelienmorgan/retrain-pipelines/tree/master/sample_pipelines/TabNet_hp_cv_WandB" target="_blank">starter-kit</a></b> |
 
 
 You can simply give one of those your data and it just runs. The only manual change you need to do is regarding the endpoint request &amp; serving signatures, since it is purposely hard-coded.<br />
@@ -107,7 +121,7 @@ That's why it offers a central place and minimal amounts of clicks to navigate e
     </td>
   </tr>
 </table>
-Browse a live example for yourself <a href="https://retrain-pipelines.w3spaces.com/html-custom-2d5ac4812402cf8726619e81d8cc6c8f0ba94c24.html" target="_blank">here on W3Schools Spaces</a>
+Browse a live example for yourself <a href="https://retrain-pipelines-web-console-demo.hf.space/pipeline-card?exec_id=142" target="_blank">here on HuggingFace Spaces</a>
 (click "continue" on the W3Schools landing page)
 <hr width=60% />
 </details>
@@ -151,7 +165,7 @@ TensorBoard, PyTorch Profiler, Weights and Biases, Hugging Face. <b>retrain-pipe
   ```
   Once you updated any of them, you can launch a <b>retrain-pipelines</b> run so it uses those :
   ```python
-  %retrain_pipelines_local retraining_pipeline.py run \
+  %retrain_pipelines retraining_pipeline.py start \
     --pipeline_card_artifacts_path "." \
     --preprocess_artifacts_path "."
   ```
@@ -174,11 +188,11 @@ For instance&nbsp;:
   ```python
   from retrain_pipelines.inspectors import browse_local_pipeline_card
   
-  browse_local_pipeline_card(mf_flow_name)
+  browse_local_pipeline_card(execution_name)
   ```
   This opens the <code>pipeline_card</code> in a web-browser tab, so you don't have to look for it.
   It's ideal for quick ideation during the drafting phase&nbsp;:
-  developers can now <code>run/resume</code> &amp; <code>browse</code> in a chain of instructions.
+  developers can now <code>start/restart</code> &amp; <code>browse</code> in a chain of instructions.
   <hr width=60% />
   </details>
   </li>
@@ -190,7 +204,7 @@ For instance&nbsp;:
   ```python
   from retrain_pipelines.inspectors import get_execution_source_code
   
-  for source_code_artifact in get_execution_source_code(mf_run_id=<your_flow_id>):
+  for source_code_artifact in get_execution_source_code(execution_id=<your_execution_id>):
     print(f" - {source_code_artifact.name} {source_code_artifact.url}")
   ```
   You can even have those artifacts downloaded on the go&nbsp;:
@@ -198,7 +212,7 @@ For instance&nbsp;:
   ```python
   from retrain_pipelines.inspectors import explore_source_code
   # download and open file explorer
-  explore_source_code(mf_run_id=<your_flow_id>)
+  explore_source_code(execution_id=<your_execution_id>)
   ```
   <hr width=60% />
   </details>
@@ -213,7 +227,7 @@ For instance&nbsp;:
   ```python
   from retrain_pipelines.inspectors.hp_cv_inspector import plot_run_all_cv_tasks
   
-  plot_run_all_cv_tasks(mf_run_id=<your_flow_id>)
+  plot_run_all_cv_tasks(execution_id=<your_execution_id>)
   ```
   with results looking like below for a run with 6 different sets of hp values, 2 cross-validation folds and with 4 Dask data-parallel workers&nbsp;:<br />
   <a href="https://github.com/user-attachments/assets/f3c03b06-a086-4be5-9815-73d1a887179d" target="_blank"><img src="https://github.com/user-attachments/assets/f3c03b06-a086-4be5-9815-73d1a887179d" width=400/></a>
@@ -240,7 +254,9 @@ find us @ https://pypi.org/project/retrain-pipelines/
 <br />
 <hr />
 
-Drop us a star&nbsp;!&nbsp;⭐&nbsp;&nbsp;&nbsp;&nbsp;[![GitHub Stars](https://img.shields.io/github/stars/aurelienmorgan/retrain-pipelines.svg?style=social&label=-%C2%A0retrain-pipelines%C2%A0-&maxAge=172800)](https://github.com/aurelienmorgan/retrain-pipelines/stargazers)<br /> 
-Follow us on <b>Hugging&nbsp;Face</b>&nbsp;!&nbsp;[![GitHub Stars](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fhuggingface.co%2Fapi%2Forganizations%2Fretrain-pipelines%2Foverview&query=%24.numFollowers&logo=huggingface&label=followers)](https://hf.co/retrain-pipelines)
+Drop us a star&nbsp;!&nbsp;⭐&nbsp;&nbsp;&nbsp;&nbsp;[![GitHub Stars](https://img.shields.io/github/stars/aurelienmorgan/retrain-pipelines.svg?style=social&label=-%C2%A0retrain-pipelines%C2%A0-&maxAge=172800)](https://github.com/aurelienmorgan/retrain-pipelines/stargazers)
 <br />
-<hr />
+<hr width=60% />
+
+<img src="https://gleevy-labs.ai/static/favicon_48.png" height=20px />&nbsp;[Gleevy Labs](https://gleevy-labs.ai)
+
