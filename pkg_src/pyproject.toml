@@ -127,4 +127,5 @@ webconsole_shutdown = "retrain_pipelines.dag_engine.web_console.main:webconsole_
 "Repository" = "https://github.com/aurelienmorgan/retrain-pipelines"
 "PyPI" = "https://pypi.org/project/retrain-pipelines/"
 "Hugging Face" = "https://huggingface.co/retrain-pipelines"
+"Gleevy Labs" = "https://gleevy-labs.ai"
 

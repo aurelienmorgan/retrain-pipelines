@@ -15,6 +15,8 @@ import os
 import sys
 import argparse
 
+from typing import Optional
+
 from IPython import get_ipython
 from IPython.core.magic import register_line_magic
 
@@ -108,7 +110,7 @@ def _resolve_path_str(raw: str, ns: dict) -> str:
     return raw
 
 
-def _validate_path(path: str) -> str | None:
+def _validate_path(path: str) -> Optional[str]:
     """Resolve to an absolute real path
     and verify the file exists.
     Returns the resolved path on success,
