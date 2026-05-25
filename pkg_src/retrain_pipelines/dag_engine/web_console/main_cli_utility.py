@@ -1,11 +1,9 @@
-
-import os
-import sys
-import time
 import atexit
+import os
 import socket
+import sys
 import threading
-
+import time
 
 # --- WebConsole served via the CLI utility ----------------------------------------------
 """
@@ -95,10 +93,9 @@ to report in the confirmation message, without needing a separate lookup.
 
 
 def _pid_file():
-    for fd in (sys.stdout.fileno(), sys.stderr.fileno(),
-               sys.stdin.fileno()):
+    for fd in (sys.stdout.fileno(), sys.stderr.fileno(), sys.stdin.fileno()):
         try:
-            tty = os.ttyname(fd).replace('/', '_')
+            tty = os.ttyname(fd).replace("/", "_")
             return f"/tmp/webconsole{tty}.pid"
         except OSError:
             pass
@@ -133,9 +130,7 @@ def _daemonize(port):
     with open(pid_file, "w") as f:
         f.write(f"{os.getpid()}:{port}")
 
-    atexit.register(
-        lambda: os.unlink(pid_file) if os.path.exists(pid_file) else None
-    )
+    atexit.register(lambda: os.unlink(pid_file) if os.path.exists(pid_file) else None)
 
     # Monitor parent death: when the shell exits (terminal closed),
     # shell_pid disappears — kill(shell_pid, 0) raises ProcessLookupError.
@@ -147,13 +142,14 @@ def _daemonize(port):
             except ProcessLookupError:
                 _main.webconsole_shutdown()
                 os._exit(0)
+
     threading.Thread(target=_watch_parent, daemon=True).start()
 
     sys.stdout.flush()
     sys.stderr.flush()
-    with open(os.devnull, 'r') as f:
+    with open(os.devnull) as f:
         os.dup2(f.fileno(), sys.stdin.fileno())
-    with open(os.devnull, 'a+') as f:
+    with open(os.devnull, "a+") as f:
         os.dup2(f.fileno(), sys.stdout.fileno())
         os.dup2(f.fileno(), sys.stderr.fileno())
 
@@ -168,13 +164,17 @@ def _daemonize(port):
 
 def webconsole_start_cli():
     import argparse
+
     parser = argparse.ArgumentParser(prog="webconsole_start")
     parser.add_argument("-p", "--port", type=int, default=None)
-    parser.add_argument("-gp", "--grpc-port", type=int, default=None,
-                        dest="grpc_port")
-    parser.add_argument("-f", "--foreground", dest="foreground",
-                        action="store_true",
-                        help="Run in foreground (persistent, not a daemon)")
+    parser.add_argument("-gp", "--grpc-port", type=int, default=None, dest="grpc_port")
+    parser.add_argument(
+        "-f",
+        "--foreground",
+        dest="foreground",
+        action="store_true",
+        help="Run in foreground (persistent, not a daemon)",
+    )
     args = parser.parse_args()
 
     from . import main as _main
@@ -189,8 +189,9 @@ def webconsole_start_cli():
         try:
             os.kill(int(existing_pid), 0)
             print(
-                f"\N{cross mark} An instance of the WebConsole is already "
-                f"running on this terminal (on port {existing_port}).")
+                f"\N{CROSS MARK} An instance of the WebConsole is already "
+                f"running on this terminal (on port {existing_port})."
+            )
             return
         except ProcessLookupError:
             os.unlink(pid_file)
@@ -199,31 +200,26 @@ def webconsole_start_cli():
         _s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         ports_list = [port, grpc_port]
         for verify_port in ports_list:
-            if _s.connect_ex(('127.0.0.1', verify_port)) == 0:
+            if _s.connect_ex(("127.0.0.1", verify_port)) == 0:
                 print(
-                    f"\N{cross mark} Can't start a WebConsole instance on ports "
-                    f"{ports_list}, port {verify_port} is not available.")
+                    f"\N{CROSS MARK} Can't start a WebConsole instance on ports "
+                    f"{ports_list}, port {verify_port} is not available."
+                )
                 return
 
     if args.foreground:
         with open(pid_file, "w") as f:
             f.write(f"{os.getpid()}:{port}")
-        atexit.register(
-            lambda: os.unlink(pid_file) if os.path.exists(pid_file) else None
-        )
+        atexit.register(lambda: os.unlink(pid_file) if os.path.exists(pid_file) else None)
         _main.webconsole_start(port=port, grpc_port=grpc_port)
-        print(
-            f"\N{white heavy check mark} WebConsole successfully started "
-            f"on port {port}.")
+        print(f"\N{WHITE HEAVY CHECK MARK} WebConsole successfully started on port {port}.")
         try:
             while True:
                 time.sleep(1)
         except KeyboardInterrupt:
             _main.webconsole_shutdown()
     else:
-        print(
-            f"\N{white heavy check mark} WebConsole successfully started "
-            f"on port {port}.")
+        print(f"\N{WHITE HEAVY CHECK MARK} WebConsole successfully started on port {port}.")
         _daemonize(port)
 
 
@@ -233,9 +229,7 @@ def webconsole_shutdown_cli():
     pid_file = _pid_file()
 
     if not os.path.exists(pid_file):
-        print(
-            f"\N{warning sign} No WebConsole instance running "
-            "from this terminal.")
+        print("\N{WARNING SIGN} No WebConsole instance running from this terminal.")
         return
 
     with open(pid_file) as f:
@@ -243,12 +237,11 @@ def webconsole_shutdown_cli():
 
     try:
         os.kill(int(pid), signal.SIGTERM)
-        print(f"\N{white heavy check mark} WebConsole on port {port} is down.")
+        print(f"\N{WHITE HEAVY CHECK MARK} WebConsole on port {port} is down.")
     except ProcessLookupError:
-        print(f"\N{warning sign} No process found for pid={pid}")
+        print(f"\N{WARNING SIGN} No process found for pid={pid}")
 
     try:
         os.unlink(pid_file)
     except FileNotFoundError:
         pass
-

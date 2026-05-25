@@ -1,16 +1,19 @@
-
 import os
 import logging
 
 from typing import List, Union
 
-from retrain_pipelines.dag_engine.core import \
-    TaskPayload, task, taskgroup, parallel_task, \
-    dag, UiCss, ctx
-from retrain_pipelines.dag_engine.runtime import \
-    execute
-from retrain_pipelines.dag_engine.renderer import \
-    render_svg
+from retrain_pipelines.dag_engine.core import (
+    TaskPayload,
+    task,
+    taskgroup,
+    parallel_task,
+    dag,
+    UiCss,
+    ctx,
+)
+from retrain_pipelines.dag_engine.runtime import execute
+from retrain_pipelines.dag_engine.renderer import render_svg
 
 
 # ---- Example: TaskGroup in Parallelism and Merging ----
@@ -24,14 +27,18 @@ logger = logging.getLogger(__name__)
 @task(ui_css=UiCss(background="#ff7b00", color="#ff7b00", border="#ff7b00"))
 def start():
     """Root task: produces a list of numbers."""
-    logger.warning("log warning test")                                    # DEBUG  -  DELETE
-    logger.error("log error test")                                        # DEBUG  -  DELETE
-    logger.critical("log critical test")                                  # DEBUG  -  DELETE
-    import sys ; print("print error test", file=sys.stderr)               # DEBUG  -  DELETE
-    sys.stderr.write("write error test")                                  # DEBUG  -  DELETE
+    logger.warning("log warning test")  # DEBUG  -  DELETE
+    logger.error("log error test")  # DEBUG  -  DELETE
+    logger.critical("log critical test")  # DEBUG  -  DELETE
+    import sys
+
+    print("print error test", file=sys.stderr)  # DEBUG  -  DELETE
+    sys.stderr.write("write error test")  # DEBUG  -  DELETE
 
     # Do whatever you want
-    import time ; time.sleep(3)                                           # DEBUG  -  DELETE
+    import time
+
+    time.sleep(3)  # DEBUG  -  DELETE
 
     #################################
     # Return must be an enumerator, #
@@ -39,6 +46,7 @@ def start():
     # to split/distribute handling. #
     #################################
     return [1, 2, 3, 4]
+
 
 @parallel_task(ui_css=UiCss(background="#00ff37"))
 def parallel(payload: TaskPayload):
@@ -55,29 +63,22 @@ def parallel(payload: TaskPayload):
 # ----
 
 
-def add_context_entry(
-    task_name: str, rank: List[int], task_id: int, entry: str
-):
+def add_context_entry(task_name: str, rank: List[int], task_id: int, entry: str):
     """Convenience method to add to DAG execution context
 
     from inner split-line/taskgroup.
     """
     if not ctx.added_entry:
         ctx.added_entry = {}
-    if not task_name in ctx.added_entry:
+    if task_name not in ctx.added_entry:
         ctx.added_entry[task_name] = {}
 
-    ctx.added_entry[task_name][str(rank)] = {
-        "task_id": task_id,
-        "entry_value": entry
-    }
+    ctx.added_entry[task_name][str(rank)] = {"task_id": task_id, "entry_value": entry}
+
 
 @task
-def snake_head_A1(
-    payload: TaskPayload, task_id: int, rank: List[int]
-) -> List[int]:
-    """Receives a 1D list.
-    """
+def snake_head_A1(payload: TaskPayload, task_id: int, rank: List[int]) -> List[int]:
+    """Receives a 1D list."""
     """Has optional named arguments task_id & rank
     automatically populated at runtime,
     during DAG execution.
@@ -94,12 +95,12 @@ def snake_head_A1(
     ################################
     import inspect
     from datetime import datetime, timezone
+
     add_context_entry(
         task_name=inspect.currentframe().f_code.co_name,
         rank=rank,
         task_id=task_id,
-        entry=\
-            datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+        entry=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
     )
     ################################
 
@@ -117,7 +118,9 @@ def snake_head_A2(payload: TaskPayload) -> List[int]:
 
     # Do whatever you want
 
-    import time ; start_time = time.time()
+    import time
+
+    start_time = time.time()
     while time.time() - start_time < 10:
         print("titi")
         time.sleep(1)
@@ -138,25 +141,21 @@ def snake_heads_A():
 
 
 @task(ui_css=UiCss(background="#752500", border="#964a29"))
-def join_snake_heads(
-    snake_heads_A_results: TaskPayload
-) -> List[int]:
+def join_snake_heads(snake_heads_A_results: TaskPayload) -> List[int]:
     """Task that returns a combo of results
     from prior group of tasks."""
 
     # You can access individual parent results by name :
     logging.getLogger().info(
-        "input from 'snake_head_A1': " +
-        str(snake_heads_A_results['snake_head_A1'])
+        "input from 'snake_head_A1': " + str(snake_heads_A_results["snake_head_A1"])
     )
 
     # Do whatever you want
 
-    this_task_result = matrix_sum_cols(
-        list(snake_heads_A_results.values())
-    )
+    this_task_result = matrix_sum_cols(list(snake_heads_A_results.values()))
 
     return this_task_result
+
 
 # ----
 
@@ -166,15 +165,13 @@ def matrix_sum_cols(matrix: List[List[Union[int, float]]]):
     returning a 1D list of numerics."""
     return [sum(col) for col in zip(*matrix)]
 
-@task(merge_func=matrix_sum_cols,
-      ui_css=UiCss(background="#ff0000"))
+
+@task(merge_func=matrix_sum_cols, ui_css=UiCss(background="#ff0000"))
 def merge(payload: TaskPayload) -> List[int]:
     """Input is the merged results of
     parallel prior tasks from taskgroup."""
     # Since the herein task only has 1 direct parent =>
-    assert payload["join_snake_heads"] == \
-           payload.get("join_snake_heads") == \
-           payload
+    assert payload["join_snake_heads"] == payload.get("join_snake_heads") == payload
 
     # Do whatever you want for further custom processing
     # on the aggregated result here, e.g.:
@@ -201,19 +198,18 @@ def retrain_pipeline():
 
 if __name__ == "__main__":
     # Render the DAG
-    svg_fullname = os.path.realpath(os.path.join(
-        os.path.dirname(os.path.realpath(__file__)), "dag.html"
-    ))
+    svg_fullname = os.path.realpath(
+        os.path.join(os.path.dirname(os.path.realpath(__file__)), "dag.html")
+    )
     render_svg(retrain_pipeline, svg_fullname)
 
     # Run the DAG
     final_result, context_dump = execute(retrain_pipeline, params=None)
     print(
-        f"execution {context_dump['exec_id']} - " +
-        f"{context_dump['pipeline_name']} - final result : {final_result}"
+        f"execution {context_dump['exec_id']} - "
+        + f"{context_dump['pipeline_name']} - final result : {final_result}"
     )
     import json
-    print("context_dump : " +
-          json.dumps(context_dump, indent=4))
-    print(f"DAG SVG written to {svg_fullname}")
 
+    print("context_dump : " + json.dumps(context_dump, indent=4))
+    print(f"DAG SVG written to {svg_fullname}")

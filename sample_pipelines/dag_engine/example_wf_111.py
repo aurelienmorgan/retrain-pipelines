@@ -2,13 +2,15 @@ import os
 
 from typing import List, Union
 
-from retrain_pipelines.dag_engine.core import \
-    TaskPayload, task, parallel_task, \
-    dag, UiCss
-from retrain_pipelines.dag_engine.runtime import \
-    execute
-from retrain_pipelines.dag_engine.renderer import \
-    render_svg
+from retrain_pipelines.dag_engine.core import (
+    TaskPayload,
+    task,
+    parallel_task,
+    dag,
+    UiCss,
+)
+from retrain_pipelines.dag_engine.runtime import execute
+from retrain_pipelines.dag_engine.renderer import render_svg
 
 
 # ---- Example: 3-levels Nested Parallelism and Merging ----
@@ -20,7 +22,9 @@ def start():
 
     # Do whatever you want
     # e.g. you could handle pipeline parameters here
-    import time ; time.sleep(3)                             ### DEBUG - DELETE ###
+    import time
+
+    time.sleep(3)  ### DEBUG - DELETE ###
 
     #################################
     # Return must be an enumerator, #
@@ -71,8 +75,8 @@ def inner_inner_parallel(payload: TaskPayload):
 
     # import time ; start_time = time.time()
     # while time.time() - start_time < 10:
-        # print("titi")
-        # time.sleep(1)
+    # print("titi")
+    # time.sleep(1)
 
     #################################
     # Return must be an enumerator, #
@@ -87,6 +91,7 @@ def matrix_sum_cols(matrix: List[List[Union[int, float]]]):
     """Computes the sum of each column in a 2D matrix
     returning a 1D list of numerics."""
     return [sum(col) for col in zip(*matrix)]
+
 
 @task(merge_func=matrix_sum_cols)
 def merge_inner_inner(payload: TaskPayload):
@@ -126,29 +131,36 @@ def end(payload: TaskPayload):
 
 @dag(ui_css=UiCss(background="#002fff", color="#99ff00"))
 def retrain_pipeline():
-    """2-levels deep nested sub-DAGing.
-    """
+    """2-levels deep nested sub-DAGing."""
     # Compose the DAG using operator overloading (>>)
-    return start >> outer_parallel >> inner_parallel >> inner_inner_parallel >> merge_inner_inner >> merge_inner >> merge_outer >> end
+    return (
+        start
+        >> outer_parallel
+        >> inner_parallel
+        >> inner_inner_parallel
+        >> merge_inner_inner
+        >> merge_inner
+        >> merge_outer
+        >> end
+    )
 
 
 if __name__ == "__main__":
     # print(f"to_tasktypes_list : {retrain_pipeline.to_tasktypes_list(serializable=True)}")
 
     # Render the DAG
-    svg_fullname = os.path.realpath(os.path.join(
-        os.path.dirname(os.path.realpath(__file__)), "dag.html"
-    ))
+    svg_fullname = os.path.realpath(
+        os.path.join(os.path.dirname(os.path.realpath(__file__)), "dag.html")
+    )
     render_svg(retrain_pipeline, svg_fullname)
 
     # Run the DAG
     final_result, context_dump = execute(retrain_pipeline, params=None)
     print(
-        f"execution {context_dump['exec_id']} - " +
-        f"{context_dump['pipeline_name']} - final result : {final_result}"
+        f"execution {context_dump['exec_id']} - "
+        + f"{context_dump['pipeline_name']} - final result : {final_result}"
     )
     import json
-    print("context_dump : " +
-          json.dumps(context_dump, indent=4))
-    print(f"DAG SVG written to {svg_fullname}")
 
+    print("context_dump : " + json.dumps(context_dump, indent=4))
+    print(f"DAG SVG written to {svg_fullname}")

@@ -1,10 +1,25 @@
-
 from datetime import datetime
-from typing import Optional, List
 
-from fasthtml.common import Html, Head, Title, Meta, Link, \
-    Body, Main, Div, Style, Script, A, Hr, Br, Span, P, \
-    Code, Img, Small, Footer
+from fasthtml.common import (
+    A,
+    Body,
+    Code,
+    Div,
+    Footer,
+    Head,
+    Hr,
+    Html,
+    Img,
+    Link,
+    Main,
+    Meta,
+    P,
+    Script,
+    Small,
+    Span,
+    Style,
+    Title,
+)
 
 from retrain_pipelines import __version__
 
@@ -14,41 +29,37 @@ def header(current_page="/"):
         ("Home", "/", "#ffffff"),
         ("Teams", "/teams", "#ffffff"),
         ("Logs", "/web_server", "#ccc"),
-        ("SSE API", "/api/docs", "#ccc")
+        ("SSE API", "/api/docs", "#ccc"),
     ]
     nav_links = []
     for title, path, color in nav_items:
         is_current = current_page == path
-        link_style = (
-            f"color: {color}; margin-left: 16px; text-decoration: none;"
-            + (" font-weight: bold; text-decoration: underline;"
-               if is_current
-               else "")
+        link_style = f"color: {color}; margin-left: 16px; text-decoration: none;" + (
+            " font-weight: bold; text-decoration: underline;" if is_current else ""
         )
-        nav_links.append(
-            A(title, href=path, style=link_style)
-        )
+        nav_links.append(A(title, href=path, style=link_style))
 
     # Left: image + nav, in normal document flow (not fixed, not floating)
     left = Div(
         A(
             Img(
-                src="pkg_logo_small.png", alt="retrain-pipelines",
+                src="pkg_logo_small.png",
+                alt="retrain-pipelines",
                 style=(
                     "height:40px; vertical-align: middle; "
                     "border: 2px solid black; "
                     "box-shadow: 0 0 0 1px #FFD700; "
                     "border-radius: 3px;"
-                )
+                ),
             ),
             href="/",
-            style="display: inline-block; vertical-align: middle;"
+            style="display: inline-block; vertical-align: middle;",
         ),
         *nav_links,
         style=(
             "position: absolute; top: 12px; left: 16px; "
             "z-index: 198; display: flex; align-items: center;"
-        )
+        ),
     )
 
     # Right: fixed green circle
@@ -56,7 +67,7 @@ def header(current_page="/"):
         Div(
             "",  # Status indicator
             id="status-circle",
-            cls="connected"
+            cls="connected",
         ),
         Style("""
             @keyframes pulse {
@@ -217,7 +228,10 @@ def header(current_page="/"):
             });
 
             document.addEventListener('htmx:afterRequest', function(event) {
-                if (event.detail.elt.id === 'status-circle-container' && event.detail.xhr.status === 200) {
+                if (
+                    event.detail.elt.id === 'status-circle-container' &&
+                    event.detail.xhr.status === 200
+                ) {
                     const circle = document.getElementById('status-circle');
                     circle.classList.remove('disconnected', 'pulsing');
                     circle.classList.add('connected');
@@ -235,16 +249,17 @@ def header(current_page="/"):
         ),
         hx_get="/web_server/heartbeat",
         hx_trigger="load, every 5s",
-        hx_swap="none"
+        hx_swap="none",
     )
 
     return (left, right)
 
 
 def footer():
-    """
-    Creates a consistent footer for all pages.
-    Returns:
+    """Create a consistent footer for all pages.
+
+    Returns
+    -------
         A Footer component with copyright and links.
     """
     current_year = datetime.now().year
@@ -253,7 +268,7 @@ def footer():
         P(
             Small(
                 Span(
-                    f"\u00A0 2023-{current_year} \u00A0 - \u00A0 ",
+                    f"\u00a0 2023-{current_year} \u00a0 - \u00a0 ",
                     A(
                         Code(
                             Span(
@@ -264,24 +279,21 @@ def footer():
                                     "font-weight: normal; "
                                     "letter-spacing: 3px;"
                                 ),
-                                cls="shiny-silver-text"
+                                cls="shiny-silver-text",
                             ),
                         ),
                         href="https://github.com/aurelienmorgan/retrain-pipelines",
                         target="_blank",
-                        style="text-decoration: none;"
+                        style="text-decoration: none;",
                     ),
-                    style="color: white;"
+                    style="color: white;",
                 )
             ),
             A(
-                "page top\u00A0↑\u00A0\u00A0\u00A0",
+                "page top\u00a0↑\u00a0\u00a0\u00a0",
                 href="#pageTop",
                 id="pageTopLink",
-                style=(
-                    "color: #6082B6; text-decoration: none; "
-                    "display: none;"
-                )
+                style=("color: #6082B6; text-decoration: none; display: none;"),
             ),
             Script("""// Show/Hide to-window-top hyperlink
                 function togglePageTopLink() {
@@ -311,9 +323,9 @@ def footer():
                 "margin-top: 8px; margin-bottom: 8px; "
                 "display: flex; justify-content: space-between; "
                 "align-items: center;"
-            )
+            ),
         ),
-        cls="footer"
+        cls="footer",
     )
 
 
@@ -540,48 +552,40 @@ input.gcheckbox:checked::before {
 def page_layout(
     title: str,
     content: str,
-    current_page: Optional[str] = "/",
-    body_cls: Optional[List[str]] = ["body-container"]
+    current_page: str | None = "/",
+    body_cls: list[str] | None = None,
 ) -> Html:
+    body_cls = body_cls or ["body-container"]
+
     return Html(
         Head(
             Title(title or "retrain-pipelines"),
-            Meta(
-                name="viewport",
-                content="width=device-width, initial-scale=1.0"
-            ),
-            Meta(
-                name="description",
-                content=f"{title} - WebConsole built with FastHTML"
+            Meta(name="viewport", content="width=device-width, initial-scale=1.0"),
+            Meta(name="description", content=f"{title} - WebConsole built with FastHTML"),
+            Link(
+                rel="stylesheet",
+                href="https://fonts.googleapis.com/css2?family=Lobster&display=swap",
             ),
             Link(
                 rel="stylesheet",
-                href="https://fonts.googleapis.com/css2?family=Lobster&display=swap"
+                href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap",
             ),
-            Link(
-                rel="stylesheet",
-                href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap"
-            ),
-            Link(
-                rel="stylesheet",
-                href="/html_body.css"
-            ),
+            Link(rel="stylesheet", href="/html_body.css"),
             Script(src="/http_1_1_max_sse_conn.js"),
             Script(src="https://unpkg.com/htmx.org@1.9.2"),
-            page_template_css
+            page_template_css,
         ),
         Body(
             header(current_page),
             Main(
                 # Script("""//htmlx debugging
-                    # htmx.logger = function (elt, event, data) {
-                    # console.log("HTMX event:", event, data);
-                    # }
+                # htmx.logger = function (elt, event, data) {
+                # console.log("HTMX event:", event, data);
+                # }
                 # """),
                 Div(content, cls=body_cls),
             ),
-            footer()
+            footer(),
         ),
-        id="pageTop"
+        id="pageTop",
     )
-

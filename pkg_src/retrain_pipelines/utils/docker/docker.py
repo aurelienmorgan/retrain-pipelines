@@ -1,11 +1,6 @@
-
-import sys
-import time
 import logging
 import subprocess
-
 from datetime import datetime
-
 
 logger = logging.getLogger(__name__)
 
@@ -17,12 +12,13 @@ except Exception as ex:  # docker python SDK not installed
     logger.error(ex)
     docker = None
 
-    class DockerException(Exception):
+    class DockerException(Exception):  # type: ignore[no-redef]
         pass
 
 
 def env_has_docker() -> bool:
-    """
+    """Test whether env has docker.
+
     Note that, if docker is missing, you could always
     establish SSH connection to a machine with an env
     hosting a docker service.
@@ -30,7 +26,6 @@ def env_has_docker() -> bool:
     setting local envirnonment variables such as
     `DOCKER_HOST` for this.
     """
-
     if docker is None:
         return False
 
@@ -46,22 +41,14 @@ def env_has_docker() -> bool:
     return True
 
 
-def print_container_log_tail(
-    container_name: str,
-    tail_length: int
-):
+def print_container_log_tail(container_name: str, tail_length: int):
     if docker is None:
         raise RuntimeError("docker SDK not installed")
 
-    container = docker.from_env().containers.list(
-        all=True, filters={"name": container_name})[0]
-    logger.info("##### local docker container log tail BEGIN :",
-                file=sys.stderr)
-    logger.info(container.logs(timestamps=True, tail=tail_length
-                              ).decode('utf-8'),
-          file=sys.stderr)
-    logger.info("##### local docker container log tail END.",
-                file=sys.stderr)
+    container = docker.from_env().containers.list(all=True, filters={"name": container_name})[0]
+    logger.error("##### local docker container log tail BEGIN :")
+    logger.error(container.logs(timestamps=True, tail=tail_length).decode("utf-8"))
+    logger.error("##### local docker container log tail END.")
 
 
 def build_and_run_docker(
@@ -69,52 +56,52 @@ def build_and_run_docker(
     image_tag: str,
     build_path: str = ".",
     dockerfile: str = "Dockerfile",
-    ports_publish_dict: dict = {},
-    env_vars_dict = {},
-    volumes_dict = {}
+    ports_publish_dict: dict | None = None,
+    env_vars_dict: dict | None = None,
+    volumes_dict: dict | None = None,
 ) -> bool:
+    """Spin a container from build path.
+
+    Parameters
+    ----------
+    image_name : str
+        name to give to the image built
+    image_tag : str
+        name to assign to the image built
+    build_path : str
+        defaults to "."
+    dockerfile : str
+        defaults to "Dockerfile"
+    ports_publish_dict : dict
+        Docker run port publish param value.
+        Used to publish container's port(s)
+        to the host machine.
+        can for instance be {'8080/tcp': 8080}}
+    env_vars_dict : dict
+        Environment variables to set inside
+        the container.
+    volumes_dict : dict
+        Used to configure volumes mounted
+        inside the container.
+        The key is either the host path or a
+        volume name, and the value is
+        a dictionary with the keys:
+            - ``bind`` The path to mount the
+              volume inside the container.
+            - ``mode`` Either ``rw`` to mount
+              the volume read/write, or
+              ``ro`` to mount it read-only.
+        Example :
+            {'/home/user1/': {'bind': '/mnt/vol2',
+                              'mode': 'rw'},
+             '/var/www': {'bind': '/mnt/vol1',
+                          'mode': 'ro'}}
+
+    Returns
+    -------
+    bool
+        success/failure
     """
-    Spins a container from build path.
-
-    Parmas:
-        - image_name (str):
-            name to give to the image built
-        - image_tag (str):
-            name to assign to the image built
-        - build_path (str):
-            defaults to "."
-        - dockerfile (str):
-            defaults to "Dockerfile"
-        - ports_publish_dict (dict):
-            Docker run port publish param value.
-            Used to publish container's port(s)
-            to the host machine.
-            can for instance be {'8080/tcp': 8080}}
-        - env_vars_dict (dict):
-            Environment variables to set inside
-            the container.
-        - volumes_dict (dict):
-            Used to configure volumes mounted
-            inside the container.
-            The key is either the host path or a
-            volume name, and the value is
-            a dictionary with the keys:
-                - ``bind`` The path to mount the
-                  volume inside the container.
-                - ``mode`` Either ``rw`` to mount
-                  the volume read/write, or
-                  ``ro`` to mount it read-only.
-            Example :
-                {'/home/user1/': {'bind': '/mnt/vol2',
-                                  'mode': 'rw'},
-                 '/var/www': {'bind': '/mnt/vol1',
-                              'mode': 'ro'}}
-
-    Results:
-        - (bool):
-            success/failure
-    """
-
     if docker is None:
         return False
 
@@ -134,17 +121,17 @@ def build_and_run_docker(
             forcerm=True,
             # squash =True, # experimental ; unstable, connection reset
             decode=True,
-            network_mode="host"
+            network_mode="host",
         )
 
         for chunk in build_response:
             timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-            if 'stream' in chunk:
+            if "stream" in chunk:
                 logger.info(f"{timestamp} {chunk['stream'].strip()}")
-            elif 'error' in chunk:
+            elif "error" in chunk:
                 build_success = False
                 logger.info(f"{timestamp} Error: {chunk['error']}")
-            elif 'aux' in chunk:
+            elif "aux" in chunk:
                 logger.info(f"{timestamp} Auxiliary: {chunk['aux']}")
 
     except docker.errors.BuildError as e:
@@ -158,7 +145,7 @@ def build_and_run_docker(
         logger.warning(f"Unexpected error: {e}")
 
     if not build_success:
-            return False
+        return False
 
     # Run the Docker container
     timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
@@ -166,15 +153,15 @@ def build_and_run_docker(
     try:
         container = docker_client.containers.run(
             full_image_name,
-            remove=False, # do not let auto-remove,
-                          # otherwise traces after unhandled exit
-                          # will never be reachable.
+            remove=False,  # do not let auto-remove,
+            # otherwise traces after unhandled exit
+            # will never be reachable.
             detach=True,
-            ports=ports_publish_dict,
-            environment=env_vars_dict,
-            volumes=volumes_dict,
+            ports=ports_publish_dict or {},
+            environment=env_vars_dict or {},
+            volumes=volumes_dict or {},
             name=image_name,
-            runtime='nvidia',
+            runtime="nvidia",
             # gpus='all'
         )
     except Exception as ex:
@@ -186,41 +173,38 @@ def build_and_run_docker(
     while not done_created:
         # refresh "container"
         # (it is a snapshot, not a pointer to the living thing)
-        container = docker_client.containers.list(
-            all=True, filters={"name": image_name})[0]
+        container = docker_client.containers.list(all=True, filters={"name": image_name})[0]
         done_created = "created" != container.status.lower()
     logger.info(
-        f"{timestamp} Docker container {image_name}" +
-        " started successfully " +
-        f"({container.id[:12]}, {container.status}).")
+        f"{timestamp} Docker container {image_name}"
+        + " started successfully "
+        + f"({container.id[:12]}, {container.status})."
+    )
 
     return True
 
 
-def cleanup_docker(
-    container_name: str,
-    image_name: str = None,
-    no_pruning: bool = False
-):
-    """
-    Params:
-        - container (str):
-        - image_name (str):
-            Name of the image to remove from Docker
-            (if specified).
-        - no_pruning (bool):
-            Whether or not any dangling intermediate layers
-            shall be removed when image is.
-            Ignored if "image_name" is None.
-    """
+def cleanup_docker(container_name: str, image_name: str | None = None, no_pruning: bool = False):
+    """Terminate and remove container and optionally image.
 
+    Parameters
+    ----------
+    container_name : str
+        name of the container of interest.
+    image_name : str
+        Name of the image to remove from Docker
+        (if specified).
+    no_pruning : bool
+        Whether or not any dangling intermediate layers
+        shall be removed when image is.
+        Ignored if "image_name" is None.
+    """
     if docker is None:
         return
 
     docker_client = docker.from_env()
 
-    container = docker_client.containers.list(
-        all=True, filters={"name": container_name})[0]
+    container = docker_client.containers.list(all=True, filters={"name": container_name})[0]
     if container is None:
         logger.info(f"no {container_name} container found.")
     else:
@@ -231,8 +215,7 @@ def cleanup_docker(
         while not stopped:
             # refresh "container"
             # (it is a snapshot, not a pointer to the living thing)
-            container = docker_client.containers.list(
-                all=True, filters={"name": container_name})[0]
+            container = docker_client.containers.list(all=True, filters={"name": container_name})[0]
             stopped = "running" != container.status.lower()
 
         logger.info(f"Docker container {container.name} stopped.")
@@ -249,10 +232,7 @@ def cleanup_docker(
     # Remove the Docker image
     if image_name is not None:
         logger.info(f"Removing Docker image {container_name}...")
-        subprocess.run(["docker", "rmi",
-                        "--no-prune" if no_pruning else "",
-                        image_name],
-                       check=True)
+        subprocess.run(
+            ["docker", "rmi", "--no-prune" if no_pruning else "", image_name], check=True
+        )
         logger.info(f"Docker image {container_name} removed.")
-
-

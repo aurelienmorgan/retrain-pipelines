@@ -1,18 +1,11 @@
-
 import time
-import requests
-
 from typing import Final
 
+import requests
 
-def await_server_ready(
-    retries: int = 10,
-    delay: int = 2,
-    port: int = 9080
-) -> bool:
-    """
-    Block until the MLServer HTTP process
-    reports itself as ready.
+
+def await_server_ready(retries: int = 10, delay: int = 2, port: int = 9080) -> bool:
+    """Block until the MLServer HTTP process reports itself as ready.
 
     Checking the MLServer V2 health endpoint:
         GET /v2/health/ready
@@ -23,19 +16,21 @@ def await_server_ready(
         - Any other status / exception
           → server not ready yet
 
-    Params:
-        - retries (int):
-            number of attempts before giving up.
-        - delay (int):
-            delay (seconds) between attempts.
-        - port (int):
-            server HTTP port.
+    Parameters
+    ----------
+    retries : int
+        number of attempts before giving up.
+    delay : int
+        delay (seconds) between attempts.
+    port : int
+        server HTTP port.
 
-    Results:
-        - (bool):
-            true if the server became ready
-            within the retry window.
-            false otherwise.
+    Returns
+    -------
+    bool
+        true if the server became ready
+        within the retry window.
+        false otherwise.
     """
     url: Final[str] = f"http://localhost:{port}/v2/health/ready"
 
@@ -49,7 +44,6 @@ def await_server_ready(
 
         time.sleep(delay)
 
-    print(f"Server did not become ready after {retries*delay} seconds.")
+    print(f"Server did not become ready after {retries * delay} seconds.")
 
     return False
-

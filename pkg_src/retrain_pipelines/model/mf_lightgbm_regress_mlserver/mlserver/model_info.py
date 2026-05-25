@@ -1,7 +1,6 @@
+from typing import Final
 
 import requests
-
-from typing import Final
 
 
 def endpoint_still_starting(
@@ -22,19 +21,20 @@ def endpoint_still_starting(
         - any other status / exception
           → still starting
 
-    Params:
-        - model_name (str):
-            name of the model
-        - port (int):
-            server HTTP port
+    Parameters
+    ----------
+    model_name : str
+        name of the model
+    port : int
+        server HTTP port
 
-    Results:
-        - (bool):
-            true if the model is not yet ready,
-            false if it is ready.
+    Returns
+    -------
+    bool
+        true if the model is not yet ready,
+        false if it is ready.
     """
-    url: Final[str] = \
-        f"http://localhost:{port}/v2/models/{model_name}/ready"
+    url: Final[str] = f"http://localhost:{port}/v2/models/{model_name}/ready"
 
     try:
         response: requests.Response = requests.get(url)
@@ -47,9 +47,9 @@ def endpoint_is_ready(
     model_name: str,
     port: int = 9080,
 ) -> bool:
-    """
-    Check whether a model endpoint is
-    ready to accept inference requests.
+    """Check whether a model endpoint is ready.
+
+    To accept inference requests.
 
     This function directly maps to:
         GET /v2/models/{model_name}/ready
@@ -59,23 +59,23 @@ def endpoint_is_ready(
         - anything else → inference must
                           NOT be attempted
 
-    Params:
-        - model_name (str):
-            name of the model
-        - port (int):
-            server HTTP port
+    Parameters
+    ----------
+    model_name : str
+        name of the model
+    port : int
+        server HTTP port
 
-    Results:
-        - (bool):
-            true if the model is ready,
-            false otherwise.
+    Returns
+    -------
+    bool
+        true if the model is ready,
+        false otherwise.
     """
-    url: Final[str] = \
-        f"http://localhost:{port}/v2/models/{model_name}/ready"
+    url: Final[str] = f"http://localhost:{port}/v2/models/{model_name}/ready"
 
     try:
         response: requests.Response = requests.get(url)
         return response.status_code == 200
     except requests.RequestException:
         return False
-

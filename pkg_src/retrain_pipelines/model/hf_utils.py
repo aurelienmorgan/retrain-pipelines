@@ -1,18 +1,15 @@
-
 import os
 import sys
-import numpy as np
 from datetime import datetime
 
 import matplotlib.pyplot as plt
-from matplotlib.figure import Figure
-
+import numpy as np
 from huggingface_hub import HfApi
 from huggingface_hub.utils import RepositoryNotFoundError
+from matplotlib.figure import Figure
 
 from retrain_pipelines import __version__
-from retrain_pipelines.utils.hf_utils import \
-    local_repo_folder_to_hub, get_commit_created_at
+from retrain_pipelines.utils.hf_utils import get_commit_created_at, local_repo_folder_to_hub
 
 
 def push_model_version_to_hub(
@@ -22,10 +19,11 @@ def push_model_version_to_hub(
     timestamp_str: str,
     model_dir: str,
     model_readme_content: str,
-    hf_token: str = os.getenv("HF_TOKEN", None)
+    hf_token: str | None = os.getenv("HF_TOKEN", None),
 ) -> str:
-    """
-    Loads locally-serialized model safetensor
+    """Upload transofrmers LLM to the Hugging Face Hub.
+
+    Push locally-serialized model safetensor
     and tokenizer.
     Includes `retrain-pipelines` README.
 
@@ -34,69 +32,69 @@ def push_model_version_to_hub(
     not anymore present is excluded from
     new remote model snapshot).
 
-    Params:
-        - repo_id (str):
-            Path to the HuggingFace model version
-            (is created if needed and if authorized).
-        - model_version_blessed (bool):
-            Whether the model version is blessed ;
-            dictates the branch on which to
-            publish it on the HF hub.
-        - version_label (str):
-            value associated to the version
-            to be published on the HF hub.
-        - timestamp_str (str):
-            value associated to the version
-            to be published on the HF hub
-        - model_dir (str):
-            Path to the serialized
-            new version to be pushed.
-        - model_readme_content (str):
-            The full content (yaml header + body)
-            of the 'README.md' to be pushed
-            alongside the datafiles.
-        - hf_token (Optional, str):
-            "create on namespace" permission required.
+    Parameters
+    ----------
+    repo_id : str
+        Path to the HuggingFace model version
+        (is created if needed and if authorized).
+    model_version_blessed : bool
+        Whether the model version is blessed ;
+        dictates the branch on which to
+        publish it on the HF hub.
+    version_label : str
+        value associated to the version
+        to be published on the HF hub.
+    timestamp_str : str
+        value associated to the version
+        to be published on the HF hub
+    model_dir : str
+        Path to the serialized
+        new version to be pushed.
+    model_readme_content : str
+        The full content (yaml header + body)
+        of the 'README.md' to be pushed
+        alongside the datafiles.
+    hf_token : Optional, str
+        "create on namespace" permission required.
 
-    Results:
-        - (str):
-            commit_hash on the HF hub
-            for the new model version
+    Returns
+    -------
+    str
+        Commit hash on the HF hub for the new model version.
     """
-
-    with open(os.path.join(model_dir, "README.md"),
-              "w") as f:
+    with open(os.path.join(model_dir, "README.md"), "w") as f:
         f.write(model_readme_content)
 
-    commit_message = \
-        f"v{version_label} - {timestamp_str} - " + \
-        f"retrain-pipelines v{__version__} - "+ \
-        "Upload model and tokenizer with README."
+    commit_message = (
+        f"v{version_label} - {timestamp_str} - "
+        + f"retrain-pipelines v{__version__} - "
+        + "Upload model and tokenizer with README."
+    )
     print(commit_message)
 
-    branch_name=(
-        "main" if model_version_blessed
-        else "retrain-pipelines_not-blessed"
+    branch_name = "main" if model_version_blessed else "retrain-pipelines_not-blessed"
+
+    model_version_commit_hash = local_repo_folder_to_hub(
+        repo_id=repo_id,
+        branch_name=branch_name,
+        local_folder=model_dir,
+        commit_message=commit_message,
+        repo_type="model",
+        hf_token=hf_token,
     )
 
-    model_version_commit_hash = \
-        local_repo_folder_to_hub(
-            repo_id=repo_id,
-            branch_name=branch_name,
-            local_folder=model_dir,
-            commit_message=commit_message,
-            repo_type="model",
-            hf_token=hf_token
-        )
+    if model_version_commit_hash is None:
+        raise RuntimeError("Failed to push model version to Hugging Face Hub.")
 
     return model_version_commit_hash
 
 
 def current_blessed_model_version_dict(
     repo_id: str,
-    hf_token: str = os.getenv("HF_TOKEN", None)
-) -> dict:
-    """
+    hf_token: str | None = os.getenv("HF_TOKEN", None),
+) -> dict | None:
+    """Metadata.
+
     None if no prior model version
     exists on the HF Hub.
 
@@ -108,92 +106,91 @@ def current_blessed_model_version_dict(
     non-`retrain-pipelines` trained prior model versions.
     As long as they have reported eval results.
 
-    Params:
-        - repo_id (str):
-            Path to the HuggingFace model.
-        - hf_token (Optional, str):
-            "create on namespace" permission required.
+    Parameters
+    ----------
+    repo_id : str
+        Path to the HuggingFace model.
+    hf_token : Optional, str
+        "create on namespace" permission required.
 
-    Results:
-        - (dict):
-            - exec_id (str)
-            - commit_hash (str)
-            - version_label (str)
-            - commit_datetime (datetime)
-            - perf_metrics (dict)
+    Returns
+    -------
+    dict
+        - exec_id (str)
+        - commit_hash (str)
+        - version_label (str)
+        - commit_datetime (datetime)
+        - perf_metrics (dict)
     """
-
     hf_api = HfApi()
 
     try:
-        model_info = hf_api.repo_info(
-            repo_id=repo_id,
-            revision="main",
-            token=hf_token
-        )
+        model_info = hf_api.repo_info(repo_id=repo_id, revision="main", token=hf_token)
     except RepositoryNotFoundError as err:
-        print(f"repo {repo_id} not found.\n" +
-              "If you are trying to access a " +
-              "private or gated repo, " +
-              "make sure you are authenticated " +
-              "and your credentials allow it.",
-              file=sys.stderr)
+        print(
+            f"repo {repo_id} not found.\n"
+            + "If you are trying to access a "
+            + "private or gated repo, "
+            + "make sure you are authenticated "
+            + "and your credentials allow it.",
+            file=sys.stderr,
+        )
         print(err, file=sys.stderr)
         return None
 
     if (
-        model_info and
-        model_info.model_index and
-        "results" in model_info.model_index[0] and
-        "metrics" in model_info.model_index[0]["results"][0]
+        model_info
+        and model_info.model_index
+        and "results" in model_info.model_index[0]
+        and "metrics" in model_info.model_index[0]["results"][0]
     ):
         if "timestamp" in model_info.cardData:
             # sign of a `retrain-pipelines` model card
             commit_datetime = datetime.strptime(
-                model_info.cardData["timestamp"],
-                "%Y%m%d_%H%M%S%f_%Z")
+                model_info.cardData["timestamp"], "%Y%m%d_%H%M%S%f_%Z"
+            )
         else:
-            commit_datetime = get_commit_created_at(
-                hf_api=api, repo_id=repo_id,
+            commit_datetime = get_commit_created_at(  # type: ignore[assignment]
+                hf_api=hf_api,
+                repo_id=repo_id,
                 revision="main",
                 repo_type="model",
-                hf_token=hf_token
+                hf_token=hf_token,
             )
+            assert commit_datetime is not None
 
         eval_results_dict = {
-                m['type']: m['value']
-                for m in model_info \
-                            .model_index[0]["results"][0]["metrics"]
-            }
+            m["type"]: m["value"] for m in model_info.model_index[0]["results"][0]["metrics"]
+        }
 
         return {
-            "exec_id": model_info.cardData["exec_id"] \
-                       if "exec_id" in model_info.cardData \
-                       else None,
+            "exec_id": model_info.cardData["exec_id"] if "exec_id" in model_info.cardData else None,
             "commit_hash": model_info.sha,
-            "version_label": model_info.cardData["version"] \
-                             if "version" in model_info.cardData \
-                             else None,
+            "version_label": model_info.cardData["version"]
+            if "version" in model_info.cardData
+            else None,
             "commit_datetime": commit_datetime,
-            "perf_metrics": eval_results_dict
+            "perf_metrics": eval_results_dict,
         }
 
     return None
 
 
 def _mpl_scientific_format_func(value, tick_number):
-    """Must be declared outside calling function
+    """Matplotlib scientific formatter.
+
+    Must be declared outside calling function
     for returned objects to be 'pickelable'.
+
     plt.FuncFormatter(lambda x, _: f"{x:.2e}")
-    scientific notation with two decimal places"""
+    scientific notation with two decimal places
+    """
     return f"{value:.2e}"
 
-def plot_log_history(
-    log_history: list,
-    title: str,
-    sliding_window_size: int = 10
-) -> Figure:
-    """
+
+def plot_log_history(log_history: list, title: str, sliding_window_size: int = 10) -> Figure:
+    """Plot log history, dual y-axsis.
+
     Dual y-axis plot for training logs
     with no validation datapoints.
     Tripple y-axis otherwise
@@ -203,38 +200,39 @@ def plot_log_history(
     is overlayed on top of partially transparent
     actual measurements.
 
-    Params:
-        - log_history (list):
-            as provided by
-            `transformers.Trainer.state.log_history`
-        - title (str):
-            the figure title.
-        - sliding_window_size (int):
-            size of the sliding window used
-            for training loss curve smoothing.
+    Parameters
+    ----------
+    log_history : list
+        as provided by
+        `transformers.Trainer.state.log_history`
+    title : str
+        the figure title.
+    sliding_window_size : int
+        size of the sliding window used
+        for training loss curve smoothing.
 
-    Results:
-        - (Figure)
+    Returns
+    -------
+    Figure
     """
-
-    training_data = [d for d in log_history
-                     if all(k in d for k
-                            in ["loss", "epoch", "step",
-                                "learning_rate"])]
-    validation_data = [(log["epoch"], log["eval_loss"])
-                       for log in log_history
-                       if "eval_loss" in log]
+    training_data = [
+        d for d in log_history if all(k in d for k in ["loss", "epoch", "step", "learning_rate"])
+    ]
+    validation_data = [
+        (log["epoch"], log["eval_loss"]) for log in log_history if "eval_loss" in log
+    ]
 
     loss_values = [d["loss"] for d in training_data]
     epochs = [d["epoch"] for d in training_data]
     learning_rates = [d["learning_rate"] for d in training_data]
-    validation_epochs, validation_losses = \
-        zip(*validation_data) if validation_data else ([], [])
+    validation_epochs, validation_losses = (
+        zip(*validation_data, strict=False) if validation_data else ([], [])
+    )
 
     moving_avg = [
-        np.mean(
-            loss_values[max(0, i-(sliding_window_size-1)):i+1])
-        for i in range(len(loss_values))]
+        np.mean(loss_values[max(0, i - (sliding_window_size - 1)) : i + 1])
+        for i in range(len(loss_values))
+    ]
 
     fig, ax1 = plt.subplots(figsize=(7, 3.45))
 
@@ -248,28 +246,23 @@ def plot_log_history(
 
     if validation_data:
         ax2 = ax1.twinx()
-        ax2.plot(validation_epochs, validation_losses, 'b--',
-                 linewidth=1, alpha=.8)
+        ax2.plot(validation_epochs, validation_losses, "b--", linewidth=1, alpha=0.8)
         ax2.set_ylabel("Validation Loss", color="b")
         ax2.tick_params(axis="y", labelcolor="b")
 
         ax3 = ax1.twinx()
         ax3.spines["right"].set_position(("outward", 60))
-        ax3.plot(epochs, learning_rates, "m--",
-                 linewidth=1.5, alpha=1.0)
+        ax3.plot(epochs, learning_rates, "m--", linewidth=1.5, alpha=1.0)
         ax3.set_ylabel("Learning Rate", color="m")
         ax3.tick_params(axis="y", labelcolor="m")
-        ax3.yaxis.set_major_formatter(plt.FuncFormatter(
-            _mpl_scientific_format_func))
+        ax3.yaxis.set_major_formatter(plt.FuncFormatter(_mpl_scientific_format_func))
 
     else:
         ax2 = ax1.twinx()
-        ax2.plot(epochs, learning_rates, "m--",
-                 linewidth=1.5, alpha=1.0)
+        ax2.plot(epochs, learning_rates, "m--", linewidth=1.5, alpha=1.0)
         ax2.set_ylabel("Learning Rate", color="m")
         ax2.tick_params(axis="y", labelcolor="m")
-        ax2.yaxis.set_major_formatter(plt.FuncFormatter(
-            _mpl_scientific_format_func))
+        ax2.yaxis.set_major_formatter(plt.FuncFormatter(_mpl_scientific_format_func))
 
     ax1.set_title(title)
     ax1.spines["top"].set_visible(False)
@@ -281,4 +274,3 @@ def plot_log_history(
     plt.close(fig)
 
     return fig
-

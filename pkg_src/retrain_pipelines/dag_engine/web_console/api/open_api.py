@@ -1,21 +1,24 @@
+from typing import Any, TypedDict
 
-from fasthtml.common import Html, Head, Title, \
-    Link, Body, Div, Script
+from fasthtml.common import Body, Div, Head, Html, Link, Script, Title
 
 from retrain_pipelines import __version__
 
 
-_route_schemas = {}
+class RouteSchemaEntry(TypedDict, total=False):
+    schema: dict[str, Any]
+    category: str | None
+
+
+_route_schemas: dict[str, RouteSchemaEntry] = {}
 
 
 def rt_api(rt, url, methods=None, schema=None, category=None):
     def decorator(func):
         if schema or category:
-            _route_schemas[url] = {
-                "schema": schema or {},
-                "category": category
-            }
+            _route_schemas[url] = {"schema": schema or {}, "category": category}
         return rt(url, methods=methods)(func)
+
     return decorator
 
 
@@ -32,7 +35,8 @@ def register(app, rt, prefix=""):
                 handler = getattr(route, "endpoint", None)
 
                 methods = getattr(route, "methods", ["GET"])
-                if "HEAD" in methods: methods.remove("HEAD") # we don't document those
+                if "HEAD" in methods:
+                    methods.remove("HEAD")  # we don't document those
 
                 for method in methods:
                     method_lower = method.lower()
@@ -47,12 +51,12 @@ def register(app, rt, prefix=""):
 
                     # # Add defaults if not in schema
                     # if "summary" not in operation:
-                        # operation["summary"] = f"{method} {route_path}"
+                    # operation["summary"] = f"{method} {route_path}"
                     # if "responses" not in operation:
-                        # operation["responses"] = {
-                            # "200": {"description": "Successful response"},
-                            # "422": {"description": "Validation error"}
-                        # }
+                    # operation["responses"] = {
+                    # "200": {"description": "Successful response"},
+                    # "422": {"description": "Validation error"}
+                    # }
 
                     # Use docstring for description if not already in schema
                     if handler and handler.__doc__ and "description" not in operation:
@@ -66,28 +70,24 @@ def register(app, rt, prefix=""):
 
         spec = {
             "openapi": "3.0.0",
-            "info": {
-                "title": "retrain-pipelines - WebConsole API",
-                "version": __version__
-            },
-            "paths": paths
+            "info": {"title": "retrain-pipelines - WebConsole API", "version": __version__},
+            "paths": paths,
         }
         return spec
 
-
     @rt(f"{prefix}/api/docs")
     def swagger_ui():
-        """return an HTML page embedding Swagger UI
+        """Return an HTML page embedding Swagger UI.
 
-        configured to fetch the OpenAPI spec from /api/openapi.json
+        Configured to fetch the OpenAPI spec from /api/openapi.json
         """
         return Html(
             Head(
                 Title("Swagger UI"),
                 Link(
                     rel="stylesheet",
-                    href="https://cdn.jsdelivr.net/npm/swagger-ui-dist/swagger-ui.css"
-                )
+                    href="https://cdn.jsdelivr.net/npm/swagger-ui-dist/swagger-ui.css",
+                ),
             ),
             Body(
                 Div(id="swagger-ui"),
@@ -97,7 +97,6 @@ def register(app, rt, prefix=""):
                     url: '/api/openapi.json',
                     dom_id: '#swagger-ui',
                   });
-                """)
-            )
+                """),
+            ),
         )
-

@@ -1,26 +1,25 @@
-
 import gc
-import re
-import sys
-import csv
 import json
-
-import numpy as np
-import polars as pl
-
-from tqdm import tqdm
+import sys
 from collections import Counter
-from typing import Union, Any, Literal
-
-import torch
+from typing import TYPE_CHECKING, Any, Literal, Union
 
 import matplotlib.pyplot as plt
+import numpy as np
+import polars as pl
+import torch
 from matplotlib.figure import Figure
+from tqdm import tqdm
+
+if TYPE_CHECKING:
+    # condition never met at runtime,
+    # just here to allow static type checking for lazy imports later below.
+    import datasets as datasets
+    import transformers as transformers
 
 
 def infer_validation(
-    tokenizer: Union["transformers.PreTrainedTokenizer",
-                     "transformers.PreTrainedTokenizerFast"],
+    tokenizer: Union["transformers.PreTrainedTokenizer", "transformers.PreTrainedTokenizerFast"],
     model: "transformers.PreTrainedModel",
     validation_data: "datasets.Dataset",
     prompt_template: str,
@@ -28,108 +27,121 @@ def infer_validation(
     queries_attr_name: str = "query",
     answers_attr_name: str = "answers",
     max_new_tokens: int = 400,
-    device: Literal["cuda", "cpu"] = "cuda"
+    device: Literal["cuda", "cpu"] = "cuda",
 ) -> list[dict[str, Any]]:
-    """
-    Generates inference on the validation dataset.
+    """Generate inference on the validation dataset.
+
     Also provides input (incl. prompt_template)
     and new tokens count.
 
-    Params:
-        - tokenizer (transformers.PreTrainedTokenizer |
-                     transformers.PreTrainedTokenizerFast):
-        - model (transformers.PreTrainedModel);
-        - validation_data (datasets.Dataset);
-        - prompt_template (str):
-        - batch_size (int):
-        - queries_attr_name (str):
-        - answers_attr_name (str):
-        - max_new_tokens (int):
-            maximum number of tokens the model
-            can generate, excluding the input prompt.
-            Note that larger values consume more
-            computational resources
-            (memory, processing time).
-        - device (str):
-            e.g. "cuda"
+    Parameters
+    ----------
+    tokenizer : Union["transformers.PreTrainedTokenizer", "transformers.PreTrainedTokenizerFast"]
+        the tokenizer.
+    model: "transformers.PreTrainedModel"
+        the model.
+    validation_data: "datasets.Dataset"
+        the validation dataset
+    prompt_template : str
+        the prompt template to use.
+    batch_size : int
+        the batch size to apply.
+    queries_attr_name : str
+        the name of the "query" attribute within the dataset.
+    answers_attr_name : str
+        the name of the "answers" attribute within the dataset.
+    max_new_tokens : int
+        maximum number of tokens the model
+        can generate, excluding the input prompt.
+        Note that larger values consume more
+        computational resources
+        (memory, processing time).
+    device : str
+        e.g. "cuda"
 
-    Results:
-        - list(dict):
-            query,
-            input_tokens_count
-                Note : accounts for length
-                of prompt_template.
-            answer:
-                Truth label (list of golden tool-calls).
-                Passed-through from input validation data.
-            completion:
-                Inferred list of tool-calls
-            new_tokens_count
+    Returns
+    -------
+    list(dict)
+        query
+        input_tokens_count
+            Note : accounts for length
+            of prompt_template.
+        answer
+            Truth label (list of golden tool-calls).
+            Passed-through from input validation data.
+        completion
+            Inferred list of tool-calls
+        new_tokens_count
     """
     import datasets
     import transformers
+
+    _ = (datasets, transformers)  # to disallow Ruff from deleting lazy imports
 
     torch.cuda.empty_cache()
     gc.collect()
 
     eos_token_id = tokenizer.all_special_ids[
-        tokenizer.all_special_tokens.index(tokenizer.eos_token)]
+        tokenizer.all_special_tokens.index(tokenizer.eos_token)
+    ]
 
     max_new_tokens_count = 0
     results = []
 
-    for i in tqdm(range(0, len(validation_data), batch_size),
-                  file=sys.stdout):
+    for i in tqdm(range(0, len(validation_data), batch_size), file=sys.stdout):
         print("", end="\n", file=sys.stdout, flush=True)
         # print(f{i} / {len(validation_data)/batch_size}",
-              # end="\n", file=sys.stdout, flush=True)
-        batch = validation_data[i:i + batch_size]
+        # end="\n", file=sys.stdout, flush=True)
+        batch = validation_data[i : i + batch_size]
         queries = batch[queries_attr_name]
-        formatted_inputs = [
-            prompt_template.format(query, "") for query in queries]
+        formatted_inputs = [prompt_template.format(query, "") for query in queries]
         answers = batch[answers_attr_name]
 
-        inputs = tokenizer(
-            formatted_inputs, padding=True,
-            truncation=True, return_tensors="pt"
-        ).to(device)
+        inputs = tokenizer(formatted_inputs, padding=True, truncation=True, return_tensors="pt").to(
+            device
+        )
 
         input_tokens_count_list = [
-            tokens.ne(tokenizer.pad_token_id).sum().item()
-            for tokens in inputs["input_ids"]]
+            tokens.ne(tokenizer.pad_token_id).sum().item() for tokens in inputs["input_ids"]
+        ]
 
         outputs = model.generate(
             input_ids=inputs["input_ids"],
             attention_mask=inputs["attention_mask"],
             max_new_tokens=max_new_tokens,
-            use_cache=True
+            use_cache=True,
         )
-        decoded_outputs = tokenizer.batch_decode(
-            outputs, skip_special_tokens=True)
+        decoded_outputs = tokenizer.batch_decode(outputs, skip_special_tokens=True)
 
         new_tokens_count_list = [
-            ((output_tokens != tokenizer.pad_token_id) &
-             (output_tokens != eos_token_id)).sum().item() + 1 \
+            ((output_tokens != tokenizer.pad_token_id) & (output_tokens != eos_token_id))
+            .sum()
+            .item()
+            + 1
             - input_tokens_count
-            for input_tokens_count, output_tokens
-            in zip(input_tokens_count_list, outputs)
+            for input_tokens_count, output_tokens in zip(
+                input_tokens_count_list, outputs, strict=False
+            )
         ]
-        max_new_tokens_count = \
-            max(max_new_tokens_count, max(new_tokens_count_list))
+        max_new_tokens_count = max(max_new_tokens_count, max(new_tokens_count_list))
 
         batch_results = [
             {
                 "query": query,
                 "input_tokens_count": input_tokens_count,
                 "answer": answer,
-                "completion": output[len(formatted_input):].strip(),
-                "new_tokens_count": new_tokens_count
+                "completion": output[len(formatted_input) :].strip(),
+                "new_tokens_count": new_tokens_count,
             }
-            for query, answer, formatted_input, output,
-            new_tokens_count, input_tokens_count
-            in zip(queries, answers, formatted_inputs,
-                   decoded_outputs, new_tokens_count_list,
-                   input_tokens_count_list)
+            for query, answer, formatted_input, output, new_tokens_count, input_tokens_count in zip(
+                queries,
+                answers,
+                formatted_inputs,
+                decoded_outputs,
+                new_tokens_count_list,
+                input_tokens_count_list,
+                strict=False,
+            )
         ]
         results.extend(batch_results)
 
@@ -138,44 +150,41 @@ def infer_validation(
     return results
 
 
-def _calculate_metrics(
-    predicted: str,
-    correct,
-    is_format_fault_tolerant: bool = False
-):
+def _calculate_metrics(predicted: str, correct, is_format_fault_tolerant: bool = False):
+    """Compute performance metrics of a given evaluation record.
+
+    Parameters
+    ----------
+    predicted : str
+        The predicted tool-calls list
+        inferred string.
+    correct : str
+        The ground-truth tool-calls list
+        string.
+    is_format_fault_tolerant : bool
+        Whether or not a failure to abide
+        to valid json formatting shall
+        be considered a valid "no-tool-call"
+        inference.
+        Seems fair to assume so since,
+        in an operationnal setting, such
+        a model response could legitimately
+        translate in such a behavior.
+        Defaults to False.
+
+    Returns
+    -------
+    dict
+        "ground_truth_tool_calls" (int),
+        "predicted_tool_calls" (int),
+        "precision" (float),
+        "recall" (float),
+        "f1": (float),
+        "jaccard" (float)
     """
-
-    Params:
-        predicted (str) :
-            The predicted tool-calls list
-            inferred string.
-        correct (str) :
-            The ground-truth tool-calls list
-            string.
-        is_format_fault_tolerant (bool):
-            Whether or not a failure to abide
-            to valid json formatting shall
-            be considered a valid "no-tool-call"
-            inference.
-            Seems fair to assume so since,
-            in an operationnal setting, such
-            a model response could legitimately
-            translate in such a behavior.
-            Defaults to False.
-
-    Results:
-        (dict) :
-            "ground_truth_tool_calls" (int),
-            "predicted_tool_calls" (int),
-            "precision" (float),
-            "recall" (float),
-            "f1": (float),
-            "jaccard" (float)
-    """
-
     try:
         predicted_tool_calls_list = json.loads(predicted)
-    except Exception as ex:
+    except Exception:
         predicted_tool_calls_list = None
 
     try:
@@ -187,65 +196,60 @@ def _calculate_metrics(
     if predicted_tool_calls_list is None:
         if not is_format_fault_tolerant:
             return {
-                "ground_truth_tool_calls":
-                    len(true_tool_calls_list),
+                "ground_truth_tool_calls": len(true_tool_calls_list),
                 "predicted_tool_calls": 0,
-                "precision": .0,
-                "recall": .0,
-                "f1": .0,
-                "jaccard": .0
+                "precision": 0.0,
+                "recall": 0.0,
+                "f1": 0.0,
+                "jaccard": 0.0,
             }
         else:
             predicted_tool_calls_list = []
 
-    if (
-        len(predicted_tool_calls_list) == 0 and
-        len(true_tool_calls_list) == 0
-    ):
-            return {
-                "ground_truth_tool_calls": 0,
-                "predicted_tool_calls": 0,
-                "precision": 1.0,
-                "recall": 1.0,
-                "f1": 1.0,
-                "jaccard": 1.0
-            }
+    if len(predicted_tool_calls_list) == 0 and len(true_tool_calls_list) == 0:
+        return {
+            "ground_truth_tool_calls": 0,
+            "predicted_tool_calls": 0,
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1": 1.0,
+            "jaccard": 1.0,
+        }
 
     def _make_hashable(obj) -> tuple:
         if isinstance(obj, dict):
-            return tuple((k, _make_hashable(v))
-                         for k, v in obj.items())
+            return tuple((k, _make_hashable(v)) for k, v in obj.items())
         elif isinstance(obj, list):
-            return tuple(_make_hashable(i)
-                         for i in obj)
+            return tuple(_make_hashable(i) for i in obj)
         else:
             return obj
 
-    hashable_predicted = map(
-        _make_hashable, predicted_tool_calls_list)
+    hashable_predicted = map(_make_hashable, predicted_tool_calls_list)
 
     predicted_counter = Counter(hashable_predicted)
-    hashable_correct = map(
-        _make_hashable, true_tool_calls_list)
+    hashable_correct = map(_make_hashable, true_tool_calls_list)
     correct_counter = Counter(hashable_correct)
 
-    true_positives = sum(
-        (predicted_counter & correct_counter).values())
-    false_positives = sum(
-        predicted_counter.values()) - true_positives
-    false_negatives = sum(
-        correct_counter.values()) - true_positives
+    true_positives = sum((predicted_counter & correct_counter).values())
+    false_positives = sum(predicted_counter.values()) - true_positives
+    false_negatives = sum(correct_counter.values()) - true_positives
 
-    precision = true_positives/(true_positives+false_positives) \
-                if (true_positives+false_positives)>0 else 0
-    recall = true_positives/(true_positives+false_negatives) \
-             if (true_positives+false_negatives)>0 else 0
-    f1 = 2 * (precision*recall)/(precision+recall) \
-         if (precision+recall) > 0 else 0
-    jaccard = true_positives/ \
-              (true_positives+false_positives+false_negatives) \
-              if (true_positives+false_positives+false_negatives)>0 \
-              else 0
+    precision = (
+        true_positives / (true_positives + false_positives)
+        if (true_positives + false_positives) > 0
+        else 0
+    )
+    recall = (
+        true_positives / (true_positives + false_negatives)
+        if (true_positives + false_negatives) > 0
+        else 0
+    )
+    f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
+    jaccard = (
+        true_positives / (true_positives + false_positives + false_negatives)
+        if (true_positives + false_positives + false_negatives) > 0
+        else 0
+    )
 
     return {
         "ground_truth_tool_calls": len(true_tool_calls_list),
@@ -253,67 +257,114 @@ def _calculate_metrics(
         "precision": precision,
         "recall": recall,
         "f1": f1,
-        "jaccard": jaccard
+        "jaccard": jaccard,
     }
 
 
-def _compute_metrics_per_row(
-    row: dict,
-    is_format_fault_tolerant: bool = False
-) -> dict:
-    """
-    Computes counts and performance metrics
-    of a given evaluation record
-    by a tool-calling model, provided
-    prediction vs. ground-truth.
+def _compute_metrics_per_row(row: dict, is_format_fault_tolerant: bool = False) -> dict:
+    """Compute counts and performance metrics of a given evaluation record.
+
+    By a tool-calling model, provided prediction vs. ground-truth.
 
     Every tool-call is accounted for
     and target main metric is jaccard
     for proper intersection over union
     consideration.
 
-    Example usage :
-    ```python
-        test_eval_df = pl.DataFrame({
-            "completion": [
-                '[{"tool": "A"}, {"tool": "B"}, {"tool": "A"}]',
-                '[{"tool": "AA"}, {"tool": "BB"}, {"tool": "AA"}]'
-            ],
-            "answer": [
-                '[{"tool": "A"}, {"tool": "C"}, {"tool": "A"}]',
-                '[{"tool": "AA"}, {"tool": "CC"}, {"tool": "AA"}]'
-            ],
-        })
-        display(test_eval_df)
+    Parameters
+    ----------
+    row : dict
+        A Polars dataframe rowize element.
+        Mandatory attribute :
+            "completion" :
+                the predicted tool-calls list
+            "answer" :
+                the ground-truth tool-calls list
+    is_format_fault_tolerant : bool
+        Whether or not a failure to abide
+        to valid json formatting shall
+        be considered a valid "no-tool-call"
+        inference.
+        Seems fair to assume so since,
+        in an operationnal setting, such
+        a model response could legitimately
+        translate in such a behavior.
+        Defaults to False.
 
-        test_eval_df.lazy().with_columns(
-            pl.struct(["completion", "answer"]
-                     ).map_elements(_compute_metrics_per_row,
-                        return_dtype=pl.Object).alias("metrics")
-        ).collect()
-    ```
+    Returns
+    -------
+    dict
+        "ground_truth_tool_calls" (int),
+        "predicted_tool_calls" (int),
+        "precision" (float),
+        "recall" (float),
+        "f1": (float),
+        "jaccard" (float)
 
-    Params:
-        row (dict):
-            A Polars dataframe rowize element.
-            Mandatory attribute :
-                "completion" :
-                    the predicted tool-calls list
-                "answer" :
-                    the ground-truth tool-calls list
-        is_format_fault_tolerant (bool):
-            Whether or not a failure to abide
-            to valid json formatting shall
-            be considered a valid "no-tool-call"
-            inference.
-            Seems fair to assume so since,
-            in an operationnal setting, such
-            a model response could legitimately
-            translate in such a behavior.
-            Defaults to False.
+    Examples
+    --------
+    >>> test_eval_df = pl.DataFrame({
+    ...     "completion": [
+    ...         '[{"tool": "A"}, {"tool": "B"}, {"tool": "A"}]',
+    ...         '[{"tool": "AA"}, {"tool": "BB"}, {"tool": "AA"}]'
+    ...     ],
+    ...     "answer": [
+    ...         '[{"tool": "A"}, {"tool": "C"}, {"tool": "A"}]',
+    ...         '[{"tool": "AA"}, {"tool": "CC"}, {"tool": "AA"}]'
+    ...     ],
+    ... })
+    ... display(test_eval_df)
 
-    Results:
-        (dict):
+    >>> test_eval_df.lazy().with_columns(
+    ...     pl.struct(["completion", "answer"]
+    ...              ).map_elements(_compute_metrics_per_row,
+    ...                 return_dtype=pl.Object).alias("metrics")
+    ... ).collect()
+    """
+    predicted = row["completion"]
+    correct = row["answer"]
+
+    return _calculate_metrics(predicted, correct, is_format_fault_tolerant)
+
+
+def compute_counts_n_metrics(
+    eval_df: pl.LazyFrame, is_format_fault_tolerant: bool = False
+) -> pl.LazyFrame:
+    """Compute counts and performance metrics of an evaluation dataset.
+
+    by a tool-calling model, provided prediction vs. ground-truth.
+
+    Every tool-call is accounted for
+    and target main metric is jaccard
+    for proper intersection over union
+    consideration.
+
+    Parameters
+    ----------
+    eval_df : pl.LazyFrame
+        A Polars dataframe with mandatory
+        columns :
+            "completion" :
+                the predicted tool-calls list
+            "answer" :
+                the ground-truth tool-calls list
+    is_format_fault_tolerant : bool
+        Whether or not a failure to abide
+        to valid json formatting shall
+        be considered a valid "no-tool-call"
+        inference.
+        Seems fair to assume so since,
+        in an operationnal setting, such
+        a model response could legitimately
+        translate in such a behavior.
+        Defaults to False.
+
+    Returns
+    -------
+    pl.LazyFrame
+        The input evaluation dataframe
+        to which are appended the follwowing
+        columns:
             "ground_truth_tool_calls" (int),
             "predicted_tool_calls" (int),
             "precision" (float),
@@ -321,110 +372,50 @@ def _compute_metrics_per_row(
             "f1": (float),
             "jaccard" (float)
     """
-
-    predicted = row["completion"]
-    correct = row["answer"]
-
-    return _calculate_metrics(
-        predicted, correct, is_format_fault_tolerant)
-
-
-def compute_counts_n_metrics(
-    eval_df: pl.LazyFrame,
-    is_format_fault_tolerant: bool = False
-) -> pl.LazyFrame:
-    """
-    Computes counts and performance metrics
-    of an evaluation dataset by a tool-calling
-    model, provided prediction vs. ground-truth.
-
-    Every tool-call is accounted for
-    and target main metric is jaccard
-    for proper intersection over union
-    consideration.
-
-    Params:
-        eval_df (pl.LazyFrame) :
-            A Polars dataframe with mandatory
-            columns :
-                "completion" :
-                    the predicted tool-calls list
-                "answer" :
-                    the ground-truth tool-calls list
-        is_format_fault_tolerant (bool):
-            Whether or not a failure to abide
-            to valid json formatting shall
-            be considered a valid "no-tool-call"
-            inference.
-            Seems fair to assume so since,
-            in an operationnal setting, such
-            a model response could legitimately
-            translate in such a behavior.
-            Defaults to False.
-
-    Results:
-        (pl.LazyFrame) :
-            The input evaluation dataframe
-            to which are appended the follwowing
-            columns:
-                "ground_truth_tool_calls" (int),
-                "predicted_tool_calls" (int),
-                "precision" (float),
-                "recall" (float),
-                "f1": (float),
-                "jaccard" (float)
-    """
-
     # Explicit struct schema: avoids Polars
     # inferring / fighting types element-by-element
     _metrics_struct_dtype = pl.Struct({
         "ground_truth_tool_calls": pl.Int64,
-        "predicted_tool_calls":    pl.Int64,
-        "precision":               pl.Float64,
-        "recall":                  pl.Float64,
-        "f1":                      pl.Float64,
-        "jaccard":                 pl.Float64,
+        "predicted_tool_calls": pl.Int64,
+        "precision": pl.Float64,
+        "recall": pl.Float64,
+        "f1": pl.Float64,
+        "jaccard": pl.Float64,
     })
 
     def _row_to_metrics(row: dict) -> dict:
-        result = _compute_metrics_per_row(
-            row, is_format_fault_tolerant)
+        result = _compute_metrics_per_row(row, is_format_fault_tolerant)
         # Enforce exact types matching _metrics_struct_dtype
         return {
             "ground_truth_tool_calls": int(result["ground_truth_tool_calls"]),
-            "predicted_tool_calls":    int(result["predicted_tool_calls"]),
-            "precision":               float(result["precision"]),
-            "recall":                  float(result["recall"]),
-            "f1":                      float(result["f1"]),
-            "jaccard":                 float(result["jaccard"]),
+            "predicted_tool_calls": int(result["predicted_tool_calls"]),
+            "precision": float(result["precision"]),
+            "recall": float(result["recall"]),
+            "f1": float(result["f1"]),
+            "jaccard": float(result["jaccard"]),
         }
 
-    return eval_df.with_columns(
-            pl.struct(["completion", "answer"]
-                     ).map_elements(
-                        _row_to_metrics,
-                        return_dtype=_metrics_struct_dtype
-                    ).alias("metrics")
-        ).with_columns(
-           pl.col("metrics").struct.field(
-               "ground_truth_tool_calls"
-           ).alias("ground_truth_tool_calls"),
-           pl.col("metrics").struct.field(
-               "predicted_tool_calls"
-           ).alias("predicted_tool_calls"),
-           pl.col("metrics").struct.field(
-               "precision"
-           ).alias("precision"),
-           pl.col("metrics").struct.field(
-               "recall"
-           ).alias("recall"),
-           pl.col("metrics").struct.field(
-               "f1"
-           ).alias("f1"),
-           pl.col("metrics").struct.field(
-               "jaccard"
-           ).alias("jaccard")
-        ).select(pl.exclude("metrics"))
+    return (
+        eval_df
+        .with_columns(
+            pl
+            .struct(["completion", "answer"])
+            .map_elements(_row_to_metrics, return_dtype=_metrics_struct_dtype)
+            .alias("metrics")
+        )
+        .with_columns(
+            pl
+            .col("metrics")
+            .struct.field("ground_truth_tool_calls")
+            .alias("ground_truth_tool_calls"),
+            pl.col("metrics").struct.field("predicted_tool_calls").alias("predicted_tool_calls"),
+            pl.col("metrics").struct.field("precision").alias("precision"),
+            pl.col("metrics").struct.field("recall").alias("recall"),
+            pl.col("metrics").struct.field("f1").alias("f1"),
+            pl.col("metrics").struct.field("jaccard").alias("jaccard"),
+        )
+        .select(pl.exclude("metrics"))
+    )
 
 
 def _plot_bars(
@@ -433,9 +424,12 @@ def _plot_bars(
     xlabel: str,
     subtitle: str,
     max_x: int,
-    show_legend: bool = True
+    show_legend: bool = True,
 ) -> None:
-    """
+    """Plot perfmetric on infered completion against validation dataset.
+
+    From grouped dataframe.
+
     100% stacked bar plots of correct/incorrect
     tool-calls completions, per tool-calls count.
 
@@ -447,162 +441,177 @@ def _plot_bars(
     their are as many tool-call counbt groups
     as "max_x".
 
-    Params:
-        - ax (plt.Axes)
-        - grouped (pl.DataFrame)
-        - xlabel (str)
-        - subtitle (str)
-        - max_x (int)
-        - show_legend (bool)
+    Parameters
+    ----------
+    ax : plt.Axes
+        the matplotlib ax to plot on.
+    grouped : pl.DataFrame
+        the input dataframe.
+    xlabel : str
+        xlabel of the fig.
+    subtitle : str
+        subtitle of the fig.
+    max_x : int
+        upper bound of the x-axis (à-based).
+    show_legend : bool
+        whether to include the legend.
     """
-
     # fill in with zeros to ensure shared x-axis
     # shows xticklabels for up to max_x
     zeros = pl.DataFrame({
-        xlabel: pl.Series(range(max_x + 1),
-                          dtype=pl.Int64),
-        "correct_count": pl.Series([0] * (max_x + 1),
-                                   dtype=pl.UInt32),
-        "total_count": pl.Series([0] * (max_x + 1),
-                                 dtype=pl.UInt32),
-        "incorrect_count": pl.Series([0] * (max_x + 1),
-                                     dtype=pl.UInt32)
+        xlabel: pl.Series(range(max_x + 1), dtype=pl.Int64),
+        "correct_count": pl.Series([0] * (max_x + 1), dtype=pl.UInt32),
+        "total_count": pl.Series([0] * (max_x + 1), dtype=pl.UInt32),
+        "incorrect_count": pl.Series([0] * (max_x + 1), dtype=pl.UInt32),
     }).filter(pl.col(xlabel).is_in(grouped[xlabel]).not_())
     grouped = pl.concat([grouped, zeros]).sort(xlabel)
 
     total_counts = grouped["total_count"]
-    correct_percent = (
-        grouped["correct_count"] / 
-        np.where(total_counts == 0, 1, total_counts))
-    incorrect_percent = (
-        grouped["incorrect_count"] / 
-        np.where(total_counts == 0, 1, total_counts))
-    ax.bar(grouped[xlabel], correct_percent,
-           color="lightblue", label="Correct")
-    ax.bar(grouped[xlabel], incorrect_percent,
-           color="salmon", bottom=correct_percent,
-           label="Incorrect")
+    correct_percent = grouped["correct_count"] / np.where(total_counts == 0, 1, total_counts)
+    incorrect_percent = grouped["incorrect_count"] / np.where(total_counts == 0, 1, total_counts)
+    ax.bar(grouped[xlabel], correct_percent, color="lightblue", label="Correct")
+    ax.bar(
+        grouped[xlabel],
+        incorrect_percent,
+        color="salmon",
+        bottom=correct_percent,
+        label="Incorrect",
+    )
     ax.set_xlabel(xlabel.replace("_", " ").title())
     ax.set_ylabel("Completions")
-    ax.set_title(f"({subtitle})", fontsize=10,
-                 pad=5, loc='right')
+    ax.set_title(f"({subtitle})", fontsize=10, pad=5, loc="right")
     ax.set_yscale("linear")
     ax.set_xticks(range(max_x + 1))
-    ax.set_xticklabels(range(max_x + 1), fontsize=8)
+    ax.set_xticklabels([str(x) for x in range(max_x + 1)], fontsize=8)
     ax.set_yticks(np.arange(0, 1.1, 0.2))
-    ax.set_yticklabels([f'{x*100:.0f}%'
-                        for x in np.arange(0, 1.1, 0.2)],
-                       fontsize=8)
+    ax.set_yticklabels([f"{x * 100:.0f}%" for x in np.arange(0, 1.1, 0.2)], fontsize=8)
 
     if show_legend:
         ax.legend(
-            loc='upper left', bbox_to_anchor=(0, 0.92),
-            frameon=True, handletextpad=0.5,
-            borderpad=0.2, labelspacing=0.2, fontsize=8)
+            loc="upper left",
+            bbox_to_anchor=(0, 0.92),
+            frameon=True,
+            handletextpad=0.5,
+            borderpad=0.2,
+            labelspacing=0.2,
+            fontsize=8,
+        )
 
-    for i, (correct, incorrect, total) \
-    in enumerate(zip(correct_percent, incorrect_percent,
-                     total_counts)):
+    for i, (correct, incorrect, total) in enumerate(
+        zip(correct_percent, incorrect_percent, total_counts, strict=False)
+    ):
         if total > 0:
-            ax.text(i, (correct + incorrect) / 2,
-                    f'{total:,.0f}', ha="center",
-                    va="center", color="#808080",
-                    fontsize=9, rotation=90)
-            ax.text(i, correct + incorrect - 0.03,
-                    f'{int(incorrect_percent[i]*100)}%',
-                    ha="center", va="top", color="black",
-                    fontsize=8)
+            ax.text(
+                i,
+                (correct + incorrect) / 2,
+                f"{total:,.0f}",
+                ha="center",
+                va="center",
+                color="#808080",
+                fontsize=9,
+                rotation=90,
+            )
+            ax.text(
+                i,
+                correct + incorrect - 0.03,
+                f"{int(incorrect_percent[i] * 100)}%",
+                ha="center",
+                va="top",
+                color="black",
+                fontsize=8,
+            )
 
     ax2 = ax.twinx()
-    ax2.set_ylabel("Records Count (log scale)",
-                   rotation=270, labelpad=15,
-                   loc="center", color="#666666",
-                   fontsize=8)
+    ax2.set_ylabel(
+        "Records Count (log scale)",
+        rotation=270,
+        labelpad=15,
+        loc="center",
+        color="#666666",
+        fontsize=8,
+    )
     ax2.set_yscale("log")
     max_y = max([x for x in total_counts if x > 0])
     log_max_y = np.log10(max_y)
-    ax2.set_ylim(.9, 1_000_000_000_000)
-    ax2.bar(grouped[xlabel], total_counts,
-            color="#808080", alpha=0.3, width=0.2)
+    ax2.set_ylim(0.9, 1_000_000_000_000)
+    ax2.bar(grouped[xlabel], total_counts, color="#808080", alpha=0.3, width=0.2)
     yticks = [
-        int(
-            np.round(i*10**-(len(str(int(i)))-1))
-            *10**(len(str(int(i)))-1)
-        )
-        for i in np.logspace(0, log_max_y, num=4)]
+        int(np.round(i * 10 ** -(len(str(int(i))) - 1)) * 10 ** (len(str(int(i))) - 1))
+        for i in np.logspace(0, log_max_y, num=4)
+    ]
     ax2.set_yticks(yticks)
-    ax2.set_yticklabels([f'{int(i):,}' 
-                         for i in yticks],
-                        color="#CCAD00", fontsize=8)
-    ax2.tick_params(axis='y', colors="#737373")
+    ax2.set_yticklabels([f"{int(i):,}" for i in yticks], color="#CCAD00", fontsize=8)
+    ax2.tick_params(axis="y", colors="#737373")
     ax.margins(x=0)
     ax2.margins(x=0)
 
 
 def plot_validation_completions(
-    eval_metrics_df: pl.LazyFrame,
-    engine: Literal["gpu", "cpu"] = "gpu"
+    eval_metrics_df: pl.LazyFrame, engine: Literal["gpu", "cpu"] = "gpu"
 ) -> Figure:
-    """
+    """Plot perfmetric on infered completion against validation dataset.
+
     100% stacked bar plots of correct/incorrect
     tool-calls completions, per tool-calls count.
 
     Overlayed in grey (bottom third of each subplot)
     is total records count for each category.
 
-    Params:
-        - eval_metrics_df (pl.LazyFrame):
-            The result of `compute_counts_n_metrics`.
-            Mandatory attributes being :
-                - jaccard (float)
-                - ground_truth_tool_calls (int)
-                - predicted_tool_calls (int)
-        - engine (str):
-            Polars' engine (cpu or gpu).
+    Parameters
+    ----------
+    eval_metrics_df : pl.LazyFrame
+        The result of `compute_counts_n_metrics`.
+        Mandatory attributes being :
+            - jaccard (float)
+            - ground_truth_tool_calls (int)
+            - predicted_tool_calls (int)
+    engine : str
+        Polars' engine (cpu or gpu).
 
-    Results:
-        - (Figure)
+    Returns
+    -------
+    Figure
     """
+    grouped_gt = (
+        eval_metrics_df
+        .with_columns(correct=(pl.col("jaccard") == 1).alias("correct"))
+        .group_by("ground_truth_tool_calls")
+        .agg(pl.sum("correct").alias("correct_count"), pl.len().alias("total_count"))
+        .with_columns(incorrect_count=(pl.col("total_count") - pl.col("correct_count")))
+        .collect(engine=engine)
+    )
 
-    grouped_gt = eval_metrics_df.with_columns(
-        correct=(pl.col("jaccard") == 1).alias("correct")
-    ).group_by("ground_truth_tool_calls").agg(
-        pl.sum("correct").alias("correct_count"),
-        pl.len().alias("total_count")
-    ).with_columns(
-        incorrect_count=(pl.col("total_count") -
-                         pl.col("correct_count"))
-    ).collect(engine=engine)
+    grouped_pred = (
+        eval_metrics_df
+        .with_columns(correct=(pl.col("jaccard") == 1).alias("correct"))
+        .group_by("predicted_tool_calls")
+        .agg(pl.sum("correct").alias("correct_count"), pl.len().alias("total_count"))
+        .with_columns(incorrect_count=(pl.col("total_count") - pl.col("correct_count")))
+        .collect(engine=engine)
+    )
 
-    grouped_pred = eval_metrics_df.with_columns(
-        correct=(pl.col("jaccard") == 1).alias("correct")
-    ).group_by("predicted_tool_calls").agg(
-        pl.sum("correct").alias("correct_count"),
-        pl.len().alias("total_count")
-    ).with_columns(
-        incorrect_count=(pl.col("total_count") -
-                         pl.col("correct_count"))
-    ).collect(engine=engine)
-
-    max_x = max(max(grouped_gt["ground_truth_tool_calls"]),
-                max(grouped_pred["predicted_tool_calls"]))
+    max_x = max(
+        max(grouped_gt["ground_truth_tool_calls"]), max(grouped_pred["predicted_tool_calls"])
+    )
 
     fig, (ax_top, ax_bottom) = plt.subplots(
-        2, 1, figsize=(6, 4), sharex=True,
-        gridspec_kw={'hspace': 0.3})
+        2, 1, figsize=(6, 4), sharex=True, gridspec_kw={"hspace": 0.3}
+    )
 
     fig.suptitle(
-        "Distribution of Completions on Validation Records",
-        fontsize=12, fontweight="bold", y=0.97)
+        "Distribution of Completions on Validation Records", fontsize=12, fontweight="bold", y=0.97
+    )
+    _plot_bars(ax_top, grouped_gt, "ground_truth_tool_calls", "per Ground Truth count", max_x)
     _plot_bars(
-        ax_top, grouped_gt, "ground_truth_tool_calls",
-        "per Ground Truth count", max_x)
-    _plot_bars(
-        ax_bottom, grouped_pred, "predicted_tool_calls",
-        "per Predicted count", max_x, show_legend=False)
+        ax_bottom,
+        grouped_pred,
+        "predicted_tool_calls",
+        "per Predicted count",
+        max_x,
+        show_legend=False,
+    )
 
     fig.tight_layout()
     plt.close(fig)
 
     return fig
-

@@ -123,7 +123,7 @@ arxiv&nbsp;:<br />
 
 The herein LoRa adapter can for instance be used as follows&nbsp;:<br />
 ```python
-{{ main_usage_snippet }}
+{{main_usage_snippet}}
 ```
 
 <br />

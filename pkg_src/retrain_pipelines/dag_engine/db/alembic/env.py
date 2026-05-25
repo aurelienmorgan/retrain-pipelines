@@ -1,25 +1,18 @@
-
 import os
-import logging
-
-from sqlalchemy import engine_from_config, pool
 
 from alembic import context
+from sqlalchemy import engine_from_config, pool
 
-## Import model
+# Import model
 # (incidently sets RP_METADATASTORE_URL at lib import time)
 os.environ["ALEMBIC_REV_AUTOGEN"] = "True"
 from retrain_pipelines.dag_engine.db import model
-
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
 config = context.config
 
-config.set_main_option(
-    "sqlalchemy.url",
-    os.environ.get("RP_METADATASTORE_URL")
-)
+config.set_main_option("sqlalchemy.url", os.environ["RP_METADATASTORE_URL"])
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.
@@ -29,7 +22,7 @@ config.set_main_option(
 # add your model's MetaData object here
 # for 'autogenerate' support
 # from myapp import mymodel
-## target_metadata = mymodel.Base.metadata
+# target_metadata = mymodel.Base.metadata
 target_metadata = model.Base.metadata
 
 # other values from the config, defined by the needs of env.py,

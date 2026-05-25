@@ -1,31 +1,33 @@
-
-import os
 import copy
-import time
+import ctypes
 import logging
-import cloudpickle
-
+import os
+import signal
+import sys
+import threading
+import time
 from collections import defaultdict, deque
-from typing import List, Optional, Union, \
-    Tuple, Dict, Any
+from concurrent.futures import as_completed
+from datetime import datetime, timezone
+from typing import Any
 
-from concurrent.futures import \
-    ProcessPoolExecutor, Executor, as_completed
+from .core import (
+    DAG,
+    DagExecutionContext,
+    TaskGroup,
+    TaskPayload,
+    TaskType,
+    _dag_execution_context_var,
+    get_trace_buffer,
+)
+from .db.dao import DAO
 
-from .core import TaskType, TaskGroup, \
-    TaskPayload, TaskFuncException, \
-    DAG, DagExecutionContext, \
-    _dag_execution_context_var, get_trace_buffer
-
-from .rp_logging import RichLoggingController
-
-from .hybrid_pool_executor import HybridPoolExecutor as RetrainPipelinesExecutor
 # from concurrent.futures import ThreadPoolExecutor as RetrainPipelinesExecutor
 # from .hybrid_pool_executor import CloudpickleProcessPoolExecutor as RetrainPipelinesExecutor
 # from concurrent.futures import ProcessPoolExecutor as RetrainPipelinesExecutor
-
 from .grpc_client import GrpcClient
-
+from .hybrid_pool_executor import HybridPoolExecutor as RetrainPipelinesExecutor
+from .rp_logging import RichLoggingController
 
 logger = logging.getLogger(__name__)
 
@@ -35,27 +37,17 @@ logger = logging.getLogger(__name__)
 
 # ---- Keyboard Interrupt Handling Infrastructure ----
 
-import sys
-import signal
-import threading
-
-from datetime import datetime, timezone
-
-from .db.dao import DAO
-
 
 class _TaskRegistry:
     """Thread-safe registry to track all running tasks for interrupt handling."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._lock = threading.Lock()
-        # Map task_id -> pid
-        self._running_tasks: Dict[int, Tuple[Union[int, None], str]] = {}
+        # Map task_id -> (pid, future)
+        self._running_tasks: dict[int, int] = {}
         self._interrupted = False
 
-    def register_task(
-        self, task_id: int, pid: int
-    ):
+    def register_task(self, task_id: int, pid: int) -> None:
         """Register a running task with its PID."""
         with self._lock:
             self._running_tasks[task_id] = pid
@@ -65,7 +57,7 @@ class _TaskRegistry:
         with self._lock:
             self._running_tasks.pop(task_id, None)
 
-    def get_running_tasks(self) -> Dict[int, Tuple[Union[int, None], str]]:
+    def get_running_tasks(self) -> dict[int, int]:
         """Get a snapshot of all currently running tasks."""
         with self._lock:
             return dict(self._running_tasks)
@@ -80,6 +72,7 @@ class _TaskRegistry:
         with self._lock:
             return self._interrupted
 
+
 # Global registry instance
 _task_registry = _TaskRegistry()
 
@@ -88,31 +81,23 @@ def _interrupt_thread(thread_ident: int):
     """Interrupt a thread by raising KeyboardInterrupt in it using ctypes."""
     try:
         res = ctypes.pythonapi.PyThreadState_SetAsyncExc(
-            ctypes.c_long(thread_ident),
-            ctypes.py_object(KeyboardInterrupt)
+            ctypes.c_long(thread_ident), ctypes.py_object(KeyboardInterrupt)
         )
         if res == 0:
-            logger.warning(
-                f"Failed to interrupt thread {thread_ident}: invalid thread ID"
-            )
+            logger.warning(f"Failed to interrupt thread {thread_ident}: invalid thread ID")
         elif res > 1:
             # Revert if multiple threads affected
-            ctypes.pythonapi.PyThreadState_SetAsyncExc(
-                ctypes.c_long(thread_ident), None
-            )
-            logger.error(
-                f"Failed to interrupt thread {thread_ident}: multiple threads affected"
-            )
+            ctypes.pythonapi.PyThreadState_SetAsyncExc(ctypes.c_long(thread_ident), None)
+            logger.error(f"Failed to interrupt thread {thread_ident}: multiple threads affected")
     except Exception as ex:
-        logger.error(
-            f"Exception while interrupting thread {thread_ident}: {ex}"
-        )
+        logger.error(f"Exception while interrupting thread {thread_ident}: {ex}")
 
 
 def _kill_process(pid: int):
     """Kill a process using SIGKILL."""
     try:
         import psutil
+
         try:
             process = psutil.Process(pid)
             # Kill all children recursively first
@@ -135,7 +120,7 @@ def _kill_process(pid: int):
             pass
 
 
-def _update_interrupted_tasks_in_db(task_ids: List[int], exec_id: int):
+def _update_interrupted_tasks_in_db(task_ids: list[int], exec_id: int):
     """Update database records for interrupted tasks.
 
     Defensive: instantiate DAO in try/except, update tasks one-by-one catching
@@ -146,9 +131,8 @@ def _update_interrupted_tasks_in_db(task_ids: List[int], exec_id: int):
 
     try:
         dao = DAO(os.environ["RP_METADATASTORE_URL"])
-    except Exception as ex:
-        logger.exception(
-            "Failed to instantiate DAO ; aborting DB updates.")
+    except Exception:
+        logger.exception("Failed to instantiate DAO ; aborting DB updates.")
         for h in logger.handlers:
             try:
                 h.flush()
@@ -163,15 +147,10 @@ def _update_interrupted_tasks_in_db(task_ids: List[int], exec_id: int):
     for task_id in task_ids:
         logger.info(f"{os.getpid()} - titi [bold white]  -  {task_id}[/]")
         try:
-            dao.update_task(
-                id=task_id,
-                end_timestamp=end_timestamp,
-                failed=True
-            )
+            dao.update_task(id=task_id, end_timestamp=end_timestamp, failed=True)
             logger.info(f"{os.getpid()} - toto [bold white]  -  {task_id}[/]")
         except Exception as ex:
-            logger.exception(
-            f"Failed to update task {task_id} after interrupt: {ex}")
+            logger.exception(f"Failed to update task {task_id} after interrupt: {ex}")
         finally:
             dao.dispose()
 
@@ -194,12 +173,7 @@ def _sigint_handler(signum, frame):
 
     logger.warning(f"Cancelling {len(running_tasks)} tasks...")
 
-    for task_id, (pid, executor_type, future) in running_tasks.items():
-        # CANCEL FUTURE FIRST
-        if future and not future.done():
-            cancelled = future.cancel()
-            logger.warning(f"Cancelled future for task {task_id}: {cancelled}")
-
+    for task_id, pid in running_tasks.items():
         # THEN kill process
         if pid:
             logger.warning(f"Killing process for task {task_id} (PID: {pid})")
@@ -226,28 +200,29 @@ def _install_interrupt_handler():
 ################################################################
 
 
-def _topological_sort(
-    tasks: List[TaskType]
-) -> List[Union[TaskType, TaskGroup]]:
+def _topological_sort(tasks: list[TaskType]) -> list[TaskType | TaskGroup]:
     """Topological sort of first-level elements of DAG.
 
     i.e. elements of task-groups are not referenced,
     just the top-level task-groups themselves
 
-    Params:
-        - tasks (List[TaskType]):
-            roots of the DAG to be considered.
+    Parameters
+    ----------
+    tasks : list[TaskType]
+        roots of the DAG to be considered.
 
-    Results:
-        - List of first level elements of the DAG.
+    Returns
+    -------
+    list[TaskType | TaskGroup]
+        list of first level elements of the DAG.
     """
-    in_degree = defaultdict(int)
-    children_map = defaultdict(list)
-    all_tasks = set()
+    in_degree: dict[TaskType | TaskGroup, int] = defaultdict(int)
+    children_map: dict[TaskType | TaskGroup, list] = defaultdict(list)
+    all_tasks: set = set()
 
     # Stack-based traversal to gather tasks
     # and build in-degree graph
-    stack = list(tasks)
+    stack: list[TaskType | TaskGroup] = list(tasks)
     while stack:
         node = stack.pop()
         if not isinstance(node, TaskType):
@@ -257,7 +232,7 @@ def _topological_sort(
         all_tasks.add(node)
         for child in node.children:
             if isinstance(child, TaskGroup):
-                for t in child.tasks:
+                for t in child.elements:
                     in_degree[t] += 1
                     children_map[node].append(t)
                     stack.append(t)
@@ -267,8 +242,8 @@ def _topological_sort(
                 stack.append(child)
 
     queue = deque(t for t in all_tasks if in_degree[t] == 0)
-    seen_groups = set()
-    order = []
+    seen_groups: set = set()
+    order: list = []
 
     while queue:
         t = queue.popleft()
@@ -289,8 +264,10 @@ def _topological_sort(
 
 
 def _find_subdag_end(task_order, start_idx):
-    """Find where the parallel subdag ends, e.g.
-    at the next merge task, accounting for potential nesting."""
+    """Find where the parallel subdag ends.
+
+    e.g. at the next merge task, accounting for potential nesting.
+    """
     parallel_depth = 0
     for i in range(start_idx, len(task_order)):
         if isinstance(task_order[i], TaskGroup):
@@ -305,24 +282,24 @@ def _find_subdag_end(task_order, start_idx):
     return len(task_order)
 
 
-def _collect_parent_results(
-    elmt: Union[TaskType, TaskGroup],
-    results: TaskPayload
-) -> TaskPayload:
+def _collect_parent_results(elmt: TaskType | TaskGroup, results: TaskPayload) -> TaskPayload:
     """
-    Collects results from parent tasks
-    for a given task or taskgroup.
+    Collect results from parent tasks.
 
-    Params:
-        - t (Union[TaskType, TaskGroup]):
-            The current task or taskgroup.
-        - results (TaskPayload):
-            The dictionary of previously computed results.
+    For a given task or taskgroup.
 
-    Resuts:
-        - TaskPayload:
-            A payload containing
-            the results from all available parent tasks.
+    Parameters
+    ----------
+    elmt : Union[TaskType, TaskGroup]
+        the current task or taskgroup.
+    results : TaskPayload
+        the dictionary of previously computed results.
+
+    Returns
+    -------
+    TaskPayload
+        A payload containing
+        the results from all available parent tasks.
     """
     parent_results = TaskPayload({})
     if isinstance(elmt, TaskType):
@@ -338,17 +315,19 @@ def _collect_parent_results(
 
 
 def _parallel_input_count(parent_results):
-    """
-    Determines how many parallel executions are needed
-    based on the parent results.
+    """Determine how many parallel executions are needed.
 
-    Params:
-        - parent_results (TaskPayload):
-            The payload of inputs from parent tasks.
+    Based on the parent results.
 
-    Results:
-        - int:
-            The number of parallel branches to execute.
+    Parameters
+    ----------
+    parent_results : TaskPayload
+        The payload of inputs from parent tasks.
+
+    Returns
+    -------
+    int
+        The number of parallel branches to execute.
     """
     if not parent_results:
         return 1
@@ -360,36 +339,39 @@ def _parallel_input_count(parent_results):
 
 
 def _execute_parallel_branches_with_context(
-    subdag_elements: List[Union[TaskType, TaskGroup]],
+    subdag_elements: list[TaskType | TaskGroup],
     parent_results: TaskPayload,
     count: int,
     exec_id: int,
-    rank: Optional[List[int]] = None
-) -> List[TaskPayload]:
+    rank: list[int] | None = None,
+) -> list[TaskPayload]:
     """
-    Executes a subdag in parallel across multiple input branches.
+    Execute a subdag in parallel across multiple input branches.
 
-    Params:
-        - subdag_elements (List[Union[TaskType, TaskGroup]]):
-            The first-level tasks and taskgroups
-            forming the parallel subdag.
-        - parent_results (TaskPayload):
-            Input values for the branches.
-        - count (int):
-            Number of parallel executions to perform.
-        - exec_id (int):
-            The execution ID for this DAG run.
-        - rank (List[int], optional):
-            Index path for nested branches.
-            Indices of branches if branch inside a parallel lane.
+    Parameters
+    ----------
+    subdag_elements : List[Union[TaskType, TaskGroup]]
+        The first-level tasks and taskgroups
+        forming the parallel subdag.
+    parent_results : TaskPayload
+        Input values for the branches.
+    count : int
+        Number of parallel executions to perform.
+    exec_id : int
+        The execution ID for this DAG run.
+    rank : List[int], optional
+        Index path for nested branches.
+        Indices of branches if branch inside a parallel lane.
 
-    Results:
-        - List[TaskPayload]:
-            Results from each parallel branch.
+    Returns
+    -------
+    List[TaskPayload]
+        Results from each parallel branch.
     """
     # CAPTURE THE CONTEXT BEFORE THREADS/PROCESSES
     context = _dag_execution_context_var.get()
-    all_updates = {}
+    assert context is not None
+    all_updates: dict[str, Any] = {}
 
     executor = RetrainPipelinesExecutor()
 
@@ -397,17 +379,18 @@ def _execute_parallel_branches_with_context(
         futures = []
         for idx in range(count):
             branch_input = TaskPayload({
-                k: (v[idx] if isinstance(v, list) else v)
-                for k, v in parent_results.items()
+                k: (v[idx] if isinstance(v, list) else v) for k, v in parent_results.items()
             })
-            futures.append(executor.submit(
-                _execute_branch_with_context,
-                context,
-                subdag_elements,
-                branch_input,
-                exec_id,
-                (rank or []) + [idx]
-            ))
+            futures.append(
+                executor.submit(
+                    _execute_branch_with_context,
+                    context,
+                    subdag_elements,
+                    branch_input,
+                    exec_id,
+                    (rank or []) + [idx],
+                )
+            )
 
         # Collect results and context updates
         results = []
@@ -428,26 +411,29 @@ def _execute_parallel_branches_with_context(
 
 
 def _execute_branch(
-    branch_elements: List[Union[TaskType, TaskGroup]],
+    branch_elements: list[TaskType | TaskGroup],
     branch_input: TaskPayload,
     exec_id: int,
-    rank: List[int]
+    rank: list[int],
 ) -> TaskPayload:
     """Execute a single parallel branch with recursive subdag handling.
 
-    Params:
-        - branch_elements
-        - branch_input: (TaskPayload):
-            outputs from task parents
-        - exec_id (int):
-            The execution ID for this DAG run.
-        - rank: List[int]:
-            Index path for nested branches.
-            Indices of branches if inside a parallel lane.
+    Parameters
+    ----------
+    branch_elements : list[TaskType | TaskGroup]
+        constituting elements of the branch to execute.
+    branch_input : TaskPayload
+        outputs from task parents
+    exec_id : int
+        The execution ID for this DAG run.
+    rank : list[int]
+        Index path for nested branches.
+        Indices of branches if inside a parallel lane.
 
-    Results:
-        - (TaskPayload)
-            results of the last task in the branch.
+    Returns
+    -------
+    TaskPayload
+        results of the last task in the branch.
     """
     branch_results = branch_input.copy()
     i = 0
@@ -464,18 +450,22 @@ def _execute_branch(
                 # Find nested subdag end
                 nested_subdag_end = _find_subdag_end(branch_elements, i)
                 nested_subdag_tasks = branch_elements[i:nested_subdag_end]
-                elmt.log.info("nested_subdag_tasks [red on yellow]{}{}[/]".format(
-                    rank, [elmt.name for elmt in nested_subdag_tasks]))
+                elmt.log.info(
+                    f"nested_subdag_tasks [red on yellow]{rank}"
+                    + f"{[elmt.name for elmt in nested_subdag_tasks]}[/]"
+                )
 
                 # Execute nested parallel subdag
+                nested_results: list[TaskPayload] | TaskPayload
                 parent_value = list(parent_results.values())[0]
                 if isinstance(parent_value, list):
                     nested_results = _execute_parallel_branches_with_context(
-                        nested_subdag_tasks, parent_results,
-                        len(parent_value), exec_id, rank)
+                        nested_subdag_tasks, parent_results, len(parent_value), exec_id, rank
+                    )
                 else:
                     nested_results = _execute_branch(
-                        nested_subdag_tasks, parent_results, exec_id, rank)
+                        nested_subdag_tasks, parent_results, exec_id, rank
+                    )
 
                 branch_results[nested_subdag_tasks[-1].name] = nested_results
                 i = nested_subdag_end
@@ -483,14 +473,16 @@ def _execute_branch(
             else:
                 # inlione task in parallel branch
                 task_type = "merge task" if elmt.merge_func else "task"
-                elmt.log.info(f"Executing {task_type}: " +
-                            f"[rgb(0,255,255) on #af00ff]{elmt.name}{rank}[/]")
+                elmt.log.info(
+                    f"Executing {task_type}: " + f"[rgb(0,255,255) on #af00ff]{elmt.name}{rank}[/]"
+                )
                 result = _execute_task(elmt, parent_results, exec_id, rank)
                 branch_results[elmt.name] = result
         else:
             # TaskGroup
-            elmt.log.info("Executing taskgroup: " +
-                        f"[rgb(0,255,255) on #af00ff]{elmt.name}{rank}[/]")
+            elmt.log.info(
+                "Executing taskgroup: " + f"[rgb(0,255,255) on #af00ff]{elmt.name}{rank}[/]"
+            )
             result = _execute_taskgroup(elmt, parent_results, exec_id, rank)
             for task_name, task_result in result.items():
                 branch_results[task_name] = task_result
@@ -499,14 +491,15 @@ def _execute_branch(
 
     return branch_results[branch_elements[-1].name]
 
+
 def _execute_branch_with_context(
     context: DagExecutionContext,
-    branch_elements: List[Union[TaskType, TaskGroup]],
+    branch_elements: list[TaskType | TaskGroup],
     branch_input: TaskPayload,
     exec_id: int,
-    rank: List[int]
-) -> Tuple[TaskPayload, Dict[str, Any]]:
-    """Wrapper that sets context before executing branch."""
+    rank: list[int],
+) -> tuple[TaskPayload, dict[str, Any]]:
+    """Return the wrapper that sets context before executing branch."""
     token = _dag_execution_context_var.set(context)
     try:
         result = _execute_branch(branch_elements, branch_input, exec_id, rank)
@@ -516,46 +509,41 @@ def _execute_branch_with_context(
 
 
 def _execute_task(
-    t: TaskType,
-    parent_results: TaskPayload,
-    exec_id: int,
-    rank: Optional[List[int]] = None
+    t: TaskType, parent_results: TaskPayload, exec_id: int, rank: list[int] | None = None
 ) -> TaskPayload:
     """
-    Executes a single non-parallel task,
-    optionally applying a merge function.
+    Execute a single non-parallel task, optionally applying a merge function.
 
-    Params:
-        - t (TaskType):
-            The task to execute.
-        - parent_results (TaskPayload):
-            Input values from parent tasks.
-        - exec_id (int):
-            The execution ID for this DAG run.
-        - rank (List[int], optional):
-            Index path for nested branches.
-            Indices of branches if inside a parallel lane.
+    Parameters
+    ----------
+    t : TaskType
+        The task to execute.
+    parent_results : TaskPayload
+        Input values from parent tasks.
+    exec_id : int
+        The execution ID for this DAG run.
+    rank : List[int], optional
+        Index path for nested branches.
+        Indices of branches if inside a parallel lane.
 
-    Results:
-        - TaskPayload:
-            The result produced by the task.
+    Returns
+    -------
+    TaskPayload
+        The result produced by the task.
     """
-
-
     # import psutil, os, time ; cpu_count = os.cpu_count()
     # parent = psutil.Process(os.getpid())
     # children = parent.children(recursive=True)
     # while True:
-        # children = parent.children(recursive=True)
-        # num_subprocesses = len(children)
-        # print(f"Number of subprocesses: {num_subprocesses}")
+    # children = parent.children(recursive=True)
+    # num_subprocesses = len(children)
+    # print(f"Number of subprocesses: {num_subprocesses}")
 
-        # if num_subprocesses <= 2: # cpu_count:
-            # break
+    # if num_subprocesses <= 2: # cpu_count:
+    # break
 
-        # time.sleep(1)  # Wait before checking again
+    # time.sleep(1)  # Wait before checking again
     # print("Subprocess count is now under or equal to CPU cores.")
-
 
     # within the task process, init gRPC connection
     # (for task-traces streaming to WebConsole server)
@@ -563,7 +551,9 @@ def _execute_task(
     try:
         task_id = None
         if t.merge_func:
-            task_id, merged = t.merge_func(list(parent_results.values())[0], rank=rank, exec_id=exec_id)
+            task_id, merged = t.merge_func(
+                list(parent_results.values())[0], rank=rank, exec_id=exec_id
+            )
             parent_results = TaskPayload({t.parents[0].name: merged})
 
             t.log.info(
@@ -574,11 +564,17 @@ def _execute_task(
             )
 
         if parent_results._data:
-            _, result = t.func(parent_results, rank=rank, exec_id=exec_id, task_id=task_id) \
-                   if rank \
-                   else t.func(parent_results, exec_id=exec_id, task_id=task_id)
+            _, result = (
+                t.func(parent_results, rank=rank, exec_id=exec_id, task_id=task_id)
+                if rank
+                else t.func(parent_results, exec_id=exec_id, task_id=task_id)
+            )
         else:
-            _, result = t.func(rank=rank, exec_id=exec_id, task_id=task_id) if rank else t.func(exec_id=exec_id, task_id=task_id)
+            _, result = (
+                t.func(rank=rank, exec_id=exec_id, task_id=task_id)
+                if rank
+                else t.func(exec_id=exec_id, task_id=task_id)
+            )
     finally:
         GrpcClient.shutdown()
 
@@ -590,9 +586,9 @@ def _execute_task_with_context(
     t: TaskType,
     parent_results: TaskPayload,
     exec_id: int,
-    rank: Optional[List[int]] = None
-) -> Tuple[TaskPayload, Dict[str, Any]]:
-    """Wrapper that sets context before executing task."""
+    rank: list[int] | None = None,
+) -> tuple[TaskPayload, dict[str, Any]]:
+    """Return the wrapper that sets context before executing task."""
     # We don't copy, but use shared context, and track updates
     token = _dag_execution_context_var.set(context)
     try:
@@ -604,12 +600,9 @@ def _execute_task_with_context(
 
 
 def _execute_taskgroup(
-    tg: TaskGroup,
-    parent_results: TaskPayload,
-    exec_id: int,
-    rank: Optional[List[int]] = None
+    tg: TaskGroup, parent_results: TaskPayload, exec_id: int, rank: list[int] | None = None
 ) -> TaskPayload:
-    """Executes tasks (and potential nested taskgroups) asynchronously.
+    """Execute tasks (and potential nested taskgroups) asynchronously.
 
     All individual (potentially nested) tasks
     get the same input payload.
@@ -620,26 +613,29 @@ def _execute_taskgroup(
     The following task gets the TaskPayload objects
     with all (potentially nested) tasks' outputs
 
-    Params:
-        - tg (TaskGroup):
-            The taskgroup to execute.
-        - parent_results (TaskPayload):
-            Input values from parent tasks.
-        - exec_id (int):
-            The execution ID for this DAG run.
-        - rank (List[int], optional):
-            Index path for nested branches.
-            Indices of branches
-            if inside a parallel lane.
+    Parameters
+    ----------
+    tg : TaskGroup
+        The taskgroup to execute.
+    parent_results : TaskPayload
+        Input values from parent tasks.
+    exec_id : int
+        The execution ID for this DAG run.
+    rank : List[int], optional
+        Index path for nested branches.
+        Indices of branches
+        if inside a parallel lane.
 
-    Results:
-        - TaskPayload:
-            The result produced by the tasks
-            (potentially nested) of the taskgroup.
+    Returns
+    -------
+    TaskPayload
+        The result produced by the tasks
+        (potentially nested) of the taskgroup.
     """
     # CAPTURE THE CONTEXT BEFORE THREADS/PROCESSES
     context = _dag_execution_context_var.get()
-    all_updates = {}  # Collect all context updates
+    assert context is not None
+    all_updates: dict[str, Any] = {}  # Collect all context updates
 
     executor = RetrainPipelinesExecutor()
 
@@ -651,22 +647,12 @@ def _execute_taskgroup(
             result[elmt.name] = None
             if isinstance(elmt, TaskType):
                 future = executor.submit(
-                    _execute_task_with_context,
-                    context,
-                    elmt,
-                    parent_results,
-                    exec_id,
-                    (rank or [])
+                    _execute_task_with_context, context, elmt, parent_results, exec_id, (rank or [])
                 )
                 futures[future] = elmt.name
             else:
                 future = executor.submit(
-                    _execute_taskgroup_with_context,
-                    context,
-                    elmt,
-                    parent_results,
-                    exec_id,
-                    rank
+                    _execute_taskgroup_with_context, context, elmt, parent_results, exec_id, rank
                 )
                 futures[future] = elmt.name
 
@@ -685,9 +671,7 @@ def _execute_taskgroup(
                 else:
                     result[element_name] = element_result
             except Exception as exc:
-                logger.error(
-                    f"Element {element_name} generated an exception: {exc}"
-                )
+                logger.error(f"Element {element_name} generated an exception: {exc}")
                 raise
 
         # Merge all updates back into parent context
@@ -703,9 +687,9 @@ def _execute_taskgroup_with_context(
     tg: TaskGroup,
     parent_results: TaskPayload,
     exec_id: int,
-    rank: Optional[List[int]] = None
-) -> Tuple[TaskPayload, Dict[str, Any]]:
-    """Wrapper that sets context before executing taskgroup."""
+    rank: list[int] | None = None,
+) -> tuple[TaskPayload, dict[str, Any]]:
+    """Return the wrapper that sets context before executing taskgroup."""
     token = _dag_execution_context_var.set(context)
     try:
         result = _execute_taskgroup(tg, parent_results, exec_id, rank)
@@ -714,26 +698,25 @@ def _execute_taskgroup_with_context(
         _dag_execution_context_var.reset(token)
 
 
-def _execute(
-    dag: DAG,
-    params: Optional[Dict[str, Any]] = None
-) -> (TaskPayload, dict):
+def _execute(dag: DAG, params: dict[str, Any] | None = None) -> tuple[TaskPayload, dict]:
     """From the start, executes the DAG that contains the given task.
 
     Handles task-groups, parallel and nested parallel tasks,
     and merges results as needed.
 
-    Params:
-        - task (TaskType):
-            A task from the DAG to be executed.
-        - params (Optional[Dict[str, Any]])
-            Parameters for this DAG execution.
+    Parameters
+    ----------
+    dag : DAG
+        the DAG to be executed.
+    params : Optional[Dict[str, Any]]
+        parameters for this DAG execution.
 
-    Results:
-        - (TaskPayload)
-            results of the last task in the DAG.
-        - (dict)
-            DAG context dump.
+    Returns
+    -------
+    TaskPayload
+        results of the last task in the DAG.
+    dict
+        DAG context dump.
     """
     # Install keyboard interrupt handler
     _install_interrupt_handler()
@@ -750,13 +733,17 @@ def _execute(
             resolved_params[param_name] = None
 
     # threadsafe - set the context for this execution
-    context = DagExecutionContext(resolved_params)
-    token = _dag_execution_context_var.set(context)
+    exec_context = DagExecutionContext(resolved_params)
+    token = _dag_execution_context_var.set(exec_context)
+
+    context = _dag_execution_context_var.get()
+    assert context is not None
 
     # actual DAG execution
     try:
         dag.init()
-        exec_id = _dag_execution_context_var.get()._params.get("exec_id")
+        exec_id = context._params.get("exec_id")
+        assert exec_id is not None
 
         logger.info(f"Execution ID: {exec_id}")
         logger.debug(f"Root tasks: {[t.name for t in dag.roots]}")
@@ -772,8 +759,9 @@ def _execute(
 
             if isinstance(elmt, TaskType):
                 task_type = "merge task" if elmt.merge_func else "task"
-                elmt.log.info(f"Executing {task_type}: " +
-                              f"[rgb(0,255,255) on #af00ff]{elmt.name}[/]")
+                elmt.log.info(
+                    f"Executing {task_type}: " + f"[rgb(0,255,255) on #af00ff]{elmt.name}[/]"
+                )
 
                 if elmt.is_parallel:
                     elmt.log.info(f"sub-DAG parent_results: {parent_results}")
@@ -781,13 +769,15 @@ def _execute(
                     # Find the end of this parallel subdag
                     subdag_end = _find_subdag_end(order, i)
                     subdag_tasks = order[i:subdag_end]
-                    elmt.log.info("subdag_tasks [red on yellow]{}[/]".format(
-                        [t.name for t in subdag_tasks]))
+                    elmt.log.info(
+                        f"subdag_tasks [red on yellow]{[t.name for t in subdag_tasks]}[/]"
+                    )
 
                     # Execute parallel subdag for each input
                     input_count = _parallel_input_count(parent_results)
                     sub_results = _execute_parallel_branches_with_context(
-                        subdag_tasks, parent_results, input_count, exec_id)
+                        subdag_tasks, parent_results, input_count, exec_id
+                    )
 
                     # Store results for the last task in subdag
                     results[subdag_tasks[-1].name] = sub_results
@@ -800,8 +790,9 @@ def _execute(
                     result = _execute_task(elmt, parent_results, exec_id)
                     results[elmt.name] = result
             else:
-                elmt.log.info("Executing taskgroup: " +
-                           f"[rgb(0,255,255) on #af00ff]{elmt.name}[/]")
+                elmt.log.info(
+                    "Executing taskgroup: " + f"[rgb(0,255,255) on #af00ff]{elmt.name}[/]"
+                )
 
                 tg_results = _execute_taskgroup(elmt, parent_results, exec_id)
                 for task_name, task_result in tg_results.items():
@@ -814,54 +805,52 @@ def _execute(
             # Last element is a taskgroup =>
             # collect its task results into TaskPayload
             final_result = TaskPayload({})
+
             def collect_taskgroup_results(tg):
                 for elmt in tg.elements:
                     if isinstance(elmt, TaskType):
                         final_result[elmt.name] = results[elmt.name]
                     elif isinstance(elmt, TaskGroup):
                         collect_taskgroup_results(elmt)
+
             collect_taskgroup_results(order[-1])
         else:
             final_result = results[order[-1].name]
 
-        return (
-            final_result,
-            copy.copy(_dag_execution_context_var.get()._params)
-        )
+        return (final_result, copy.copy(context._params))
     finally:
         while len(_task_registry.get_running_tasks()) != 0:
-            logger.info(
-                f"[bold white]execute - EXIT - {_task_registry.get_running_tasks()}[/]")
+            logger.info(f"[bold white]execute - EXIT - {_task_registry.get_running_tasks()}[/]")
             time.sleep(0.1)
 
         # Flush all pending traces before marking complete
         get_trace_buffer().stop()
 
-        DAG.mark_complete(exec_id)
+        if exec_id is not None:
+            DAG.mark_complete(exec_id)
         # Reset context after execution
         _dag_execution_context_var.reset(token)
 
 
-def execute(
-    dag: DAG,
-    params: Optional[Dict[str, Any]] = None
-) -> (TaskPayload, dict):
+def execute(dag: DAG, params: dict[str, Any] | None = None) -> tuple[TaskPayload, dict]:
     """From the start, executes the DAG that contains the given task.
 
     Handles task-groups, parallel and nested parallel tasks,
     and merges results as needed.
 
-    Params:
-        - task (TaskType):
-            A task from the DAG to be executed.
-        - params (Optional[Dict[str, Any]])
-            Parameters for this DAG execution.
+    Parameters
+    ----------
+    dag : DAG
+        the DAG to be executed.
+    params : Optional[Dict[str, Any]]
+        parameters for this DAG execution.
 
-    Results:
-        - (TaskPayload)
-            results of the last task in the DAG.
-        - (dict)
-            DAG context dump.
+    Returns
+    -------
+    TaskPayload
+        results of the last task in the DAG.
+    dict
+        DAG context dump.
     """
     """
     Establish rich custom logging.
@@ -872,4 +861,3 @@ def execute(
         return _execute(dag, params)
     finally:
         rich_logging_controller.deactivate()
-

@@ -1,45 +1,41 @@
-
-
-from fasthtml.common import \
-    Request, to_xml, Style, Div, Br, \
-    HTMLResponse, HTTPException
+from fasthtml.common import Br, Div, HTMLResponse, HTTPException, Request, Style, to_xml
 
 from .page_template import page_layout
 
 
-def error_page(
-    status_code: int,
-    req: Request | None = None,
-    exc: Exception | None = None
-):
-    """Custom error page template for status_code.
-    
-    Params:
-        - status_code (int):
-            HTTP status code (400-599)
-        - req:
-            Starlette Request object (unused)
-        - exc:
-            Exception that triggered error (unused)
-        
-    Results:
-        - FastHTML error page
+def error_page(status_code: int, req: Request | None = None, exc: Exception | None = None):
+    """Return custom error page template for status_code.
+
+    Parameters
+    ----------
+    status_code : int
+        HTTP status code (400-599)
+    req
+        Starlette Request object (unused)
+    exc
+        Exception that triggered error (unused)
+
+    Returns
+    -------
+    FastHTML error page
     """
     if exc is None:
         detail = "An error occurred"
     elif isinstance(exc, HTTPException):
         detail = exc.detail
-    elif hasattr(exc, 'detail'):
+    elif hasattr(exc, "detail"):
         detail = exc.detail
     else:
         detail = str(exc) if str(exc) else exc.__class__.__name__
-    
+
     result = page_layout(
-        current_page="/", 
+        current_page="/",
         title="retrain-pipelines",
         content=Div(
             Div(
-                str(status_code), Br(), str(detail),
+                str(status_code),
+                Br(),
+                str(detail),
                 style="""
                     width: 100%;
                     font-size: clamp(1rem, 12vw, 20rem);
@@ -76,7 +72,7 @@ def error_page(
                            drop-shadow(3px 3px 6px #FFEA66);
 
                     position: relative;
-                """
+                """,
             ),
             Style(""" /* body */
                 .body-error-page { /* page content container */
@@ -85,8 +81,7 @@ def error_page(
                 }
             """),
         ),
-        body_cls=["body-error-page"]
+        body_cls=["body-error-page"],
     )
 
     return HTMLResponse(to_xml(result), status_code=status_code)
-

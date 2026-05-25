@@ -1,23 +1,18 @@
-
-import os
+import asyncio
 import glob
 import json
-import regex
-import asyncio
 import logging
-import tzlocal
-
-from http import HTTPStatus
+import os
 from datetime import datetime
-from typing import Optional, List
-from fasthtml.common import Div, Span, \
-    WebSocket
+from http import HTTPStatus
+
+import regex
+import tzlocal
+from fasthtml.common import Div, Span, WebSocket
 from pydantic import BaseModel, validator
 from uvicorn.logging import AccessFormatter
 
-from ....utils import strip_ansi_escape_codes, \
-    rgb_to_rgba
-
+from ....utils import rgb_to_rgba, strip_ansi_escape_codes
 
 server_tz = tzlocal.get_localzone()
 
@@ -48,10 +43,7 @@ def get_log_config():
         "handlers": {
             "file_default": {
                 "class": "logging.handlers.TimedRotatingFileHandler",
-                "filename": os.path.join(
-                    os.environ["RP_WEB_SERVER_LOGS"],
-                    "server.log"
-                ),
+                "filename": os.path.join(os.environ["RP_WEB_SERVER_LOGS"], "server.log"),
                 "when": "midnight",
                 "backupCount": 7,
                 "formatter": "default",
@@ -59,10 +51,7 @@ def get_log_config():
             },
             "file_access": {
                 "class": "logging.handlers.TimedRotatingFileHandler",
-                "filename": os.path.join(
-                    os.environ["RP_WEB_SERVER_LOGS"],
-                    "access.log"
-                ),
+                "filename": os.path.join(os.environ["RP_WEB_SERVER_LOGS"], "access.log"),
                 "when": "midnight",
                 "backupCount": 7,
                 "formatter": "access",
@@ -101,6 +90,7 @@ LOG_ENTRY_PATTERN = regex.compile(
     r"(?P<status_code>\d{3})"
 )
 
+
 class AccessLogEntry(BaseModel):
     raw_str: str
     timestamp: datetime
@@ -109,28 +99,28 @@ class AccessLogEntry(BaseModel):
     method: str
     message: str
     status_code: int
-    thread: Optional[int] = None
-    threadName: Optional[str] = None
-    process: Optional[int] = None
-    processName: Optional[str] = None
+    thread: int | None = None
+    threadName: str | None = None
+    process: int | None = None
+    processName: str | None = None
 
-    @validator('client_addr', pre=True)
+    @validator("client_addr", pre=True)
     def extract_ip(cls, v):
         # Handles IPv4 and IPv6, with or without port
         # IPv6 addresses may be in [::1]:12345 format
         # IPv6 addresses may be in ::1:12345 format
         # IPv4: 127.0.0.1:12345 or just 127.0.0.1
-        if v.startswith('['): # IPv6 with port, e.g. [::1]:12345
-            match = regex.match(r'^\[([^\\\\]]+)\\\\](?::\\\\d+)?$', v)
+        if v.startswith("["):  # IPv6 with port, e.g. [::1]:12345
+            match = regex.match(r"^\[([^\\\\]]+)\\\\](?::\\\\d+)?$", v)
             if match:
                 return match.group(1)
         else:
             # IPv4 or IPv6 without brackets
-            return v.rsplit(':', 1)[0]
+            return v.rsplit(":", 1)[0]
 
     def to_json(self) -> str:
         log_entry = {
-            "timestamp": self.timestamp.strftime('%Y-%m-%d %H:%M:%S'),
+            "timestamp": self.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
             "level": self.level,
             "client_addr": self.client_addr,
             "method": self.method,
@@ -144,41 +134,46 @@ class AccessLogEntry(BaseModel):
         return json.dumps(log_entry)
 
     def to_fasthtml_div(self) -> Div:
-        """
-        Results:
-            - (Div):
-                the DOM element
-                representing that log entry
-                in the WebServer Logs page list.
+        """Convert to DOM html.
+
+        Returns
+        -------
+        Div
+        the DOM element
+        representing that log entry
+        in the WebServer Logs page list.
         """
         status_color = (
-           # #28a745
-           (40, 167, 69) if 200 <= self.status_code < 300 else
-           # #ffc107
-           (255, 193, 7) if 400 <= self.status_code < 500 else
-           # #dc3545
-           (220, 53, 69) if 500 <= self.status_code < 600 else
-           # #333, HTTP 3xx (not-modified, redirects, etc.)
-           (51, 51, 51)
+            # #28a745
+            (40, 167, 69)
+            if 200 <= self.status_code < 300
+            # #ffc107
+            else (255, 193, 7)
+            if 400 <= self.status_code < 500
+            # #dc3545
+            else (220, 53, 69)
+            if 500 <= self.status_code < 600
+            # #333, HTTP 3xx (not-modified, redirects, etc.)
+            else (51, 51, 51)
         )
 
         method_icon = {
-            "GET":     "\N{DOWNWARDS BLACK ARROW}", # fetching data
-            "POST":    "\N{UPWARDS BLACK ARROW}",   # sending data
-            "PUT":     "\N{PENCIL}",                # updating data
-            "DELETE":  "\N{WASTEBASKET}",           # deleting data
-            "PATCH":   "\N{ADHESIVE BANDAGE}",      # patching data
-            "HEAD":    "\N{BRAIN}",                 # "head"
-            "OPTIONS": "\N{GEAR}",                  # options/config
+            "GET": "\N{DOWNWARDS BLACK ARROW}",  # fetching data
+            "POST": "\N{UPWARDS BLACK ARROW}",  # sending data
+            "PUT": "\N{PENCIL}",  # updating data
+            "DELETE": "\N{WASTEBASKET}",  # deleting data
+            "PATCH": "\N{ADHESIVE BANDAGE}",  # patching data
+            "HEAD": "\N{BRAIN}",  # "head"
+            "OPTIONS": "\N{GEAR}",  # options/config
             # websocket, persistent, bidirectional connection
-            "ws":   "\N{ELECTRIC PLUG}",
+            "ws": "\N{ELECTRIC PLUG}",
             # server-side event, one-way, server-to-client streaming
-            "sse":  "\N{SATELLITE ANTENNA}",
+            "sse": "\N{SATELLITE ANTENNA}",
             # gRPC, bidirectional RPC communication
             "grpc": "\N{UP DOWN ARROW}",
         }.get(
             self.method,
-            "\N{TWISTED RIGHTWARDS ARROWS}"
+            "\N{TWISTED RIGHTWARDS ARROWS}",
             # "\N{ANTENNA WITH BARS}"
             # "\N{TRIDENT EMBLEM}"
         )
@@ -186,83 +181,73 @@ class AccessLogEntry(BaseModel):
         timestamp_local = self.timestamp.replace(tzinfo=server_tz)
 
         div = Div(
-            Div(# Glass shine overlay
+            Div(  # Glass shine overlay
                 style=(
                     "position: absolute; top: 0; left: 0; right: 0; "
                     "height: 40%; "
                     "background: linear-gradient(135deg, "
-                        "rgba(255,255,255,0.3) 0%, "
-                        "rgba(255,255,255,0.1) 50%, transparent 100%); "
+                    "rgba(255,255,255,0.3) 0%, "
+                    "rgba(255,255,255,0.1) 50%, transparent 100%); "
                     "pointer-events: none; border-radius: 6px 6px 0 0; "
                     "transition: opacity 0.2s ease;"
                 ),
-                id="glass-overlay"
+                id="glass-overlay",
             ),
-
             Div(
-                Span(# Icon
+                Span(  # Icon
                     method_icon,
-                    style=(
-                        "min-width: 22px; display: inline-block; "
-                        "text-align: center;"
-                    )
+                    style=("min-width: 22px; display: inline-block; text-align: center;"),
                 ),
-                Span(# Method
-                    f"\u00A0{self.method}",
+                Span(  # Method
+                    f"\u00a0{self.method}",
                     style=(
                         f"color: {rgb_to_rgba(status_color)}; "
                         "font-weight: bold; "
                         "margin-right: 10px; "
                         "min-width: 70px; "
                         "text-shadow: 0 0 12px #FFD700, 0 0 2px #FFD700;"
-                    )
-                ),
-                Span(# Timestamp
-                    (
-                        timestamp_local.strftime('%Y-%m-%d %H:%M:%S') +
-                        " " + timestamp_local.strftime('%Z')
                     ),
-                    style=(
-                        "color: #ccc; font-size: 0.9em; "
-                        "margin-right: 10px; min-width: 170px;"
-                    )
                 ),
-                style=(
-                    "display: flex; align-items: baseline; "
-                    "position: relative; z-index: 1;"
-                )
+                Span(  # Timestamp
+                    (
+                        timestamp_local.strftime("%Y-%m-%d %H:%M:%S")
+                        + " "
+                        + timestamp_local.strftime("%Z")
+                    ),
+                    style=("color: #ccc; font-size: 0.9em; margin-right: 10px; min-width: 170px;"),
+                ),
+                style=("display: flex; align-items: baseline; position: relative; z-index: 1;"),
             ),
             Div(
-                Span(# Client IP
+                Span(  # Client IP
                     self.client_addr,
                     style=(
                         "padding-left: 10px; margin-right: 10px; "
                         "border-left: 3px solid #eee; "
                         "min-width: 120px; display: inline-block; "
                         "text-align: center;"
-                    )
+                    ),
                 ),
-                Span(# Message
+                Span(  # Message
                     self.message,
                     style=(
-                        "padding-left: 10px; border-left: 3px solid #eee; "
-                        "display: inline-block;"
-                    )
-               ),
-               style="align-items: baseline; position: relative; z-index: 1;"
+                        "padding-left: 10px; border-left: 3px solid #eee; display: inline-block;"
+                    ),
+                ),
+                style="align-items: baseline; position: relative; z-index: 1;",
             ),
             style=(
-                f"--background-normal: {rgb_to_rgba(status_color, .45)}; "
-                f"--background-hover: {rgb_to_rgba(status_color, .65)}; "
+                f"--background-normal: {rgb_to_rgba(status_color, 0.45)}; "
+                f"--background-hover: {rgb_to_rgba(status_color, 0.65)}; "
                 "background: var(--background-normal); "
                 "line-height: 1em; margin-bottom: 4px; "
                 "padding-top: 3px; padding-bottom: 4px; "
                 "padding-left: 12px; padding-right: 12px; "
                 "border-radius: 6px; "
                 "box-shadow: 0 2px 4px rgba(0,0,0,0.1), "
-                    "0 8px 16px rgba(0,0,0,0.05), "
-                    "inset 0 1px 0 rgba(255,255,255,0.4), "
-                    "inset 0 -1px 0 rgba(0,0,0,0.1); "
+                "0 8px 16px rgba(0,0,0,0.05), "
+                "inset 0 1px 0 rgba(255,255,255,0.4), "
+                "inset 0 -1px 0 rgba(0,0,0,0.1); "
                 f"border-left: 4px solid {rgb_to_rgba(status_color)}; "
                 "display: flex; align-items: flex-start; "
                 "backdrop-filter: blur(10px); "
@@ -273,35 +258,34 @@ class AccessLogEntry(BaseModel):
             ),
             raw_str=self.raw_str,
             cls=["log-entry", "wavy-list-item", "wavy-list-item-body"],
-            title="WebSocket" if self.method == "ws" else \
-                  "Server-Side Event" if self.method == "sse" else \
-                  "gRPC" if self.method == "grpc" else \
-                  f"{self.status_code} - {HTTPStatus(self.status_code).phrase}"
+            title="WebSocket"
+            if self.method == "ws"
+            else "Server-Side Event"
+            if self.method == "sse"
+            else "gRPC"
+            if self.method == "grpc"
+            else f"{self.status_code} - {HTTPStatus(self.status_code).phrase}",
         )
 
         return div
 
     @classmethod
     def from_access_log(cls, log: str):
-        """
-        Parse a classic access log string like:
+        """Parse a classic access log string.
+
+        Like:
         2025-07-06 15:41:53 [INFO] 127.0.0.1:36042 - 'POST /ui/update HTTP/1.1' 200 OK
         """
         match = regex.match(LOG_ENTRY_PATTERN, log)
         if not match:
-            raise ValueError(
-                f"Log string `{log}` does not match expected format"
-            )
+            raise ValueError(f"Log string `{log}` does not match expected format")
 
-        timestamp = datetime.strptime(
-            match.group('timestamp'),
-            '%Y-%m-%d %H:%M:%S'
-        )
-        level = match.group('level')
-        client_addr = match.group('client_addr')
-        method = match.group('method')
-        status_code = match.group('status_code')
-        message = match.group('message')
+        timestamp = datetime.strptime(match.group("timestamp"), "%Y-%m-%d %H:%M:%S")
+        level = match.group("level")
+        client_addr = match.group("client_addr")
+        method = match.group("method")
+        status_code = match.group("status_code")
+        message = match.group("message")
 
         # Fill in missing fields with None or suitable defaults
         return cls(
@@ -315,62 +299,71 @@ class AccessLogEntry(BaseModel):
             thread=None,
             threadName=None,
             process=None,
-            processName=None
+            processName=None,
         )
 
 
-def _read_last_n_lines(
-    filename: str,
-    n: int,
-    regex_filter: str | None
-) -> list[bytes]:
-    matches = []
-    filtering_pattern = regex.compile(regex_filter) if regex_filter \
-                        else None
+def _read_last_n_lines(filename: str, n: int, regex_filter: str | None) -> list[bytes]:
+    matches: list[bytes] = []
+    filtering_pattern: regex.Pattern[str] | None = (
+        regex.compile(regex_filter) if regex_filter else None
+    )
 
     try:
-        with open('/proc/version', 'r') as f:
-            is_wsl = 'microsoft' in f.read().lower()
+        with open("/proc/version") as f:
+            is_wsl = "microsoft" in f.read().lower()
     except Exception:
         is_wsl = False
 
-    if is_wsl and filename.startswith('/mnt/'):
+    if is_wsl and filename.startswith("/mnt/"):
         import subprocess
 
-        win_path = regex.sub(r'^/mnt/([a-z])/', r'\1:\\', filename).replace('/', '\\')
+        win_path = regex.sub(r"^/mnt/([a-z])/", r"\1:\\", filename).replace("/", "\\")
         # Read backwards in batches until enough matches
         total_lines = 0
         batch = 4096
         while True:
             line_count = n + total_lines
-            result = subprocess.run([
-                'powershell.exe', '-Command',
-                f'Get-Content "{win_path}" | Select-Object -Last {line_count}'
-            ], capture_output=True, text=True)
+            result = subprocess.run(
+                [
+                    "powershell.exe",
+                    "-Command",
+                    f'Get-Content "{win_path}" | Select-Object -Last {line_count}',
+                ],
+                capture_output=True,
+                text=True,
+            )
             if result.returncode != 0:
                 break
-            lines = result.stdout.strip().split('\n')
-            lines = [line for line in lines if line.strip()]
+            str_lines = result.stdout.strip().split("\n")
+            str_lines = [line for line in str_lines if line.strip()]
             if regex_filter:
-                filtered = [line for line in reversed(lines)
-                            if filtering_pattern.match(line)]
+                filtered = [
+                    line
+                    for line in reversed(str_lines)
+                    if filtering_pattern and filtering_pattern.match(line)
+                ]
                 if len(filtered) >= n:
-                    return [l.encode('utf-8') for l in reversed(filtered[:n])]
+                    return [line.encode("utf-8") for line in reversed(filtered[:n])]
+            else:
+                return [line.encode("utf-8") for line in str_lines[-n:]]
+            if len(str_lines) < line_count:
+                return [line.encode("utf-8") for line in reversed(filtered)]
                 # Not enough matches, read more lines next time
             else:
-                return [line.encode('utf-8') for line in lines[-n:]]
-            if len(lines) < line_count:
+                return [line.encode("utf-8") for line in str_lines[-n:]]
+            if len(str_lines) < line_count:
                 # Reached start of file
-                return [l.encode('utf-8') for l in reversed(filtered)]
+                return [line.encode("utf-8") for line in reversed(filtered)]
             total_lines += batch
 
     fd = os.open(filename, os.O_RDONLY)
     try:
-        with os.fdopen(fd, 'rb') as f:
+        with os.fdopen(fd, "rb") as f:
             f.seek(0, os.SEEK_END)
             filesize = f.tell()
             blocksize = 4096
-            buffer = b''
+            buffer = b""
             while filesize > 0 and len(matches) < n:
                 read_size = min(blocksize, filesize)
                 filesize -= read_size
@@ -380,8 +373,8 @@ def _read_last_n_lines(
                 # Only scan new lines added in this block
                 for line in reversed(lines):
                     if regex_filter:
-                        if filtering_pattern.match(
-                            line.decode('utf-8', 'replace')
+                        if filtering_pattern and filtering_pattern.match(
+                            line.decode("utf-8", "replace")
                         ):
                             matches.append(line)
                             if len(matches) == n:
@@ -390,7 +383,7 @@ def _read_last_n_lines(
                         matches.append(line)
                         if len(matches) == n:
                             return list(reversed(matches))
-                buffer = b'\n'.join(lines)
+                buffer = b"\n".join(lines)
             return list(reversed(matches))
     finally:
         if fd >= 0:
@@ -401,14 +394,11 @@ def _read_last_n_lines(
 
 
 def read_last_access_logs(
-    log_dir: str,
-    base_filename: str,
-    n: int,
-    regex_filter: str | None
-) -> List[str]:
-    """
-    Read the last n access log lines
-    from current and rotated log files,
+    log_dir: str, base_filename: str, n: int, regex_filter: str | None
+) -> list[str]:
+    """Read the last n access log lines.
+
+    From current and rotated log files,
     parse each into AccessLogEntry,
     and return a list of html div elements.
     """
@@ -416,10 +406,7 @@ def read_last_access_logs(
     log_files = glob.glob(f"{log_dir}/{base_filename}*")
     log_files.sort(key=os.path.getmtime, reverse=True)
 
-    lines = []
-    lines_needed = n
-
-    lines = []
+    lines: list[bytes] = []
     lines_needed = n
     for log_file in log_files:
         file_lines = _read_last_n_lines(log_file, lines_needed, regex_filter)
@@ -432,9 +419,7 @@ def read_last_access_logs(
     log_entries = []
     for line in last_lines:
         try:
-            log_line = strip_ansi_escape_codes(
-                line.decode('utf-8', errors='replace').strip()
-            )
+            log_line = strip_ansi_escape_codes(line.decode("utf-8", errors="replace").strip())
             if log_line:
                 entry = AccessLogEntry.from_access_log(log_line)
                 log_entries.append(str(entry.to_fasthtml_div()))
@@ -451,7 +436,8 @@ def read_last_access_logs(
 class WebSocketLogHandler(logging.Handler):
     def __init__(self, socket_endpoint_route: str):
         super().__init__()
-        self.clients = set()
+        self.clients: set[WebSocket] = set()
+        self._handlers_added: bool = False
         self.socket_endpoint_route = socket_endpoint_route
 
     def emit(self, record):
@@ -480,12 +466,7 @@ class WebSocketLogHandler(logging.Handler):
                     http_version = "0.0"
                     status_code = 200
                     logger.info(
-                        '%s - "%s %s %s" %d',
-                        client_addr,
-                        method,
-                        path,
-                        http_version,
-                        status_code
+                        '%s - "%s %s %s" %d', client_addr, method, path, http_version, status_code
                     )
             except Exception as ex:
                 print(ex)
@@ -511,37 +492,43 @@ class WebSocketLogHandler(logging.Handler):
             self.clients.discard(ws)
         if len(self.clients) == 1:
             # if only "exclude_ws" remains (the one being shut-down)
-            delattr(self, '_handlers_added')
+            self._handlers_added = False
 
-def get_log_websocket_endpoint(
-    route: str
-):
-    """
-    Results:
-        - the async websocket_endpoint method
-    """
 
+def get_log_websocket_endpoint(route: str):
+    """Return the handler's endpoint method.
+
+    Parameters
+    ----------
+    route : str
+        relative url.
+
+    Returns
+    -------
+    the async websocket_endpoint method
+    """
+    route = f"/{route.lstrip('/')}"
     ws_log_handler = WebSocketLogHandler(route)
 
     async def websocket_endpoint(websocket: WebSocket):
         await websocket.accept()
 
         # Only add handlers once
-        if not hasattr(ws_log_handler, '_handlers_added'):
+        if not ws_log_handler._handlers_added:
+
             class AccessLogEntryFormatter(AccessFormatter):
                 def format(self, record):
                     # Let AccessFormatter do its work first to populate client_addr
                     formatted_msg = super().format(record)
-                    client_addr, method, message, http_version, status_code \
-                        = record.args
+                    client_addr, method, message, http_version, status_code = record.args
                     time_str = self.formatTime(record).split(",")[0]
                     log_entry = AccessLogEntry(
                         raw_str=(
-                            time_str +
-                            f" [{record.levelname}] " +
-                            formatted_msg.replace('"', "'") +
-                            " " +
-                            HTTPStatus(status_code).phrase
+                            time_str
+                            + f" [{record.levelname}] "
+                            + formatted_msg.replace('"', "'")
+                            + " "
+                            + HTTPStatus(status_code).phrase
                         ),
                         timestamp=time_str,
                         level=record.levelname,
@@ -565,20 +552,18 @@ def get_log_websocket_endpoint(
         try:
             while True:
                 await websocket.receive_text()
-        except:
+        except Exception:
             # in case e.g. more than 1 client
             # or 1 webbrowser tab is opened at once
             # on the page that streams this
             await ws_log_handler.broadcast_to_others(
-                f"WebSocket client {websocket.client} disconnected",
-                websocket
+                f"WebSocket client {websocket.client} disconnected", websocket
             )
         finally:
             ws_log_handler.unregister(websocket)
             try:
                 await websocket.close()
-            except:
+            except Exception:
                 pass
 
     return websocket_endpoint
-

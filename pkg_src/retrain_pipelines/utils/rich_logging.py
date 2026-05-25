@@ -3,29 +3,26 @@ from wcwidth import wcswidth
 
 
 def framed_rich_log_str(
-    rich_markup: str,
-    border_color: str = "white",
-    font_color: str = "default"
+    rich_markup: str, border_color: str = "white", font_color: str = "default"
 ) -> str:
-    """Puts a colored rounded border around message to be rich-logged.
+    """Put a colored rounded border around message to be rich-logged.
 
-    Params:
-        - rich_markup (str):
-            the formatted messaged to be logged
-        - border_color (str):
-            the color of the border line
-        - font_color (str):
-            the default font color
-            (for substrings not marked for specific coloring)
+    Parameters
+    ----------
+    rich_markup : str
+        the formatted messaged to be logged
+    border_color : str
+        the color of the border line
+    font_color : str
+        the default font color
+        (for substrings not marked for specific coloring)
     """
     markup_lines = rich_markup.splitlines()
 
     # Apply default font color to each line, if not already colored
-    colored_lines = [
-        f"[{font_color}]{line}[/]" for line in markup_lines
-    ]
+    colored_lines = [f"[{font_color}]{line}[/]" for line in markup_lines]
 
-    text_block = Text.from_markup('\n'.join(colored_lines))
+    text_block = Text.from_markup("\n".join(colored_lines))
     plain_lines = text_block.plain.splitlines()
     max_width = max(wcswidth(line) for line in plain_lines)
 
@@ -40,11 +37,10 @@ def framed_rich_log_str(
 
     framed_lines = [top]
 
-    for plain_line, markup_line in zip(plain_lines, colored_lines):
+    for plain_line, markup_line in zip(plain_lines, colored_lines, strict=False):
         padding = max_width - wcswidth(plain_line)
         framed_lines.append(f"{vert} {markup_line}{' ' * padding} {vert}")
 
     framed_lines.append(bottom)
 
-    return '\n'.join(framed_lines)
-
+    return "\n".join(framed_lines)

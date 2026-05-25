@@ -1,2 +1,1 @@
-
-from .endpoint_test import *
+from .endpoint_test import *  # noqa: F403

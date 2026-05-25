@@ -1,26 +1,22 @@
-
-import json
-import copy
 import asyncio
+import copy
+import json
 import logging
-import tzlocal
-
-from datetime import datetime
+from typing import Any
 
 from ....db.model import Execution, ExecutionExt
 from .. import ClientInfo
 from .executions import execution_to_html
 
-
 # Global lists of subscriber queues
-new_exec_subscribers = []
-exec_end_subscribers = []
+new_exec_subscribers: list[tuple[asyncio.Queue[Any], ClientInfo]] = []
+exec_end_subscribers: list[tuple[asyncio.Queue[Any], ClientInfo]] = []
 
 
 uvicorn_logger = logging.getLogger("uvicorn.access")
 
 
-###### clean shutdown on hard thread kill ######################################
+# clean shutdown on hard thread kill ######################################
 
 # Sentinel pushed into every subscriber queue on server shutdown,
 # so each generator exits cleanly and its finally-block fires.
@@ -40,13 +36,9 @@ def notify_server_shutdown():
     """
     global _server_loop
     if not (_server_loop is None or _server_loop.is_closed()):
-        for queue, _ in (
-            list(new_exec_subscribers) +
-            list(exec_end_subscribers)
-        ):
+        for queue, _ in list(new_exec_subscribers) + list(exec_end_subscribers):
             try:
-                _server_loop.call_soon_threadsafe(
-                    queue.put_nowait, _SHUTDOWN)
+                _server_loop.call_soon_threadsafe(queue.put_nowait, _SHUTDOWN)
             except RuntimeError:
                 pass
     else:
@@ -72,32 +64,26 @@ def reset_for_restart():
 
 
 async def multiplexed_event_generator(client_info: ClientInfo):
-    global new_exec_subscribers, exec_end_subscribers, \
-           _server_loop
+    global new_exec_subscribers, exec_end_subscribers, _server_loop
 
     if _server_loop is None:
         _server_loop = asyncio.get_event_loop()
 
-    queues = {
+    queues: dict[str, asyncio.Queue[Any]] = {
         "newExecution": asyncio.Queue(),
-        "executionEnded": asyncio.Queue()
+        "executionEnded": asyncio.Queue(),
     }
 
     new_exec_subscribers.append((queues["newExecution"], client_info))
     exec_end_subscribers.append((queues["executionEnded"], client_info))
-    print(f"executions subscribers [{len(new_exec_subscribers)}] : " +
-          f"{new_exec_subscribers}")
+    print(f"executions subscribers [{len(new_exec_subscribers)}] : " + f"{new_exec_subscribers}")
 
     try:
         # Initial get asyncio tasks
-        get_tasks = {
-            key: asyncio.create_task(q.get())
-            for key, q in queues.items()
-        }
+        get_tasks = {key: asyncio.create_task(q.get()) for key, q in queues.items()}
         while True:
             # Wait for any queue
-            done, _ = await asyncio.wait(get_tasks.values(),
-                                         return_when=asyncio.FIRST_COMPLETED)
+            done, _ = await asyncio.wait(get_tasks.values(), return_when=asyncio.FIRST_COMPLETED)
             for finished in done:
                 # Identify which asyncio queue/task finished
                 key = next(k for k, v in get_tasks.items() if v == finished)
@@ -107,8 +93,7 @@ async def multiplexed_event_generator(client_info: ClientInfo):
                 if result is _SHUTDOWN:
                     for task in get_tasks.values():
                         task.cancel()
-                    await asyncio.gather(*get_tasks.values(),
-                                         return_exceptions=True)
+                    await asyncio.gather(*get_tasks.values(), return_exceptions=True)
                     return
 
                 data = copy.copy(result)
@@ -128,12 +113,12 @@ async def multiplexed_event_generator(client_info: ClientInfo):
                 uvicorn_logger.info(
                     '%s - "%s %s %s" %d',
                     f"{client_info['ip']}:{client_info['port']}",
-                    "sse", f"{client_info['url']} {{ {event_type} }}", '0.0', 200
+                    "sse",
+                    f"{client_info['url']} {{ {event_type} }}",
+                    "0.0",
+                    200,
                 )
-                yield (
-                    f"event: {event_type}\n"
-                    f"data: {json.dumps(data)}\n\n"
-                )
+                yield (f"event: {event_type}\ndata: {json.dumps(data)}\n\n")
     except asyncio.CancelledError:
         for task in get_tasks.values():
             task.cancel()
@@ -150,6 +135,6 @@ async def multiplexed_event_generator(client_info: ClientInfo):
             exec_end_subscribers.remove((queues["executionEnded"], client_info))
         except Exception:
             pass
-        print(f"executions subscribers [{len(new_exec_subscribers)}] : " +
-              f"{new_exec_subscribers}")
-
+        print(
+            f"executions subscribers [{len(new_exec_subscribers)}] : " + f"{new_exec_subscribers}"
+        )

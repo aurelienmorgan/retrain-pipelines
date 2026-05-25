@@ -1,18 +1,9 @@
-
-import sys
-import time
-import math
 import os
+import time
 
-from rich.text import Text
+from IPython.display import HTML, display, update_display
 from rich.live import Live
-
-from IPython import get_ipython
-from IPython.display import display, clear_output, HTML, update_display
-
-
-from . import in_notebook
-
+from rich.text import Text
 
 GOLD_HEX = "#c39c1a"
 MAJENTA_HEX = "#9a2bab"
@@ -34,9 +25,9 @@ def _wave_cli(text: str, wave_length: int = 6, delay: float = 0.1, loops: int = 
                         dist = (i - idx) % length
                         if dist < wave_length:
                             if 2 <= dist <= length - 2:
-                              display_char = char.upper()
+                                display_char = char.upper()
                             else:
-                              display_char = char
+                                display_char = char
                             rendered.append(display_char, style=wave_color)
                         else:
                             rendered.append(char, style=base_color)
@@ -71,7 +62,7 @@ def _wave_cli(text: str, wave_length: int = 6, delay: float = 0.1, loops: int = 
 
 def _wave_notebook(text: str, wave_length: int = 6, delay: float = 0.1, loops: int = 2):
     # CSS styles for Jupyter output
-    styles = """
+    styles = f"""
     <style>
     .wave-container {{
       display: inline-block;
@@ -80,13 +71,12 @@ def _wave_notebook(text: str, wave_length: int = 6, delay: float = 0.1, loops: i
       background-color: black;
       font-family: monospace;
     }}
-    .wave-yellow {{ color: {gold_hexcode}; }}
-    .wave-magenta {{ color: {majenta_hexcode}; font-weight: bold; }}
+    .wave-yellow {{ color: {GOLD_HEX}; }}
+    .wave-magenta {{ color: {MAJENTA_HEX}; font-weight: bold; }}
     </style>
-    """.format(gold_hexcode=GOLD_HEX, majenta_hexcode=MAJENTA_HEX)
+    """
 
-    display_handle = display(HTML(styles + "<div class='wave-container'></div>"),
-                             display_id=True)
+    display_handle = display(HTML(styles + "<div class='wave-container'></div>"), display_id=True)
 
     frames = []
     length = len(text)
@@ -98,9 +88,9 @@ def _wave_notebook(text: str, wave_length: int = 6, delay: float = 0.1, loops: i
                     dist = (i - idx) % length
                     if dist < wave_length:
                         if 2 <= dist <= length - 2:
-                           display_char = char.upper()
+                            display_char = char.upper()
                         else:
-                           display_char = char
+                            display_char = char
                         frame += f"<span class='wave-magenta'>{display_char}</span>"
                     else:
                         frame += f"<span class='wave-yellow'>{char}</span>"
@@ -121,26 +111,28 @@ def _wave_notebook(text: str, wave_length: int = 6, delay: float = 0.1, loops: i
                 frames.append(frame)
 
     for frame in frames:
-        update_display(HTML(styles + f"<div class='wave-container'>{frame}</div>"),
-                       display_id=display_handle.display_id)
+        update_display(
+            HTML(styles + f"<div class='wave-container'>{frame}</div>"),
+            display_id=display_handle.display_id,
+        )
         time.sleep(delay)
 
     # Final frame
     final_frame = text.lower()
     update_display(
-        HTML(styles +
-             f"<div class='wave-container'><span class='wave-yellow'>{final_frame}</span></div>"
-        ), display_id=display_handle.display_id)
+        HTML(
+            styles
+            + f"<div class='wave-container'><span class='wave-yellow'>{final_frame}</span></div>"
+        ),
+        display_id=display_handle.display_id,
+    )
 
 
 def animate_wave(text: str, wave_length: int = 6, delay: float = 0.1, loops: int = 2):
-    """
-    Animated wave effect for both CLI (rich) and Jupyter (HTML).
-    """
-    if not (
-        os.getenv('launched_from_magic', None) or
-        os.getenv('launched_from_cli', None)
-    ):
+    """Animate wave effect for both CLI (rich) and Jupyter (HTML)."""
+    from . import in_notebook
+
+    if not (os.getenv("launched_from_magic", None) or os.getenv("launched_from_cli", None)):
         if in_notebook():
             _wave_notebook(text, wave_length, delay, loops)
         else:
@@ -149,5 +141,4 @@ def animate_wave(text: str, wave_length: int = 6, delay: float = 0.1, loops: int
 
 # Example usage:
 if __name__ == "__main__":
-  animate_wave("Rich & Jupyter Wave!")
-
+    animate_wave("Rich & Jupyter Wave!")

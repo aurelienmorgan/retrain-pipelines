@@ -1,23 +1,17 @@
-
-import os
 import json
+import os
 
-from datetime import datetime
+from fasthtml.common import H3, Div, Input, Option, Response, Script, Select, Span
 
-from fasthtml.common import Response, \
-    Div, H3, Span, Select, Input, Option, \
-    Script
-
-from .page_template import page_layout
 from ..utils.cookies import get_ui_state
 from ..utils.server_logs import read_last_access_logs
+from .page_template import page_layout
 
 
 def register(app, rt, prefix=""):
     @rt(f"{prefix}/web_server/heartbeat", methods=["GET"])
     async def heartbeat(request):
         return Response(status_code=200)
-
 
     @rt(f"{prefix}/web_server/load_logs", methods=["POST"])
     async def get_log_entries(request):
@@ -31,36 +25,27 @@ def register(app, rt, prefix=""):
         regex_filter = form.get("regex_filter", None)
 
         log_entries = read_last_access_logs(
-            os.environ["RP_WEB_SERVER_LOGS"],
-            "access.log",
-            n=count,
-            regex_filter=regex_filter
+            os.environ["RP_WEB_SERVER_LOGS"], "access.log", n=count, regex_filter=regex_filter
         )
         return log_entries
-
 
     @rt(f"{prefix}/web_server", methods=["GET"])
     def server_dashboard(req):
         # Get stored UI state or defaults
-        lines = get_ui_state(
-            req, "server_dashboard", "lines", "100"
-        )
-        autoscroll = (
-                get_ui_state(
-                    req, "server_dashboard", "autoscroll", "true"
-                )
-            )== "true"
+        lines = get_ui_state(req, "server_dashboard", "lines", "100")
+        autoscroll = (get_ui_state(req, "server_dashboard", "autoscroll", "true")) == "true"
         try:
-            logic_filter, regex_filter = json.loads(get_ui_state(
-                        req, "server_dashboard", "filter_values", '["",""]'
-            ))
+            logic_filter, regex_filter = json.loads(
+                get_ui_state(req, "server_dashboard", "filter_values", '["",""]')
+            )
         except Exception as e:
             print(e)
             logic_filter, regex_filter = "", ""
 
-        return page_layout(title="WebServer Logs", content=\
-            Div(# page content
-                Div(# params panel
+        return page_layout(
+            title="WebServer Logs",
+            content=Div(  # page content
+                Div(  # params panel
                     Div(
                         Div(
                             H3(
@@ -68,9 +53,9 @@ def register(app, rt, prefix=""):
                                 style=(
                                     "color: white; margin: 0; white-space: nowrap; "
                                     "font-size: 16px; line-height: 1.5;"
-                                )
+                                ),
                             ),
-                            style="display: flex; align-items: baseline;"
+                            style="display: flex; align-items: baseline;",
                         ),
                         Div(
                             Span(
@@ -78,11 +63,13 @@ def register(app, rt, prefix=""):
                                 style=(
                                     "margin-right: 5px; white-space: nowrap; "
                                     "font-size: 14px; align-self: baseline;"
-                                )
+                                ),
                             ),
                             Select(
-                                *[Option(str(v), selected=(str(v) == lines))
-                                  for v in [50, 100, 1000]],
+                                *[
+                                    Option(str(v), selected=(str(v) == lines))
+                                    for v in [50, 100, 1000]
+                                ],
                                 value="50",
                                 id="lines",
                                 style=(
@@ -91,16 +78,16 @@ def register(app, rt, prefix=""):
                                     "width: fit-content; white-space: nowrap; "
                                     "box-sizing: content-box; border-radius: 6px; "
                                     "background: linear-gradient(135deg, "
-                                        "rgba(255,255,255,0.8) 0%, "
-                                        "rgba(230,240,255,0.6) 100%); "
+                                    "rgba(255,255,255,0.8) 0%, "
+                                    "rgba(230,240,255,0.6) 100%); "
                                     "border: 1px solid rgba(180,200,230,0.5); "
                                     "box-shadow: 0 1px 3px rgba(0,0,0,0.06), "
-                                        "inset 0 1px 0 rgba(255,255,255,0.7); "
+                                    "inset 0 1px 0 rgba(255,255,255,0.7); "
                                     "backdrop-filter: blur(1.5px); "
                                     "transition: box-shadow 0.15s, border 0.15s; "
                                     "text-align: center; text-align-last: center; "
                                     "outline: none; color: #4d0066;"
-                                )
+                                ),
                             ),
                             Input(
                                 type="checkbox",
@@ -111,9 +98,8 @@ def register(app, rt, prefix=""):
                             Span(
                                 "autoscroll",
                                 style=(
-                                    "white-space: nowrap; font-size: 14px; "
-                                    "align-self: baseline;"
-                                )
+                                    "white-space: nowrap; font-size: 14px; align-self: baseline;"
+                                ),
                             ),
                             Input(
                                 id="expand-textfield",
@@ -130,17 +116,18 @@ def register(app, rt, prefix=""):
                                     "padding: 0 6px; border: 1px solid rgba(180,200,230,0.5); "
                                     "border-radius: 6px; font-size: 13px; color: #4d0066; "
                                     "background: linear-gradient(135deg, "
-                                        "rgba(230,240,255,0.7) 0%, "
-                                        "rgba(200,220,255,0.6) 100%); "
+                                    "rgba(230,240,255,0.7) 0%, "
+                                    "rgba(200,220,255,0.6) 100%); "
                                     "box-shadow: 0 1px 3px rgba(0,0,0,0.06), "
-                                        "inset 0 1px 0 rgba(255,255,255,0.7); "
+                                    "inset 0 1px 0 rgba(255,255,255,0.7); "
                                     "backdrop-filter: blur(1.5px); outline: none; opacity: 0;"
                                 ),
                                 _oninput="""
                                     this.style.fontStyle = 'italic';
                                     this.style.color = 'black';
                                 """,
-                                _onkeydown=("""
+                                _onkeydown=(
+                                    """
                                     if (event.key === 'Enter') {
                                         try {
                                             if (!this.value) {
@@ -148,64 +135,74 @@ def register(app, rt, prefix=""):
                                                 return;
                                             }
                                             const regex_pattern = parseToRegex(this.value);
-                                            document.getElementById('regex-filter').value = regex_pattern;
+                                            document.getElementById('regex-filter').value =
+                                                regex_pattern;
                                             this.style.fontStyle = 'normal';
                                             this.style.color = '#4d0066';
-                                            let errorDiv = document.getElementById('regex-error-tooltip');
+                                            let errorDiv =
+                                                document.getElementById('regex-error-tooltip');
                                             if (errorDiv) errorDiv.remove();
                                         } catch (error) {
                                             document.getElementById('regex-filter').value = "";
                                             this.style.fontStyle = 'italic';
                                             this.style.color = 'red';
                                             // Format error tooltip
-                                            let errorDiv = document.getElementById('regex-error-tooltip');
+                                            let errorDiv =
+                                                document.getElementById('regex-error-tooltip');
                                             if (!errorDiv) {
                                                 errorDiv = document.createElement('div');
                                                 errorDiv.id = 'regex-error-tooltip';
                                                 errorDiv.style.position = 'absolute';
-                                                errorDiv.style.background = 'rgba(220, 50, 47, 0.75)';
-                                                errorDiv.style.color = '#fff1f1';  // soft off-white text
+                                                errorDiv.style.background =
+                                                    'rgba(220, 50, 47, 0.75)';
+                                                errorDiv.style.color =
+                                                    '#fff1f1';  // soft off-white text
                                                 errorDiv.style.padding = '10px 18px';
                                                 errorDiv.style.borderRadius = '10px';
                                                 errorDiv.style.fontSize = '13.5px';
                                                 errorDiv.style.zIndex = '1000';
                                                 errorDiv.style.transition = 'opacity 1s ease';
                                                 errorDiv.style.opacity = '1';
-                                                errorDiv.style.boxShadow = '0 1px 6px rgba(90,24,44,0.3)';
-                                                errorDiv.style.border = '1.5px solid rgba(220,50,47,0.85)';
-                                                errorDiv.style.backdropFilter = 'blur(3px) saturate(1.4)';
+                                                errorDiv.style.boxShadow =
+                                                    '0 1px 6px rgba(90,24,44,0.3)';
+                                                errorDiv.style.border =
+                                                    '1.5px solid rgba(220,50,47,0.85)';
+                                                errorDiv.style.backdropFilter =
+                                                    'blur(3px) saturate(1.4)';
                                                 errorDiv.style.letterSpacing = '0.01em';
                                                 errorDiv.style.fontWeight = '500';
-                                                errorDiv.style.textShadow = '0 1px 2px rgba(90,24,44,0.3)';
+                                                errorDiv.style.textShadow =
+                                                    '0 1px 2px rgba(90,24,44,0.3)';
                                                 var rect = this.getBoundingClientRect();
                                                 errorDiv.style.left = rect.left + 'px';
-                                                errorDiv.style.top = (rect.bottom + window.scrollY) + 'px';
+                                                errorDiv.style.top =
+                                                    (rect.bottom + window.scrollY) + 'px';
                                                 document.body.appendChild(errorDiv);
                                             }
-                                            errorDiv.textContent = error.message || error.toString();
+                                            errorDiv.textContent =
+                                                error.message || error.toString();
                                             errorDiv.style.opacity = '1';
                                             setTimeout(() => {
-                                              errorDiv.style.opacity = '0';
-                                              setTimeout(() => {
-                                                if (errorDiv.parentNode) {
-                                                    errorDiv.parentNode.removeChild(errorDiv);
-                                                }
-                                              }, 1000);
+                                                errorDiv.style.opacity = '0';
+                                                setTimeout(() => {
+                                                    if (errorDiv.parentNode) {
+                                                        errorDiv.parentNode.removeChild(errorDiv);
+                                                    }
+                                                }, 1000);
                                             }, 6000);
                                         }
                                     }
-                                """)
+                                """
+                                ),
                             ),
-                            Input(
-                                id="regex-filter",
-                                type="hidden",
-                                value=regex_filter
-                            ),
+                            Input(id="regex-filter", type="hidden", value=regex_filter),
                             Script("""// Caret at end position at load time
                                 setTimeout(function() {
                                     const input = document.getElementById('expand-textfield');
                                     if (input) {
-                                        input.selectionStart = input.selectionEnd = input.value.length;
+                                        input.selectionStart =
+                                            input.selectionEnd =
+                                                input.value.length;
                                     }
                                 }, 100);
                             """),
@@ -215,12 +212,16 @@ def register(app, rt, prefix=""):
                                     if (!expand_textfield_input.value ||
                                         expand_textfield_input.value.trim() === ""
                                     ) {
-                                        expand_textfield_input.title = "chained combo of AND(), OR() and NOT() operators over double-quoted substrings";
+                                        expand_textfield_input.title = (
+                                            "chained combo of AND(), OR() and NOT() operators " +
+                                            "over double-quoted substrings"
+                                        );
                                     } else {
                                         expand_textfield_input.title = expand_textfield_input.value;
                                     }
                                 }
-                                const expand_textfield_input = document.getElementById("expand-textfield");
+                                const expand_textfield_input =
+                                    document.getElementById("expand-textfield");
                                 // Set title on page load
                                 updateTitle();
                                 // Update title on input
@@ -268,35 +269,55 @@ def register(app, rt, prefix=""):
                                                     parenDepth++;
                                                     i += 4;
                                                     let args = parseRec();
-                                                    if (!args.length) throw new Error(
-                                                        'Operator "AND" requires at least one argument');
+                                                    if (!args.length) {
+                                                        throw new Error(
+                                                            'Operator "AND" requires ' +
+                                                            'at least one argument'
+                                                        );
+                                                    }
                                                     tokens.push({ op: 'AND', args });
                                                     expectArg = false;
                                                 } else if (expr.startsWith('OR(', i)) {
                                                     parenDepth++;
                                                     i += 3;
                                                     let args = parseRec();
-                                                    if (!args.length) throw new Error(
-                                                        'Operator "OR" requires at least one argument');
+                                                    if (!args.length) {
+                                                        throw new Error(
+                                                            'Operator "OR" requires ' +
+                                                            'at least one argument'
+                                                        );
+                                                    }
                                                     tokens.push({ op: 'OR', args });
                                                     expectArg = false;
                                                 } else if (expr.startsWith('NOT(', i)) {
                                                     parenDepth++;
                                                     i += 4;
                                                     let args = parseRec();
-                                                    if (args.length !== 1) throw new Error(
-                                                        'Operator "NOT" requires exactly one argument');
+                                                    if (args.length !== 1) {
+                                                        throw new Error(
+                                                            'Operator "NOT" requires ' +
+                                                            'exactly one argument'
+                                                        );
+                                                    }
                                                     tokens.push({ op: 'NOT', args });
                                                     expectArg = false;
                                                 } else if (expr[i] === ',') {
-                                                    if (expectArg) throw new Error(
-                                                        'Missing argument before comma at position ' + i);
+                                                    if (expectArg) {
+                                                        throw new Error(
+                                                            'Missing argument before ' +
+                                                            'comma at position ' + i
+                                                        );
+                                                    }
                                                     i++;
                                                     expectArg = true;
                                                 } else if (expr[i] === ')') {
                                                     parenDepth--;
-                                                    if (parenDepth < 0) throw new Error(
-                                                        'Unmatched closing parenthesis at position ' + i);
+                                                    if (parenDepth < 0) {
+                                                        throw new Error(
+                                                            'Unmatched closing parenthesis ' +
+                                                            'at position ' + i
+                                                        );
+                                                    }
                                                     i++;
                                                     return tokens;
                                                 } else if (expr[i] === '(') {
@@ -311,9 +332,18 @@ def register(app, rt, prefix=""):
                                             return tokens;
                                         }
                                         const result = parseRec();
-                                        if (parenDepth > 0) throw new Error('Unmatched opening parenthesis');
-                                        if (parenDepth < 0) throw new Error('Unmatched closing parenthesis');
-                                        if (i !== expr.length) throw new Error('Unexpected characters after parsing at position ' + i);
+                                        if (parenDepth > 0) {
+                                            throw new Error('Unmatched opening parenthesis');
+                                        }
+                                        if (parenDepth < 0) {
+                                            throw new Error('Unmatched closing parenthesis');
+                                        }
+                                        if (i !== expr.length) {
+                                            throw new Error(
+                                                'Unexpected characters after parsing ' +
+                                                'at position ' + i
+                                            );
+                                        }
                                         return result;
                                     }
 
@@ -329,8 +359,10 @@ def register(app, rt, prefix=""):
                                         if (node.op === 'AND') {
                                             if (node.args.length === 0) throw new Error(
                                                 'Operator "AND" requires at least one argument');
-                                            const notArgs = node.args.filter(a => a && a.op === 'NOT');
-                                            const posArgs = node.args.filter(a => !a || a.op !== 'NOT');
+                                            const notArgs =
+                                                node.args.filter(a => a && a.op === 'NOT');
+                                            const posArgs =
+                                                node.args.filter(a => !a || a.op !== 'NOT');
                                             let parts = [];
                                             for (const na of notArgs) {
                                                 let inner = na.args[0];
@@ -348,7 +380,11 @@ def register(app, rt, prefix=""):
                                         if (node.op === 'OR') {
                                             if (node.args.length === 0) throw new Error(
                                                 'Operator "OR" requires at least one argument');
-                                            return `(?:${node.args.map(arg => toRegex(arg)).join('|')})`;
+                                            return (
+                                                '(?:' +
+                                                node.args.map(arg => toRegex(arg)).join('|') +
+                                                ')'
+                                            );
                                         }
                                         if (node.op === 'NOT') {
                                             if (node.args.length !== 1) throw new Error(
@@ -370,7 +406,9 @@ def register(app, rt, prefix=""):
                                         pattern = toRegex(parsed[0]);
                                     } else if (parsed.length > 1) {
                                         pattern = toRegex({ op: 'AND', args: parsed });
-                                    } else if (parsed.length === 1 && typeof parsed[0] === 'string') {
+                                    } else if (
+                                        parsed.length === 1 && typeof parsed[0] === 'string'
+                                    ) {
                                         pattern = toRegex(parsed[0]);
                                     } else {
                                         throw new Error('Empty expression');
@@ -416,7 +454,7 @@ def register(app, rt, prefix=""):
                                 _onclick="expandTextfield();",
                                 _onkeydown=(
                                     "if(event.key === ' ' || event.key === 'Spacebar') { "
-                                        "event.preventDefault(); this.click(); }"
+                                    "event.preventDefault(); this.click(); }"
                                 ),
                             ),
                             Script("""// expandTextfield
@@ -430,7 +468,8 @@ def register(app, rt, prefix=""):
                                         input.style.transition = 'none';
 
                                         if (input.style.width !== '0px' && input.style.width) {
-                                            const paramsPanel = document.getElementById('params_panel');
+                                            const paramsPanel =
+                                                document.getElementById('params_panel');
                                             const parentOfParams = paramsPanel.parentElement;
                                             const availableWidth = Math.max(
                                                 1,
@@ -458,9 +497,13 @@ def register(app, rt, prefix=""):
                                         input.style.opacity = '1';
                                         input.focus();
                                         expandButton.textContent = '-';
-                                        if (typeof loadLogs === "function" && input.value.trim() > "") {
+                                        if (
+                                            typeof loadLogs === "function" &&
+                                            input.value.trim() > ""
+                                        ) {
                                             // if the function has already been page-loaded
-                                            // (otherwise delegated to DOMContentLoaded further down)
+                                            // (otherwise delegated to DOMContentLoaded
+                                            //  further down)
                                             loadLogs();
                                         }
                                     } else {
@@ -484,22 +527,23 @@ def register(app, rt, prefix=""):
                                 "align-items: baseline; "
                                 "padding: 12px 16px; "
                                 "background: linear-gradient(135deg, "
-                                    "rgba(255,255,255,0.1) 0%, "
-                                    "rgba(248,249,250,0.1) 100%); "
+                                "rgba(255,255,255,0.1) 0%, "
+                                "rgba(248,249,250,0.1) 100%); "
                                 "border: 1px solid rgba(222,226,230,0.5); "
                                 "border-radius: 10px; "
                                 "box-shadow: 0 2px 8px rgba(0,0,0,0.08), "
-                                    "inset 0 1px 0 rgba(255,255,255,0.8); "
+                                "inset 0 1px 0 rgba(255,255,255,0.8); "
                                 "color: white; "
                                 "margin-left: auto;"
-                            )
+                            ),
                         ),
                         Script("""// Memorize the user-selected params as cookies
                             // Helper function to set a cookie
                             function setCookie(name, value, days = 365) {
                                 // 50 years in the future
-                                const expires = new Date(Date.now() + 50*365*24*60*60*1000).toUTCString();
-                                    document.cookie = `${name}=${value}; expires=${expires}; path=/`;
+                                const expires =
+                                    new Date(Date.now() + 50*365*24*60*60*1000).toUTCString();
+                                document.cookie = `${name}=${value}; expires=${expires}; path=/`;
                             }
                             const COOKIE_PREFIX = "server_dashboard:";
 
@@ -532,7 +576,8 @@ def register(app, rt, prefix=""):
                             // update 1 cookie for both textfields
                             const regexFilter = document.getElementById("regex-filter");
                             const observer = new MutationObserver(() => {
-                                const regexValue = document.getElementById("regex-filter").value.trim();
+                                const regexValue =
+                                    document.getElementById("regex-filter").value.trim();
                                 var logicValue = "";
                                 if (regexValue > "") {
                                     logicValue = document.getElementById("expand-textfield").value;
@@ -541,7 +586,8 @@ def register(app, rt, prefix=""):
                                 setCookie(COOKIE_PREFIX + "filter_values", tupleValue);
                                 loadLogs();
                             });
-                            observer.observe(regexFilter, { attributes: true, attributeFilter: ['value'] });
+                            observer.observe(regexFilter,
+                                             { attributes: true, attributeFilter: ['value'] });
 
                             /* *************************************
                             * For the textfield (expand-textfield) *
@@ -566,18 +612,16 @@ def register(app, rt, prefix=""):
                                 }
                             }}
                         """),
-                        style=(
-                            "display: flex; align-items: baseline; margin-bottom: 8px;"
-                        )
+                        style=("display: flex; align-items: baseline; margin-bottom: 8px;"),
                     )
                 ),
-                Div(# List header
+                Div(  # List header
                     Span(
                         "method",
                         style=(
                             "padding-left: 20px; display: inline-block; "
                             "text-align: center; width: 110px; flex: 0 0 110px;"
-                        )
+                        ),
                     ),
                     Span("|", style="flex: 0 0 auto;"),
                     Span(
@@ -585,7 +629,7 @@ def register(app, rt, prefix=""):
                         style=(
                             "display: inline-block; "
                             "text-align: center; width: 192px; flex: 0 0 192px;"
-                        )
+                        ),
                     ),
                     Span("|", style="flex: 0 0 auto;"),
                     Span(
@@ -593,15 +637,14 @@ def register(app, rt, prefix=""):
                         style=(
                             "display: inline-block; "
                             "text-align: center; width: 124px; flex: 0 0 124px;"
-                        )
+                        ),
                     ),
                     Span("|", style="flex: 0 0 auto;"),
                     Span(
                         "url",
                         style=(
-                            "display: inline-block; text-align: center; "
-                            "flex: 1 1 0; min-width: 0;"
-                        )
+                            "display: inline-block; text-align: center; flex: 1 1 0; min-width: 0;"
+                        ),
                     ),
                     cls="glass-engraved",
                     style=(
@@ -610,28 +653,28 @@ def register(app, rt, prefix=""):
                         "align-items: baseline; "
                         "margin-bottom: 4px; padding: 0px 6px; "
                         "background: linear-gradient(135deg, "
-                            "rgba(77,0,102,0.2) 0%, "
-                            "rgba(77,0,102,0.7) 100%); "
+                        "rgba(77,0,102,0.2) 0%, "
+                        "rgba(77,0,102,0.7) 100%); "
                         "border: 1px solid rgba(222,226,230,0.5); "
                         "border-radius: 6px; "
                         "box-shadow: 0 2px 8px rgba(77,0,102,0.3), "
-                            "inset 0 1px 0 rgba(77,0,102,0.95);"
-                    )
+                        "inset 0 1px 0 rgba(77,0,102,0.95);"
+                    ),
                 ),
-                Div(# Actual list
+                Div(  # Actual list
                     id="log-container",
-                    cls="wavy-items-list", # for anim script selector
+                    cls="wavy-items-list",  # for anim script selector
                     style=(
-                        "height: calc(100vh - 200px); " # window height minus header & footer
+                        "height: calc(100vh - 200px); "  # window height minus header & footer
                         "overflow-y: auto; padding: 8px 16px 4px 16px; "
                         "background: linear-gradient(135deg, "
-                            "rgba(255,255,255,0.05) 0%, "
-                            "rgba(248,249,250,0.05) 100%); "
+                        "rgba(255,255,255,0.05) 0%, "
+                        "rgba(248,249,250,0.05) 100%); "
                         "border: 1px solid rgba(222,226,230,0.6); "
                         "border-radius: 8px; "
                         "box-shadow: inset 0 2px 4px rgba(0,0,0,0.05), "
-                            "0 1px 3px rgba(0,0,0,0.1); "
-                    )
+                        "0 1px 3px rgba(0,0,0,0.1); "
+                    ),
                 ),
                 Script("""// Capping the total items count
                     (function() {
@@ -659,7 +702,10 @@ def register(app, rt, prefix=""):
                         // Observe for new children in the log-container
                         var observer = new MutationObserver(function(mutationsList) {
                             for (var mutation of mutationsList) {
-                                if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
+                                if (
+                                    mutation.type === 'childList' &&
+                                    mutation.addedNodes.length > 0
+                                ) {
                                     trimLogItems();
                                 }
                             }
@@ -697,7 +743,8 @@ def register(app, rt, prefix=""):
 
                     observeContainer();
                 """),
-                Script("""// Append log item on WebSocket message receive
+                Script(
+                    """// Append log item on WebSocket message receive
                     const logContainer = document.getElementById("log-container");
                     let ws;
 
@@ -733,7 +780,8 @@ def register(app, rt, prefix=""):
                         ws.onmessage = (event) => {
                             if (document.getElementById('expand-button').textContent === '-') {
                                 // apply regex filter
-                                const regex_filter_str = document.getElementById('regex-filter').value;
+                                const regex_filter_str =
+                                    document.getElementById('regex-filter').value;
                                 if (regex_filter_str > "") {
                                     // extract "raw log" string from received div element
                                     const parser = new DOMParser();
@@ -785,8 +833,10 @@ def register(app, rt, prefix=""):
                     //        }
                     //    }
                     // });
-                """.replace("{prefix}", prefix+"/" if prefix > "" else "")),
-                Script("""// Cold start of logs list at page load time
+                """.replace("{prefix}", prefix + "/" if prefix > "" else "")
+                ),
+                Script(
+                    """// Cold start of logs list at page load time
                     function loadLogs() {
                         const server_status_circle = document.getElementById('status-circle');
                         server_status_circle.classList.add('spinning');
@@ -847,14 +897,14 @@ def register(app, rt, prefix=""):
                             });
                         }
                     });
-                """.replace("{prefix}", prefix+"/" if prefix > "" else "")),
+                """.replace("{prefix}", prefix + "/" if prefix > "" else "")
+                ),
                 style=(
                     "background: rgba(248, 249, 250, 0.3); padding: 8px 16px 4px 16px; "
                     "border-radius: 12px; "
                     "box-shadow: 0 4px 12px rgba(0,0,0,0.1), "
-                        "inset 0 1px 0 rgba(255,255,255,0.6); "
+                    "inset 0 1px 0 rgba(255,255,255,0.6); "
                     "border: 1px solid rgba(222,226,230,0.4);"
-                )
-            )
+                ),
+            ),
         )
-

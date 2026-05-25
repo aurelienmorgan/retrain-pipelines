@@ -1,55 +1,60 @@
-
-import os
-import sys
-import json
-
-import stat
-import regex
-import shutil
-import logging
-import tempfile
-import itertools
-import subprocess
 import importlib.util
-from typing import Any
+import itertools
+import json
+import logging
+import os
+import stat
+import subprocess
+import sys
+import tempfile
+from collections.abc import Callable
+from datetime import datetime, timezone
+from functools import lru_cache
 from os import _Environ
 from textwrap import dedent
-from functools import lru_cache
+from typing import Any
+
+import regex
 from dateutil.parser import isoparse
-from datetime import datetime, timezone
 from PIL import Image, ImageDraw, ImageFont
+from PIL.ImageFont import FreeTypeFont
+from PIL.ImageFont import ImageFont as PILImageFont
 
 # conditional import of the "torch" package
 # required for some callables in hp_dict
 # (but not necessarily installed
 #  on virtual env that do not require it)
 if importlib.util.find_spec("torch") is not None:
-    import torch
+    import torch  # type: ignore[import-not-found] # noqa: F401
 
 from contextlib import contextmanager
 
 logger = logging.getLogger(__name__)
 
 
-def strip_ansi_escape_codes(text):
+def strip_ansi_escape_codes(text: str) -> str:
     # Remove ANSI escape codes from text
-    ansi_escape = regex.compile(r'\x1b\[[0-9;]*m')
-    return ansi_escape.sub('', text)
+    ansi_escape = regex.compile(r"\x1b\[[0-9;]*m")
+    return ansi_escape.sub("", text)
 
 
-def rgb_to_rgba(rgb_tuple, alpha=1):
-    color_str = (
-        f"rgba({rgb_tuple[0]},{rgb_tuple[1]},{rgb_tuple[2]},{alpha})"
-    )
+def rgb_to_rgba(
+    rgb_tuple: tuple[int, int, int],
+    alpha: float = 1,
+) -> str:
+    color_str = f"rgba({rgb_tuple[0]},{rgb_tuple[1]},{rgb_tuple[2]},{alpha})"
     return color_str
 
 
-def hex_to_rgba(hex_color, alpha=1):
-    hex_color = hex_color.lstrip('#')
+def hex_to_rgba(
+    hex_color: str,
+    alpha: float = 1,
+) -> str:
+    hex_color = hex_color.lstrip("#")
     if len(hex_color) == 3:
         # Convert shorthand hex to full form, e.g., "2a7" → "22aa77"
-        hex_color = ''.join([c*2 for c in hex_color])
-    r, g, b = [int(hex_color[i:i+2], 16) for i in (0, 2, 4)]
+        hex_color = "".join([c * 2 for c in hex_color])
+    r, g, b = [int(hex_color[i : i + 2], 16) for i in (0, 2, 4)]
     return f"rgba({r},{g},{b},{alpha})"
 
 
@@ -61,48 +66,55 @@ def parse_datetime(value: str) -> datetime:
 
 
 @lru_cache
-def get_text_pixel_width(text, font_name, font_size):
-    img = Image.new('RGB', (1, 1))
+def get_text_pixel_width(
+    text: str,
+    font_name: str,
+    font_size: int,
+) -> int:
+    img = Image.new("RGB", (1, 1))
     draw = ImageDraw.Draw(img)
 
     try:
-       font = ImageFont.truetype(font_name, font_size)
-    except:
-       font = ImageFont.load_default()
+        font: FreeTypeFont | PILImageFont = ImageFont.truetype(font_name, font_size)
+    except Exception:
+        font = ImageFont.load_default()
 
     bbox = draw.textbbox((0, 0), text, font=font)
-    return bbox[2] - bbox[0]
+    return int(bbox[2] - bbox[0])
 
 
 def _load_and_get_function(
-    module_path:str,
-    qualified_module_name:str,
-    function_name: str
-) -> callable:
+    module_path: str, qualified_module_name: str, function_name: str
+) -> Callable[..., Any]:
     """
-    Loads a python module,
-    which can be user-provided
-    (path given through flow
+    Load a python module, and return its "get_html" function.
+
+    That python module can be user-provided
+    (path given through the pipeline
      "pipeline_card_module_dir" parameter)
-    and returns its "get_html" function.
 
-    Params:
-        - module_path (str):
-            the full path to the source
-            python module (.py) file
-        - qualified_module_name (str):
-            the module full qualified name
-            to be set.
-        - function_name (str):
-            the (non-qualified/short)*
-            function name.
+    Parameters
+    ----------
+    module_path : str
+        the full path to the source
+        python module (.py) file
+    qualified_module_name : str
+        the module full qualified name
+        to be set.
+    function_name : str
+        the (non-qualified/short)*
+        function name.
 
-    Results:
-        - (callable)
+    Returns
+    -------
+    callable
     """
     # Load the module from the file path
-    spec = importlib.util.spec_from_file_location(
-                qualified_module_name, module_path)
+    spec = importlib.util.spec_from_file_location(qualified_module_name, module_path)
+    if spec is None:
+        raise ImportError(f"Cannot load spec for module '{qualified_module_name}'")
+    if spec.loader is None:
+        raise ImportError(f"Module '{qualified_module_name}' has no loader")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
@@ -111,8 +123,8 @@ def _load_and_get_function(
         function = getattr(module, function_name)
     else:
         raise AttributeError(
-            f"Function 'get_html' not found" +
-            f"in module '{qualified_module_name}'")
+            "Function 'get_html' not found" + f"in module '{qualified_module_name}'"
+        )
 
     # Create a proxy module
     proxy_module = type(sys)(qualified_module_name)
@@ -128,121 +140,107 @@ def _load_and_get_function(
     return function
 
 
-def get_get_dataset_readme_content(
-    pipeline_card_module_dir: str
-)  -> callable:
+def get_get_dataset_readme_content(pipeline_card_module_dir: str) -> Callable[..., Any]:
     """
-    Loads the "dataset_readme" module,
-    which can be user-provided
-    (path given through flow
-     "pipeline_card_module_dir" parameter)
-    and returns its "get_dataset_readme_content" function.
-    """
-    pipeline_card_module_path = \
-        os.path.realpath(os.path.join(pipeline_card_module_dir,
-                                      "dataset_readme.py"))
+    Load the "dataset_readme" module, return its "get_dataset_readme_content" function.
 
-    get_dataset_readme_content = \
-        _load_and_get_function(
-            pipeline_card_module_path,
-            f"retrain_pipelines.pipeline_card."+
-                f"{os.getenv('retrain_pipeline_type')}.dataset_readme",
-            "get_dataset_readme_content"
-        )
+    That python module can be user-provided
+    (path given through the pipeline
+     "pipeline_card_module_dir" parameter)
+    """
+    pipeline_card_module_path = os.path.realpath(
+        os.path.join(pipeline_card_module_dir, "dataset_readme.py")
+    )
+
+    get_dataset_readme_content = _load_and_get_function(
+        pipeline_card_module_path,
+        "retrain_pipelines.pipeline_card." + f"{os.getenv('retrain_pipeline_type')}.dataset_readme",
+        "get_dataset_readme_content",
+    )
 
     return get_dataset_readme_content
 
 
-def get_get_model_readme_content(
-    pipeline_card_module_dir: str
-)  -> callable:
+def get_get_model_readme_content(pipeline_card_module_dir: str) -> Callable[..., Any]:
     """
-    Loads the "model_readme" module,
-    which can be user-provided
-    (path given through flow
-     "pipeline_card_module_dir" parameter)
-    and returns its "get_model_readme_content" function.
-    """
-    pipeline_card_module_path = \
-        os.path.realpath(os.path.join(pipeline_card_module_dir,
-                                      "model_readme.py"))
+    Load the "model_readme" module, return its "get_model_readme_content" function.
 
-    get_model_readme_content = \
-        _load_and_get_function(
-            pipeline_card_module_path,
-            f"retrain_pipelines.pipeline_card."+
-                f"{os.getenv('retrain_pipeline_type')}.dataset_readme",
-            "get_model_readme_content"
-        )
+    That python module can be user-provided
+    (path given through the pipeline
+     "pipeline_card_module_dir" parameter)
+    """
+    pipeline_card_module_path = os.path.realpath(
+        os.path.join(pipeline_card_module_dir, "model_readme.py")
+    )
+
+    get_model_readme_content = _load_and_get_function(
+        pipeline_card_module_path,
+        "retrain_pipelines.pipeline_card." + f"{os.getenv('retrain_pipeline_type')}.dataset_readme",
+        "get_model_readme_content",
+    )
 
     return get_model_readme_content
 
 
-def get_get_html(
-    pipeline_card_module_dir: str
-) -> callable:
+def get_get_html(pipeline_card_module_dir: str) -> Callable[..., Any]:
     """
-    Loads the "pipeline_card" module,
-    which can be user-provided
-    (path given through flow
-     "pipeline_card_module_dir" parameter)
-    and returns its "get_html" function.
-    """
-    pipeline_card_module_path = \
-        os.path.realpath(os.path.join(pipeline_card_module_dir,
-                                      "pipeline_card.py"))
+    Load the "pipeline_card" module, return its "get_html" function.
 
-    get_html = \
-        _load_and_get_function(
-            pipeline_card_module_path,
-            f"retrain_pipelines.pipeline_card."+
-                f"{os.getenv('retrain_pipeline_type')}.pipeline_card",
-            "get_html"
-        )
+    That python module can be user-provided
+    (path given through the pipeline
+     "pipeline_card_module_dir" parameter)
+    """
+    pipeline_card_module_path = os.path.realpath(
+        os.path.join(pipeline_card_module_dir, "pipeline_card.py")
+    )
+
+    get_html = _load_and_get_function(
+        pipeline_card_module_path,
+        "retrain_pipelines.pipeline_card." + f"{os.getenv('retrain_pipeline_type')}.pipeline_card",
+        "get_html",
+    )
 
     return get_html
 
 
-def get_preprocess_data_fct(
-    preprocess_module_dir: str
-) -> callable:
+def get_preprocess_data_fct(preprocess_module_dir: str) -> Callable[..., Any]:
     """
-    Loads the "preprocessing" module,
-    which can be user-provided
-    (path given through flow
-     "preprocess_module_dir" parameter).
-    and returns its "preprocess_data_fct"
-    function.
-    """
-    preprocessing_module_path = \
-        os.path.realpath(os.path.join(preprocess_module_dir,
-                                      "preprocessing.py"))
+    Load the "preprocessing" module, return its "preprocess_data_fct" function.
 
-    preprocess_data_fct = \
-        _load_and_get_function(
-            preprocessing_module_path,
-            f"retrain_pipelines.model."+
-                f"{os.getenv('retrain_pipeline_type')}.preprocessing",
-            "preprocess_data_fct"
-        )
+    That python module can be user-provided
+    (path given through the pipeline
+     "preprocess_module_dir" parameter).
+    """
+    preprocessing_module_path = os.path.realpath(
+        os.path.join(preprocess_module_dir, "preprocessing.py")
+    )
+
+    preprocess_data_fct = _load_and_get_function(
+        preprocessing_module_path,
+        "retrain_pipelines.model." + f"{os.getenv('retrain_pipeline_type')}.preprocessing",
+        "preprocess_data_fct",
+    )
 
     return preprocess_data_fct
 
 
 def _create_requirements_from_conda(
     target_dir: str,
-    exclude: list = []
+    exclude: list[str] | None = None,
 ):
     """
-    Params:
-        - target_dir (str):
-            Where the "requirements.txt" file
-            shall be placed.
-        - exclude (list[str]):
-            Regex patterns for names of
-            packages to be excluded
-            from the resulting file
-            if present in the active environement.
+    Create the requirments.txt file.
+
+    Parameters
+    ----------
+    target_dir : str
+        Where the "requirements.txt" file
+        shall be placed.
+    exclude : list[str]
+        Regex patterns for names of
+        packages to be excluded
+        from the resulting file
+        if present in the active environement.
     """
     """
     Tried other (more straightforward) ways to do it,
@@ -260,8 +258,10 @@ def _create_requirements_from_conda(
     # the ones installed via "conda"
     # and the ones installed via "pip"
     result = subprocess.run(
-        ['conda', 'list', '-n', os.path.basename(sys.prefix), '--export'],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        ["conda", "list", "-n", os.path.basename(sys.prefix), "--export"],
+        capture_output=True,
+        text=True,
+    )
 
     if result.returncode != 0:
         logger.debug(f"Error running command: {result.stderr}")
@@ -272,8 +272,8 @@ def _create_requirements_from_conda(
     conda_env_packages = {}
 
     for line in lines:
-        if '=' in line:
-            line_splits = line.split('=')
+        if "=" in line:
+            line_splits = line.split("=")
             package_name = line_splits[0]
             if "pytorch" == package_name:
                 package_name = "torch"
@@ -289,29 +289,26 @@ def _create_requirements_from_conda(
     # we need to truncate long version-numbering
     # such as "1.13.1.post200" or "0.11.1b20240718"
     pip_freeze = subprocess.run(
-        [sys.executable, "-m", "pip", "list", "--format", "freeze"],
-        capture_output=True, text=True
+        [sys.executable, "-m", "pip", "list", "--format", "freeze"], capture_output=True, text=True
     )
     pip_freeze_output_lines = pip_freeze.stdout.splitlines()
 
     # fix the package version-numbering issue
     updated_packages = []
+    exclude = exclude or []
     for line in pip_freeze_output_lines:
-        if '==' in line:
-            pkg_name, pip_version = line.split('==')
-            if any(regex.fullmatch(pattern, pkg_name)
-                   for pattern in exclude
-            ):
-                logger.info(f"excluding package '{pkg_name}' "+
-                            f"from generated requirements.txt")
+        if "==" in line:
+            pkg_name, pip_version = line.split("==")
+            if any(regex.fullmatch(pattern, pkg_name) for pattern in exclude):
+                logger.info(f"excluding package '{pkg_name}' " + "from generated requirements.txt")
                 continue
             if pkg_name in conda_env_packages:
                 # package-name present in both conda and pip lists
                 conda_version = conda_env_packages[pkg_name]
-                
+
                 # Extract major and minor versions for comparison
-                pip_major_minor = '.'.join(pip_version.split('.')[:2])
-                conda_major_minor = '.'.join(conda_version.split('.')[:2])
+                pip_major_minor = ".".join(pip_version.split(".")[:2])
+                conda_major_minor = ".".join(conda_version.split(".")[:2])
 
                 # Swap versions if both major and minor versions match
                 if pip_major_minor == conda_major_minor:
@@ -325,100 +322,104 @@ def _create_requirements_from_conda(
     ######################
     #  requirements.txt  #
     ######################
-    with open(os.path.join(target_dir, 'requirements.txt'),
-              'w') as f:
+    with open(os.path.join(target_dir, "requirements.txt"), "w") as f:
         f.write("\n".join(updated_packages))
     ######################
 
+
 def _create_requirements_from_pip(
     target_dir: str,
-    exclude: list = []
+    exclude: list[str] | None = None,
 ):
     """
-    Params:
-        - target_dir (str):
-            Where the "requirements.txt" file
-            shall be placed.
-        - exclude (list[str]):
-            Regex patterns for names of
-            packages to be excluded
-            from the resulting file
-            if present in the active environement.
+    Create the requirments.txt file.
+
+    Parameters
+    ----------
+    target_dir : str
+        Where the "requirements.txt" file
+        shall be placed.
+    exclude : list[str]
+        Regex patterns for names of
+        packages to be excluded
+        from the resulting file
+        if present in the active environement.
     """
     python_executable = sys.executable
     command = [python_executable, "-m", "pip", "freeze"]
-    result = subprocess.run(
-        command, capture_output=True, text=True)
+    result = subprocess.run(command, capture_output=True, text=True)
     entries = result.stdout.splitlines()
+    exclude = exclude or []
     filtered_entries = [
-        entry for entry in entries
-        if not any(regex.fullmatch(pattern,
-                                   regex.split(r'(==| @ )',
-                                   entry)[0])
-                   for pattern in exclude)
+        entry
+        for entry in entries
+        if not any(
+            regex.fullmatch(pattern, regex.split(r"(==| @ )", entry)[0]) for pattern in exclude
+        )
     ]
-    with open(os.path.join(target_dir, 'requirements.txt')
-              , 'w') as f:
-        f.write('\n'.join(filtered_entries) + '\n')
+    with open(os.path.join(target_dir, "requirements.txt"), "w") as f:
+        f.write("\n".join(filtered_entries) + "\n")
+
 
 def create_requirements(
     target_dir: str,
-    exclude: list = []
+    exclude: list[str] | None = None,
 ):
     """
-    Params:
-        - target_dir (str):
-            Where the "requirements.txt" file
-            shall be placed.
-        - exclude (list[str]):
-            Regex patterns for names of
-            packages to be excluded
-            from the resulting file
-            if present in the active environement.
-    """
+    Create the requirments.txt file.
 
+    Parameters
+    ----------
+    target_dir : str
+        Where the "requirements.txt" file
+        shall be placed.
+    exclude : list[str]
+        Regex patterns for names of
+        packages to be excluded
+        from the resulting file
+        if present in the active environement.
+    """
     # Check for Conda environment
     if is_conda_env():
-        _create_requirements_from_conda(
-            target_dir, exclude)
+        _create_requirements_from_conda(target_dir, exclude)
     else:
-        _create_requirements_from_pip(
-            target_dir, exclude)
+        _create_requirements_from_pip(target_dir, exclude)
 
 
-def _dict_list_get_combinations(
-    param_dict: dict
-) -> list:
+def _dict_list_get_combinations(param_dict: dict) -> list:
     """
-    Returns list of dicts, where
-    each dict represents one combination
+    Return list of dicts.
+
+    Each of those dicts represents one combination
     of sets of key/value.
 
-    Params:
-        - param_dict (dict):
-            dictionnary whose values
-            all are lists (of various length)
+    Parameters
+    ----------
+    param_dict : dict
+        dictionnary whose values
+        all are lists (of various length)
 
-    Results:
-        -list[dict]:
-            all possible combinations of
-            dicts with key/value possible
-            (where all keys are preserved).
+    Returns
+    -------
+    list[dict]
+        all possible combinations of
+        dicts with key/value possible
+        (where all keys are preserved).
 
-    Example usage:
-        {"a": [1, 2], "b": [3]}
-        return the folowwing :
-        [
-            {"a": 1, "b": 3},
-            {"a": 2, "b": 3}
-        ]
+    Examples
+    --------
+    >>> _dict_list_get_combinations({"a": [1, 2], "b": [3]})
+    ... # return the folowwing :
+    ... [
+    ...     {"a": 1, "b": 3},
+    ...     {"a": 2, "b": 3}
+    ... ]
     """
-
     # Recursively generate combinations
-    keys, values = zip(*param_dict.items())
+    keys, values = zip(*param_dict.items(), strict=False)
     sub_combinations = []
     for combination in itertools.product(*values):
-        combo_dict = dict(zip(keys, combination))
+        combo_dict = dict(zip(keys, combination, strict=False))
         # Evaluate 'optimizer_fn' and/or 'scheduler_fn'
         # if it exists in the current dictionary
         if "optimizer_fn" in combo_dict:
@@ -428,55 +429,56 @@ def _dict_list_get_combinations(
         sub_combinations.append(combo_dict)
     return sub_combinations
 
-def dict_dict_list_get_all_combinations(
-    nested_dict: dict
-) -> list:
+
+def dict_dict_list_get_all_combinations(nested_dict: dict) -> list:
     """
-    Returns list of dict (of nested dict), where
-    each dict represents one combination
+    Return list of dict (of nested dict).
+
+    Each of those dicts represents one combination
     of sets of key/key/value.
 
-    Params:
-        -nested_dict (dict):
-            1-level nested dictionary
-            where nested dictionaries
-            are of the form "dict of list".
+    Parameters
+    ----------
+    nested_dict : dict
+        1-level nested dictionary
+        where nested dictionaries
+        are of the form "dict of list".
 
-    Results:
-        - list[dict[dict]]:
-            all possible combinations of
-            dicts with key/key/value possible
-            (where all keys are preserved).
+    Returns
+    -------
+    list[dict[dict]]
+        all possible combinations of
+        dicts with key/key/value possible
+        (where all keys are preserved).
 
-    Example usage:
-        {"AA": {"a": [1, 2], "b": [3]}, "BB" {"d": [4]}
-        return the folowwing :
-        [
-            {"AA": {"a": 1, "b": 3}, "BB" {"d": 4},
-            {"AA": {"a": 2, "b": 3}, "BB" {"d": 4}
-        ]
+    Examples
+    --------
+    >>> dict_dict_list_get_all_combinations(
+    ...     {"AA": {"a": [1, 2], "b": [3]}, "BB" {"d": [4]}
+    ... )
+    ... # return the folowwing :
+    ... [
+    ...     {"AA": {"a": 1, "b": 3}, "BB" {"d": 4},
+    ...     {"AA": {"a": 2, "b": 3}, "BB" {"d": 4}
+    ... ]
     """
-
     # Generate combinations for each sub-dictionary
-    sub_combinations = {key: _dict_list_get_combinations(value)
-                        for key, value in nested_dict.items()}
+    sub_combinations = {
+        key: _dict_list_get_combinations(value) for key, value in nested_dict.items()
+    }
     # Cartesian product of the combinations of the sub-dictionaries
     all_combinations = [
-        {key: combo
-         for key, combo in zip(sub_combinations.keys(), value)}
+        {key: combo for key, combo in zip(sub_combinations.keys(), value, strict=False)}
         for value in itertools.product(*sub_combinations.values())
     ]
 
     return all_combinations
 
 
-def flatten_dict(
-    dict_: dict,
-    callable_to_name: bool = False,
-    parent_key: str = ''
-):
+def flatten_dict(dict_: dict, callable_to_name: bool = False, parent_key: str = ""):
     """
     Recursive flatten of nested dictionnaries.
+
     Joins keys with "_" separator.
 
     If callable_to_name is True,
@@ -489,24 +491,22 @@ def flatten_dict(
           {"AA_a0": 1, "AA_a1": 2,
            "BB_b0": 0, "BB_b1": 4, "BB_b2": 10.0}
     """
-
     items = {}
     for k, v in dict_.items():
         new_key = f"{parent_key}_{k}" if parent_key else k
         if isinstance(v, dict):
-            items.update(
-                flatten_dict(v, callable_to_name, new_key))
+            items.update(flatten_dict(v, callable_to_name, new_key))
         else:
             if callable_to_name:
                 if callable(v):
                     v = v.__name__
                 elif isinstance(v, list):
-                    v = [eval(elmt).__name__
-                         if (
-                            isinstance(elmt, str) and
-                            callable(eval(elmt))
-                         ) else elmt
-                         for elmt in v]
+                    v = [
+                        eval(elmt).__name__
+                        if (isinstance(elmt, str) and callable(eval(elmt)))
+                        else elmt
+                        for elmt in v
+                    ]
             items[new_key] = v
 
     return items
@@ -516,33 +516,32 @@ def system_has_conda() -> bool:
     try:
         # Try to run 'conda --version'
         subprocess.run(
-            ['conda', '--version'], check=True,
-            stderr=subprocess.PIPE, stdout=subprocess.PIPE,
-            text=True
+            ["conda", "--version"],
+            check=True,
+            capture_output=True,
+            text=True,
         )
         return True  # 'conda' is present
-    except:
+    except Exception:
         # FileNotFoundError or subprocess.CalledProcessError
         # or whatever if the above fails (for whatever reason)
         return False  # 'conda' is absent
 
 
 def is_conda_env() -> bool:
-    """
-    Whether or not the current python environment
-    is a conda virtual one.
-    """
-    conda_prefix_set = 'CONDA_PREFIX' in os.environ
+    """Return whether current python environment is a conda virtual one."""
+    conda_env = os.environ.get("CONDA_PREFIX")
 
-    conda_env = os.environ.get('CONDA_PREFIX', '')
-    sys_prefix_is_conda = conda_env and sys.prefix.startswith(conda_env)
-    
-    return conda_prefix_set and sys_prefix_is_conda
+    if not conda_env:
+        return False
+
+    return sys.prefix.startswith(conda_env)
 
 
 def venv_as_conda(venv_path, conda_env_name):
     """
-    Duplicate current venv as a conda env
+    Duplicate current venv as a conda env.
+
     (typical use case is MLserver conda.pack
      on the current (non-conda) virtual environment).
     """
@@ -551,18 +550,23 @@ def venv_as_conda(venv_path, conda_env_name):
     """
 
     # retrieve python version
-    python_executable = os.path.join(venv_path, 'bin', 'python')
-    python_version = subprocess.check_output(
-        [python_executable, '--version']).decode().strip().split()[1]
+    python_executable = os.path.join(venv_path, "bin", "python")
+    python_version = (
+        subprocess.check_output([python_executable, "--version"]).decode().strip().split()[1]
+    )
     # create new conda env
-    subprocess.run(['conda', 'create', '-n', conda_env_name,
-                    f'python={python_version}', '--yes'], check=True)
+    subprocess.run(
+        ["conda", "create", "-n", conda_env_name, f"python={python_version}", "--yes"], check=True
+    )
     # list dependencies
-    requirements_path = os.path.join(tempfile.gettempdir(), 'requirements.txt')
+    requirements_path = os.path.join(tempfile.gettempdir(), "requirements.txt")
     # ~/venv_root/metaflow_venv/bin/pip freeze
     # /home/organization/miniforge3/envs/_metaflow_venv/bin/pip freeze
-    subprocess.run([os.path.join(venv_path, 'bin', 'pip'), 'freeze'],
-                   stdout=open(requirements_path, 'w'), check=True)
+    subprocess.run(
+        [os.path.join(venv_path, "bin", "pip"), "freeze"],
+        stdout=open(requirements_path, "w"),
+        check=True,
+    )
     # install into the new conda env
     install_cmd = dedent(f"""
     bash -c "
@@ -578,15 +582,15 @@ def venv_as_conda(venv_path, conda_env_name):
 
 @lru_cache
 def in_notebook():
-    """whether or not the kernel is one
-    of a notebook (Jupyter, Kaggle, Colab, etc.)."""
+    """Return whether current python interpreter is of a notebook kernel.
+
+    (Jupyter, Kaggle, Colab, etc.).
+    """
     try:
         from IPython import get_ipython
-        _notebook_kernel = (
-            get_ipython() is not None and
-            'IPKernelApp' in get_ipython().config
-        )
-    except:
+
+        _notebook_kernel = get_ipython() is not None and "IPKernelApp" in get_ipython().config
+    except Exception:
         _notebook_kernel = False
 
     logger.debug(f"in_notebook : {_notebook_kernel}")
@@ -595,17 +599,17 @@ def in_notebook():
 
 def grant_read_access(file_path: str):
     """
-    set read access to all users.
+    Set read access to all users.
 
-    Params:
-        - file_path(str)
+    Parameters
+    ----------
+    file_path : str
+        file fullname.
     """
-
     # Get the current file permissions
     current_permissions = stat.S_IMODE(os.lstat(file_path).st_mode)
     # Add read permission for all users
-    new_permissions = \
-        current_permissions | stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH
+    new_permissions = current_permissions | stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH
     # Set the new permissions on the file
     os.chmod(file_path, new_permissions)
 
@@ -613,22 +617,21 @@ def grant_read_access(file_path: str):
 @contextmanager
 def tmp_os_environ(env_updates: dict):
     """
-    context to execute code snipet
-    within an OS environement
-    with specific set of variables.
+    Context to execute code snipet within an OS environment.
 
-    Params:
-        - env_updates (dict):
-            env_var/env_var_value pairs
+    With specific set of variables.
 
-    Example:
-    ```
-    with tmp_os_environ({'TITI': 'toto'}):
-        print(os.environ['TITI'])
-    print(os.environ['TITI'])
-    ```
+    Parameters
+    ----------
+    env_updates : dict
+        env_var/env_var_value pairs
+
+    Examples
+    --------
+    >>> with tmp_os_environ({'TITI': 'toto'}):
+    ...     print(os.environ['TITI'])
+    ... print(os.environ['TITI'])
     """
-
     old_environ = dict(os.environ)
     os.environ.update(env_updates)
     yield
@@ -636,22 +639,11 @@ def tmp_os_environ(env_updates: dict):
     os.environ.update(old_environ)
 
 
-def as_env_var(
-    env_var_value: Any,
-    env_var_name: str,
-    env: _Environ = os.environ
-) -> None:
-    """
-    Applies proper formatting to (dict) object as string
-    and sets it as an environment variable.
-    """
-
+def as_env_var(env_var_value: Any, env_var_name: str, env: _Environ = os.environ) -> None:
+    """Format formatting to (dict) object as string, set to env-var."""
     if isinstance(env_var_value, dict):
-        env[env_var_name] = \
-            str(json.dumps(dedent(
-                    """{env_var_value}""" \
-                    .format(env_var_value=env_var_value)))) \
-            .replace("'", '"').strip('"')
+        env[env_var_name] = (
+            str(json.dumps(dedent(f"""{env_var_value}"""))).replace("'", '"').strip('"')
+        )
     else:
         env[env_var_name] = env_var_value
-

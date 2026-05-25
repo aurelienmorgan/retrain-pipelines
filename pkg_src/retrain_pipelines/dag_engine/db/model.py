@@ -1,5 +1,6 @@
-
 """
+Data Model.
+
 Note : We store UTC timestamps, some databases return those
 right but without the tzinfo param value
 so, python considers they're local time,
@@ -11,51 +12,57 @@ So we truncate them here. 2 timestamps that are
 equal on the frontend are equal on the backend too.
 """
 
-from datetime import datetime, timezone, \
-    date
+from datetime import date, datetime, timezone
+from uuid import UUID
 
-from sqlalchemy import ForeignKey, Column, \
-    Integer, String, DateTime, Boolean, \
-    Uuid, JSON, PrimaryKeyConstraint, \
-    ForeignKeyConstraint, CheckConstraint, \
-    UniqueConstraint
-
-from sqlalchemy.orm import relationship, \
-    declarative_base, validates
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Integer,
+    PrimaryKeyConstraint,
+    String,
+    UniqueConstraint,
+    Uuid,
+)
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, validates
 
 from retrain_pipelines.utils import parse_datetime
 
 
-Base = declarative_base()
+class Base(DeclarativeBase):
+    pass
 
 
 class Execution(Base):
-    __tablename__ = 'executions'
+    __tablename__ = "executions"
 
-    id = Column(Integer, primary_key=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
 
-    name = Column(String, nullable=False)
-    docstring = Column(String, nullable=True)
-    params = Column(JSON, nullable=True)
+    name: Mapped[str] = mapped_column(String)
+    docstring: Mapped[str | None] = mapped_column(String)
+    params: Mapped[dict | None] = mapped_column(JSON)
 
-    username = Column(String, nullable=False)
-    _start_timestamp = Column('start_timestamp',
-        DateTime(timezone=True), nullable=False)
-    _end_timestamp = Column('end_timestamp',
-        DateTime(timezone=True), nullable=True)
-    context_dump = Column(JSON, nullable=True)
-
-    tasks = relationship(
-        "Task",
-        back_populates="execution",
-        viewonly=True
+    username: Mapped[str] = mapped_column(String)
+    _start_timestamp: Mapped[datetime] = mapped_column(
+        "start_timestamp",
+        DateTime(timezone=True),
+        nullable=False,
     )
-    tasktypes = relationship(
-        "TaskType",
-        back_populates="execution"
+    _end_timestamp: Mapped[datetime | None] = mapped_column(
+        "end_timestamp",
+        DateTime(timezone=True),
+        nullable=True,
     )
+    context_dump: Mapped[dict | None] = mapped_column(JSON)
 
-    ui_css = Column(JSON, nullable=True)
+    tasks = relationship("Task", back_populates="execution", viewonly=True)
+    tasktypes = relationship("TaskType", back_populates="execution")
+
+    ui_css: Mapped[dict | None] = mapped_column(JSON)
 
     def __init__(self, *args, **kwargs):
         # Support dict as the ONLY positional argument
@@ -63,31 +70,23 @@ class Execution(Base):
         if len(args) == 1 and isinstance(args[0], dict):
             data = args[0]
         elif len(args) > 0:
-            raise TypeError(
-                "Execution accepts a dict or keyword arguments")
+            raise TypeError("Execution accepts a dict or keyword arguments")
 
         if data:
             kwargs = {**data, **kwargs}
             kwargs["id"] = int(kwargs["id"])
-            kwargs["docstring"] = \
-                str(kwargs["docstring"]) if "docstring" in kwargs \
-                else None
-            kwargs["_start_timestamp"] = \
-                parse_datetime(kwargs["start_timestamp"])
+            kwargs["docstring"] = str(kwargs["docstring"]) if "docstring" in kwargs else None
+            kwargs["_start_timestamp"] = parse_datetime(kwargs["start_timestamp"])
             kwargs["_end_timestamp"] = (
                 parse_datetime(kwargs.get("end_timestamp"))
-                if (
-                    "end_timestamp" in kwargs and
-                    kwargs.get("end_timestamp") is not None
-                ) else None
+                if ("end_timestamp" in kwargs and kwargs.get("end_timestamp") is not None)
+                else None
             )
 
         super().__init__(**kwargs)
 
     @property
     def start_timestamp(self) -> datetime:
-        if self._start_timestamp is None:
-            return None
         if self._start_timestamp.tzinfo is None:
             return self._start_timestamp.replace(tzinfo=timezone.utc)
         return self._start_timestamp.astimezone(timezone.utc)
@@ -97,7 +96,7 @@ class Execution(Base):
         self._start_timestamp = value
 
     @property
-    def end_timestamp(self) -> datetime:
+    def end_timestamp(self) -> datetime | None:
         if self._end_timestamp is None:
             return None
         if self._end_timestamp.tzinfo is None:
@@ -111,10 +110,9 @@ class Execution(Base):
 
 class ExecutionExt(Execution):
     """Execution class plus failure (computed) attribute."""
+
     """ NOT AN SQLALCHEMY CLASS """
-    __mapper_args__ = {
-        "polymorphic_identity": "task_ext"
-    }
+    __mapper_args__ = {"polymorphic_identity": "task_ext"}
 
     def __init__(self, **kwargs):
         success = kwargs.pop("success", None)
@@ -126,21 +124,15 @@ class ExecutionExt(Execution):
             if isinstance(getattr(parent_class, attr_name, None), property):
                 value = kwargs.pop(attr_name)
                 # Check if corresponding SQLAlchemy column is DateTime
-                if hasattr(parent_class, '__table__'):
+                if hasattr(parent_class, "__table__"):
                     column = parent_class.__table__.columns.get(attr_name)
-                    if (
-                        column is not None and
-                        hasattr(column.type, 'python_type')
-                    ):
-                        if (
-                            column.type.python_type in [datetime, date]
-                            and isinstance(value, str)
-                        ):
+                    if column is not None and hasattr(column.type, "python_type"):
+                        if column.type.python_type in [datetime, date] and isinstance(value, str):
                             value = parse_datetime(value)
-                kwargs[f'_{attr_name}'] = value
+                kwargs[f"_{attr_name}"] = value
 
         # Remove SQLAlchemy internal attributes
-        kwargs.pop('_sa_instance_state', None)
+        kwargs.pop("_sa_instance_state", None)
 
         super().__init__(**kwargs)
         self.success = success
@@ -148,7 +140,7 @@ class ExecutionExt(Execution):
     def to_dict(self):
         result = {}
         for attr_name in vars(self):
-            if not attr_name.startswith('_'):
+            if not attr_name.startswith("_"):
                 attr_value = getattr(self, attr_name)
                 if isinstance(attr_value, (datetime, date)):
                     result[attr_name] = attr_value.isoformat()
@@ -157,21 +149,18 @@ class ExecutionExt(Execution):
 
         parent_class = type(self).__bases__[0]
         # Use parent_class table info
-        if hasattr(parent_class, '__table__'):
+        if hasattr(parent_class, "__table__"):
             table = parent_class.__table__
             for attr_name in dir(parent_class):
                 if isinstance(getattr(parent_class, attr_name, None), property):
-                    private_attr = f'_{attr_name}'
+                    private_attr = f"_{attr_name}"
                     if hasattr(self, private_attr):
                         attr_value = getattr(self, private_attr)
                         # Check if this property corresponds to a column in the table
                         column = table.columns.get(attr_name)
-                        if column is not None and hasattr(column.type, 'python_type'):
+                        if column is not None and hasattr(column.type, "python_type"):
                             python_type = column.type.python_type
-                            if (
-                                python_type in [datetime, date] and
-                                isinstance(attr_value, str)
-                            ):
+                            if python_type in [datetime, date] and isinstance(attr_value, str):
                                 attr_value = parse_datetime(attr_value)
                             if isinstance(attr_value, (datetime, date)):
                                 result[attr_name] = attr_value.isoformat()
@@ -190,41 +179,35 @@ class ExecutionExt(Execution):
 
 
 class TaskType(Base):
-    """Basically holder of DAG-declaration time
-    task-related metadata (task name, task ui_css,
-    task docstring), i.e. equivalent to a DAG node."""
-    __tablename__ = 'tasktypes'
+    """Basically holder of DAG-declaration time task-related metadata.
 
-    uuid = Column(Uuid, nullable=False)
-    exec_id = Column(Integer, ForeignKey('executions.id'),
-        nullable=False)
-    execution = relationship(
-        "Execution",
-        back_populates="tasktypes"
-    )
-    order =  Column(Integer, nullable=False) # topological order
+    (task name, task ui_css, task docstring),
+    i.e. equivalent to a DAG node.
+    """
+
+    __tablename__ = "tasktypes"
+
+    uuid: Mapped[UUID] = mapped_column(Uuid)
+    exec_id: Mapped[int] = mapped_column(Integer, ForeignKey("executions.id"))
+    execution = relationship("Execution", back_populates="tasktypes")
+    order: Mapped[int] = mapped_column(Integer)  # topological order
     __table_args__ = (
-        PrimaryKeyConstraint('exec_id', 'uuid',
-                             name='tasktype_pk'),
-        UniqueConstraint('exec_id', 'order',
-                         name='uq_tasktypes_exec_order')
+        PrimaryKeyConstraint("exec_id", "uuid", name="tasktype_pk"),
+        UniqueConstraint("exec_id", "order", name="uq_tasktypes_exec_order"),
     )
 
-    tasks = relationship(
-        "Task",
-        back_populates="tasktype"
-    )
+    tasks = relationship("Task", back_populates="tasktype")
 
-    name = Column(String, nullable=False)
+    name: Mapped[str] = mapped_column(String)
 
-    docstring = Column(String, nullable=True)
+    docstring: Mapped[str | None] = mapped_column(String)
 
-    ui_css = Column(JSON, nullable=True)
+    ui_css: Mapped[dict | None] = mapped_column(JSON)
 
-    is_parallel = Column(Boolean, nullable=False)
-    merge_func = Column(JSON, nullable=True)
-    taskgroup_uuid = Column(Uuid, nullable=True)
-    children = Column(JSON, nullable=False)  # ARRAY(str(Uuid))
+    is_parallel: Mapped[bool] = mapped_column(Boolean)
+    merge_func: Mapped[dict | None] = mapped_column(JSON)
+    taskgroup_uuid: Mapped[UUID | None] = mapped_column(Uuid)
+    children: Mapped[list] = mapped_column(JSON)  # ARRAY(str(Uuid))
 
     def __init__(self, *args, **kwargs):
         # Support dict as the ONLY positional argument
@@ -232,27 +215,25 @@ class TaskType(Base):
         if len(args) == 1 and isinstance(args[0], dict):
             data = args[0]
         elif len(args) > 0:
-            raise TypeError(
-                "TaskType accepts a dict or keyword arguments")
+            raise TypeError("TaskType accepts a dict or keyword arguments")
 
         if data:
             kwargs = {**data, **kwargs}
             kwargs["exec_id"] = int(kwargs["exec_id"])
             kwargs["order"] = int(kwargs["order"])
-            kwargs["docstring"] = \
-                str(kwargs["docstring"]) if "docstring" in kwargs \
-                else None
+            kwargs["docstring"] = str(kwargs["docstring"]) if "docstring" in kwargs else None
             kwargs["is_parallel"] = bool(kwargs["is_parallel"])
 
         # Remove SQLAlchemy internal attributes
-        kwargs.pop('_sa_instance_state', None)
+        kwargs.pop("_sa_instance_state", None)
 
         super().__init__(**kwargs)
 
 
 class Task(Base):
-    """Individual instances of tasktypes,
-    living at DAG execution runtime.
+    """Individual instances of tasktypes.
+
+    Living at DAG execution runtime.
 
     e.g. a tasktype can be part of a parallel line,
     in which case several instances of Task
@@ -260,48 +241,49 @@ class Task(Base):
     each dealing with a subpart of their
     prior non-parallel task outputs.
     """
-    __tablename__ = 'tasks'
 
-    id = Column(Integer, primary_key=True)
+    __tablename__ = "tasks"
 
-    tasktype_uuid = Column(Uuid, nullable=False)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
 
-    exec_id = Column(Integer, ForeignKey('executions.id'),
-                     nullable=False)
+    tasktype_uuid: Mapped[UUID] = mapped_column(Uuid)
+
+    exec_id: Mapped[int] = mapped_column(Integer, ForeignKey("executions.id"))
 
     tasktype = relationship(
         "TaskType",
         primaryjoin=(
-            "and_(Task.exec_id==TaskType.exec_id, " +
-            "Task.tasktype_uuid==TaskType.uuid)"
+            "and_(Task.exec_id==TaskType.exec_id, " + "Task.tasktype_uuid==TaskType.uuid)"
         ),
-        back_populates="tasks"
-    )
-    execution = relationship(
-        "Execution",
         back_populates="tasks",
-        viewonly=True
+    )
+    execution = relationship("Execution", back_populates="tasks", viewonly=True)
+
+    rank: Mapped[list | None] = mapped_column(JSON)  # ARRAY(Integer)
+
+    _start_timestamp: Mapped[datetime] = mapped_column(
+        "start_timestamp",
+        DateTime(timezone=True),
+        nullable=False,
+    )
+    _end_timestamp: Mapped[datetime | None] = mapped_column(
+        "end_timestamp",
+        DateTime(timezone=True),
+        nullable=True,
     )
 
-    rank = Column(JSON, nullable=True)  # ARRAY(Integer)
-
-    _start_timestamp = Column('start_timestamp',
-        DateTime(timezone=True), nullable=False)
-    _end_timestamp = Column('end_timestamp',
-        DateTime(timezone=True), nullable=True)
-
-    failed = Column(Boolean, nullable=True)
+    failed: Mapped[bool | None] = mapped_column(Boolean)
 
     __table_args__ = (
         ForeignKeyConstraint(
-            ['exec_id', 'tasktype_uuid'],
-            ['tasktypes.exec_id', 'tasktypes.uuid'],
-            name='task_fk_tasktype'
+            ["exec_id", "tasktype_uuid"],
+            ["tasktypes.exec_id", "tasktypes.uuid"],
+            name="task_fk_tasktype",
         ),
         CheckConstraint(
-            '(end_timestamp IS NULL AND failed IS NULL) OR '
-            '(end_timestamp IS NOT NULL AND failed IS NOT NULL)',
-            name='end_failed_null_constraint'
+            "(end_timestamp IS NULL AND failed IS NULL) OR "
+            "(end_timestamp IS NOT NULL AND failed IS NOT NULL)",
+            name="end_failed_null_constraint",
         ),
     )
 
@@ -311,32 +293,26 @@ class Task(Base):
         if len(args) == 1 and isinstance(args[0], dict):
             data = args[0]
         elif len(args) > 0:
-            raise TypeError(
-                "Task accepts a dict or keyword arguments")
+            raise TypeError("Task accepts a dict or keyword arguments")
 
         if data:
             kwargs = {**data, **kwargs}
             kwargs["id"] = int(kwargs["id"])
-            kwargs["_start_timestamp"] = \
-                parse_datetime(kwargs["start_timestamp"])
+            kwargs["_start_timestamp"] = parse_datetime(kwargs["start_timestamp"])
             kwargs["_end_timestamp"] = (
                 parse_datetime(kwargs.get("end_timestamp"))
-                if (
-                    "end_timestamp" in kwargs and
-                    kwargs.get("end_timestamp") is not None
-                ) else None
+                if ("end_timestamp" in kwargs and kwargs.get("end_timestamp") is not None)
+                else None
             )
             kwargs["failed"] = bool(kwargs["failed"])
 
         # Remove SQLAlchemy internal attributes
-        kwargs.pop('_sa_instance_state', None)
+        kwargs.pop("_sa_instance_state", None)
 
         super().__init__(**kwargs)
 
     @property
     def start_timestamp(self) -> datetime:
-        if self._start_timestamp is None:
-            return None
         if self._start_timestamp.tzinfo is None:
             return self._start_timestamp.replace(tzinfo=timezone.utc)
         return self._start_timestamp.astimezone(timezone.utc)
@@ -346,7 +322,7 @@ class Task(Base):
         self._start_timestamp = value
 
     @property
-    def end_timestamp(self) -> datetime:
+    def end_timestamp(self) -> datetime | None:
         if self._end_timestamp is None:
             return None
         if self._end_timestamp.tzinfo is None:
@@ -362,22 +338,20 @@ class Task(Base):
 
 
 class TaskTrace(Base):
-    __tablename__ = 'tasktraces'
+    __tablename__ = "tasktraces"
 
-    id = Column(Integer, primary_key=True)
-    task_id = Column(Integer,
-                     ForeignKey('tasks.id', ondelete='CASCADE'),
-                     nullable=False)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    task_id: Mapped[int] = mapped_column(Integer, ForeignKey("tasks.id", ondelete="CASCADE"))
 
-    timestamp = Column(DateTime(timezone=True), nullable=False)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     # batch inserts doesn't garantee insertion order
     # (i.e. auto-increment ids are not safely chronologically ordered)
     # so we track it with extra attributes
-    microsec = Column(Integer, nullable=False, default=0) # [0-999]
-    microsec_idx = Column(Integer, nullable=False, default=1)
+    microsec: Mapped[int] = mapped_column(Integer, default=0)  # [0-999]
+    microsec_idx: Mapped[int] = mapped_column(Integer, default=1)
 
-    content = Column(String, nullable=False)
-    is_err = Column(Boolean, nullable=False, default=False)
+    content: Mapped[str] = mapped_column(String)
+    is_err: Mapped[bool] = mapped_column(Boolean, default=False)
 
     task = relationship("Task", backref="traces")
 
@@ -387,25 +361,20 @@ class TaskTrace(Base):
         if len(args) == 1 and isinstance(args[0], dict):
             data = args[0]
         elif len(args) > 0:
-            raise TypeError(
-                "TaskTrace accepts a dict or keyword arguments")
+            raise TypeError("TaskTrace accepts a dict or keyword arguments")
 
         if data:
             kwargs = {**data, **kwargs}
         # Remove SQLAlchemy internal attributes
-        kwargs.pop('_sa_instance_state', None)
+        kwargs.pop("_sa_instance_state", None)
 
         super().__init__(**kwargs)
 
-    @validates('timestamp')
+    @validates("timestamp")
     def validate_timestamp(self, key, value):
-        """making sure, as it's an optional attr to api."""
-        if (
-            value is None or
-            (isinstance(value, datetime) and value.tzinfo is None)
-        ):
-            raise ValueError(
-                "timestamp must be a timezone-aware datetime")
+        """Make sure, as it's an optional attr to api."""
+        if value is None or (isinstance(value, datetime) and value.tzinfo is None):
+            raise ValueError("timestamp must be a timezone-aware datetime")
 
         if isinstance(value, str):
             try:
@@ -414,25 +383,27 @@ class TaskTrace(Base):
                 if value.tzinfo is None:
                     value = value.replace(tzinfo=timezone.utc)
             except ValueError as e:
-                raise ValueError(
-                    f"Invalid timestamp string format '{value}': {e}")
+                raise ValueError(f"Invalid timestamp string format '{value}'") from e
 
         return value
 
     def __repr__(self):
-        return \
-            f"{__class__.__name__}[{self.id}, {self.task_id}, {self.timestamp}, {self.microsec}, {self.microsec_idx}]({self.content})"
+        return (
+            f"{__class__.__name__}["
+            f"{self.id}, {self.task_id}, {self.timestamp}, "
+            f"{self.microsec}, {self.microsec_idx}"
+            f"]({self.content})"
+        )
 
 
 class TaskExt(Task):
-    """Task class plus attributes from tasktype
+    """Task class plus attributes from tasktype.
 
     name, ui_csss, is_parallel merge_func and taskgroup_uuid.
     """
+
     """ NOT AN SQLALCHEMY CLASS """
-    __mapper_args__ = {
-        "polymorphic_identity": "task_ext"
-    }
+    __mapper_args__ = {"polymorphic_identity": "task_ext"}
 
     def __init__(self, *args, **kwargs):
         # Support dict as the ONLY positional argument
@@ -440,8 +411,7 @@ class TaskExt(Task):
         if len(args) == 1 and isinstance(args[0], dict):
             data = args[0]
         elif len(args) > 0:
-            raise TypeError(
-                "TaskExt accepts a dict or keyword arguments")
+            raise TypeError("TaskExt accepts a dict or keyword arguments")
 
         if data:
             kwargs = {**data, **kwargs}
@@ -454,7 +424,7 @@ class TaskExt(Task):
         merge_func = kwargs.pop("merge_func", None)
         taskgroup_uuid = kwargs.pop("taskgroup_uuid", None)
         # Remove SQLAlchemy internal attributes
-        kwargs.pop('_sa_instance_state', None)
+        kwargs.pop("_sa_instance_state", None)
 
         super().__init__(**kwargs)
         self.name = name
@@ -471,31 +441,29 @@ class TaskExt(Task):
 
 class TaskGroup(Base):
     """Can hold TaskType and Taskgroup elements."""
-    __tablename__ = 'taskgroups'
 
-    uuid = Column(Uuid, nullable=False)
-    exec_id = Column(Integer, ForeignKey('executions.id'),
-        nullable=False)
+    __tablename__ = "taskgroups"
+
+    uuid: Mapped[UUID] = mapped_column(Uuid)
+    exec_id: Mapped[int] = mapped_column(Integer, ForeignKey("executions.id"))
     # execution = relationship(
-        # "Execution",
-        # back_populates="taskgroups",
-        # viewonly=True
+    # "Execution",
+    # back_populates="taskgroups",
+    # viewonly=True
     # )
-    order =  Column(Integer, nullable=False) # topological order
+    order: Mapped[int] = mapped_column(Integer)  # topological order
     __table_args__ = (
-        PrimaryKeyConstraint('exec_id', 'uuid',
-                             name='taskgroup_pk'),
-        UniqueConstraint('exec_id', 'order',
-                         name='uq_taskgroups_exec_order')
+        PrimaryKeyConstraint("exec_id", "uuid", name="taskgroup_pk"),
+        UniqueConstraint("exec_id", "order", name="uq_taskgroups_exec_order"),
     )
 
-    name = Column(String, nullable=False)
+    name: Mapped[str] = mapped_column(String)
 
-    docstring = Column(String, nullable=True)
+    docstring: Mapped[str | None] = mapped_column(String)
 
-    ui_css = Column(JSON, nullable=True)
+    ui_css: Mapped[dict | None] = mapped_column(JSON)
 
-    elements = Column(JSON, nullable=False)  # ARRAY(str(Uuid))
+    elements: Mapped[list[str]] = mapped_column(JSON)  # ARRAY(str(Uuid))
 
     def __init__(self, *args, **kwargs):
         # Support dict as the ONLY positional argument
@@ -503,22 +471,18 @@ class TaskGroup(Base):
         if len(args) == 1 and isinstance(args[0], dict):
             data = args[0]
         elif len(args) > 0:
-            raise TypeError(
-                "TaskGroup accepts a dict or keyword arguments")
+            raise TypeError("TaskGroup accepts a dict or keyword arguments")
 
         if data:
             kwargs = {**data, **kwargs}
             kwargs["exec_id"] = int(kwargs["exec_id"])
             kwargs["order"] = int(kwargs["order"])
-            kwargs["docstring"] = \
-                str(kwargs["docstring"]) if "docstring" in kwargs \
-                else None
+            kwargs["docstring"] = str(kwargs["docstring"]) if "docstring" in kwargs else None
 
         # Remove SQLAlchemy internal attributes
-        kwargs.pop('_sa_instance_state', None)
+        kwargs.pop("_sa_instance_state", None)
 
         super().__init__(**kwargs)
 
     def __repr__(self):
         return f"{__class__.__name__}({self.name}, {self.elements})"
-

@@ -113,7 +113,7 @@ Source datasets :
 The herein dataset has 2 configs : `continued_pre_training` and `supervised_finetuning`.<br />
 The former serves for added intrinsic knowledge. Typical entries look like&nbsp;:<br />
 ```python
-{{ main_format_description }}
+{{main_format_description}}
 ```
 The latter is a classic question/answer text dataset. Only tool calls are in the answers. May be an empty list.<br />
 Data-augmentation rate&nbsp;: +{{ (augmentation_rate * 100)|round(1) ~ '%' }}<br />

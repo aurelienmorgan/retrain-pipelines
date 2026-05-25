@@ -1,33 +1,46 @@
-
-import os
-import logging
 import asyncio
+import logging
+import os
 
-from typing import List, Tuple
-from fasthtml.common import H1, H2, Div, P, \
-    Span, A, Link, Script, Style, Button, \
-    Table, Colgroup, Col, Thead, Tr, Th, Tbody, \
-    Request, Response, JSONResponse, \
-    StreamingResponse, HTMLResponse, HTTPException
+from fasthtml.common import (
+    H1,
+    H2,
+    A,
+    Col,
+    Colgroup,
+    Div,
+    HTMLResponse,
+    HTTPException,
+    JSONResponse,
+    Link,
+    P,
+    Request,
+    Response,
+    Script,
+    Span,
+    StreamingResponse,
+    Style,
+    Table,
+    Tbody,
+    Th,
+    Thead,
+    Tr,
+)
 from jinja2 import Environment, FileSystemLoader
 
-
+from ....utils import get_text_pixel_width
 from ...db.dao import AsyncDAO
 from ...db.model import TaskExt, TaskGroup
-
 from ..utils import ClientInfo
-from ..utils.execution.events import \
-    multiplexed_event_generator, execution_number
+from ..utils.execution.events import execution_number, multiplexed_event_generator
 from ..utils.execution.gantt_chart import draw_chart
-
 from .page_template import page_layout
-from ....utils import get_text_pixel_width
 
 
 async def get_execution_dag_elements_lists(
-    execution_id: int
-) -> Tuple[List[dict], List[dict]]:
-    """Tuple of topologically-sorted serializable lists
+    execution_id: int,
+) -> tuple[list[dict] | None, list[dict] | None]:
+    """Tuple of topologically-sorted serializable lists.
 
     of constituting elements, respectively :
         - all TaskTypes (exhaustively)
@@ -35,47 +48,51 @@ async def get_execution_dag_elements_lists(
 
     Can be None, e.g. if no execution with that id exists.
 
-    Params:
-        - execution_id (int)
+    Parameters
+    ----------
+    execution_id : int
+        id of the pipeline execution of interest.
 
-    Results:
-        - (List[TaskTypes])
-        - (List[TaskGroups])
+    Returns
+    -------
+    List[TaskTypes]
+    List[TaskGroups]
     """
-    dao = AsyncDAO(
-        db_url=os.environ["RP_METADATASTORE_ASYNC_URL"]
-    )
+    dao = AsyncDAO(db_url=os.environ["RP_METADATASTORE_ASYNC_URL"])
 
     execution_tasktypes_list, execution_taskgroups_list = await asyncio.gather(
         dao.get_execution_tasktypes_list(execution_id),
-        dao.get_execution_taskgroups_list(execution_id)
+        dao.get_execution_taskgroups_list(execution_id),
     )
     # print(f"execution_tasktypes_list : {execution_tasktypes_list}")
     # print(f"execution_taskgroups_list : {execution_taskgroups_list}")
     if not execution_tasktypes_list:
         return None, None
 
-
     # turn into serializables
-    execution_tasktypes_list = \
-        [tasktypes.__dict__ for tasktypes in execution_tasktypes_list]
-    for tasktype_dict in execution_tasktypes_list:
+    execution_tasktypes_dicts: list[dict] = [
+        tasktypes.__dict__ for tasktypes in execution_tasktypes_list
+    ]
+    for tasktype_dict in execution_tasktypes_dicts:
         tasktype_dict["uuid"] = str(tasktype_dict["uuid"])
-        tasktype_dict["taskgroup_uuid"] = str(tasktype_dict["taskgroup_uuid"]) \
-                                          if tasktype_dict["taskgroup_uuid"] else ""
+        tasktype_dict["taskgroup_uuid"] = (
+            str(tasktype_dict["taskgroup_uuid"]) if tasktype_dict["taskgroup_uuid"] else ""
+        )
 
-    execution_taskgroups_list = \
-        [taskgroup.__dict__ for taskgroup in execution_taskgroups_list] \
-        if execution_taskgroups_list else []
-    for taskgroup_dict in execution_taskgroups_list:
+    execution_taskgroups_dicts: list[dict] = (
+        [taskgroup.__dict__ for taskgroup in execution_taskgroups_list]
+        if execution_taskgroups_list
+        else []
+    )
+    for taskgroup_dict in execution_taskgroups_dicts:
         taskgroup_dict["uuid"] = str(taskgroup_dict["uuid"])
 
-    return execution_tasktypes_list, execution_taskgroups_list
+    return execution_tasktypes_dicts, execution_taskgroups_dicts
 
 
 async def get_execution_elements_lists(
-    execution_id: int
-) -> Tuple[List[TaskExt], List[TaskGroup]]:
+    execution_id: int,
+) -> tuple[list[TaskExt] | None, list[TaskGroup] | None]:
     """Tuple of topologically-sorted lists of model objects.
 
     of constituting elements, respectively :
@@ -84,20 +101,20 @@ async def get_execution_elements_lists(
 
     Can be None, e.g. if no execution with that id exists.
 
-    Params:
-        - execution_id (int)
+    Parameters
+    ----------
+    execution_id : int
+        id of the pipeline execution of interest.
 
-    Results:
-        - (List[TaskExt])
-        - (List[TaskGroup])
+    Returns
+    -------
+    List[TaskExt]
+    List[TaskGroup]
     """
-    dao = AsyncDAO(
-        db_url=os.environ["RP_METADATASTORE_ASYNC_URL"]
-    )
+    dao = AsyncDAO(db_url=os.environ["RP_METADATASTORE_ASYNC_URL"])
 
     execution_tasks_list, execution_taskgroups_list = await asyncio.gather(
-        dao.get_execution_tasks_list(execution_id),
-        dao.get_execution_taskgroups_list(execution_id)
+        dao.get_execution_tasks_list(execution_id), dao.get_execution_taskgroups_list(execution_id)
     )
     # print(f"execution_tasks_list : {execution_tasks_list}")
     # print(f"execution_taskgroups_list : {execution_taskgroups_list}")
@@ -114,25 +131,21 @@ def register(app, rt, prefix=""):
         except (TypeError, ValueError):
             return Div(P(f"Invalid execution ID {execution_id}"))
 
-        tasktypes_list, taskgroups_list = \
-            await get_execution_dag_elements_lists(execution_id)
+        tasktypes_list, taskgroups_list = await get_execution_dag_elements_lists(execution_id)
         if tasktypes_list is None:
             return Div(P(f"Invalid execution ID {execution_id}"))
 
         template_dir = os.path.join(
-            os.path.dirname(os.path.dirname(__file__)),
-            "utils", "execution")
+            os.path.dirname(os.path.dirname(__file__)), "utils", "execution"
+        )
         env = Environment(loader=FileSystemLoader(template_dir))
-        env.globals['get_text_pixel_width'] = get_text_pixel_width
+        env.globals["get_text_pixel_width"] = get_text_pixel_width
         template = env.get_template("svg_template.html")
         rendering_content = template.render(
-            id_prefix="00000",
-            nodes=tasktypes_list,
-            taskgroups=taskgroups_list or []
+            id_prefix="00000", nodes=tasktypes_list, taskgroups=taskgroups_list or []
         )
 
         return rendering_content
-
 
     @rt(f"{prefix}/exec_current_progress", methods=["GET"])
     async def exec_current_progress(request: Request):
@@ -147,14 +160,12 @@ def register(app, rt, prefix=""):
         except (TypeError, ValueError):
             return Div(P(f"Invalid execution ID {execution_id}"))
 
-        tasks_list, taskgroups_list = \
-            await get_execution_elements_lists(execution_id)
+        tasks_list, taskgroups_list = await get_execution_elements_lists(execution_id)
         if tasks_list is None:
             return Div(P(f"Invalid execution ID {execution_id}"))
 
-        chart = draw_chart(execution_id, tasks_list, taskgroups_list)
+        chart = draw_chart(execution_id, tasks_list, taskgroups_list or [])
         return chart
-
 
     @rt(f"{prefix}/execution_info", methods=["GET"])
     async def execution_info(request: Request):
@@ -162,20 +173,16 @@ def register(app, rt, prefix=""):
         try:
             execution_id = int(execution_id)
         except (TypeError, ValueError):
-            return Response(
-                f"Invalid execution ID {execution_id}", 500)
+            return Response(f"Invalid execution ID {execution_id}", 500)
 
-        dao = AsyncDAO(
-            db_url=os.environ["RP_METADATASTORE_ASYNC_URL"]
-        )
+        dao = AsyncDAO(db_url=os.environ["RP_METADATASTORE_ASYNC_URL"])
         execution_info = await dao.get_execution_info(execution_id)
 
         return JSONResponse(execution_info)
 
-
     @rt(f"{prefix}/execution_number", methods=["GET"])
     async def get_execution_number(request: Request):
-        """Which execution of that pipeline (by name) it is,
+        """Which execution of that pipeline (by name) it is.
 
         (first, second, etc.).
         """
@@ -184,24 +191,18 @@ def register(app, rt, prefix=""):
 
         return execution_number_response
 
-
     @rt(f"{prefix}/tasktype_docstring", methods=["GET"])
     async def tasktype_docstring(request: Request):
         tasktype_uuid = request.query_params.get("uuid")
         try:
             tasktype_uuid = str(tasktype_uuid)
         except (TypeError, ValueError):
-            return Response(
-                f"Invalid tasktype UUID {tasktype_uuid}", 500)
+            return Response(f"Invalid tasktype UUID {tasktype_uuid}", 500)
 
-        dao = AsyncDAO(
-            db_url=os.environ["RP_METADATASTORE_ASYNC_URL"]
-        )
-        tasktype_docstring = \
-            await dao.get_tasktype_docstring(tasktype_uuid)
+        dao = AsyncDAO(db_url=os.environ["RP_METADATASTORE_ASYNC_URL"])
+        tasktype_docstring = await dao.get_tasktype_docstring(tasktype_uuid)
 
         return JSONResponse(tasktype_docstring)
-
 
     @rt(f"{prefix}/pipeline-card", methods=["GET"])
     async def pipeline_card(request: Request):
@@ -209,51 +210,36 @@ def register(app, rt, prefix=""):
         try:
             execution_id = int(exec_id)
         except (TypeError, ValueError):
-            raise HTTPException(
-                status_code=500,
-                detail=f"exec_id '{exec_id}'"
-            )
+            raise HTTPException(status_code=500, detail=f"exec_id '{exec_id}'") from None
 
-        dao = AsyncDAO(
-            db_url=os.environ["RP_METADATASTORE_ASYNC_URL"]
-        )
+        dao = AsyncDAO(db_url=os.environ["RP_METADATASTORE_ASYNC_URL"])
         try:
-            execution_name = (
-                await dao.get_execution(execution_id)).name
-        except AttributeError as ex:
-            raise HTTPException(
-                status_code=500,
-                detail=f"exec_id '{exec_id}' not valid."
-            )
+            execution_name = (await dao.get_execution(execution_id)).name
+        except AttributeError:
+            raise HTTPException(status_code=500, detail=f"exec_id '{exec_id}' not valid.") from None
 
         filename = os.path.join(
             os.environ["RP_ARTIFACTS_STORE"],
-            execution_name, str(execution_id),
-            "pipeline_card.html"
+            execution_name,
+            str(execution_id),
+            "pipeline_card.html",
         )
         if not os.path.exists(filename):
             uvicorn_logger = logging.getLogger("uvicorn")
             client_info = ClientInfo(
-                ip=request.client.host,
-                port=request.client.port,
-                url=request.url.path
+                ip=request.client.host, port=request.client.port, url=request.url.path
             )
             uvicorn_logger.info(
-                f"{client_info['ip']}:{client_info['port']}" +
-                f"{client_info['url']} pipeline-card not found "+
-                filename
+                f"{client_info['ip']}:{client_info['port']}"
+                + f"{client_info['url']} pipeline-card not found "
+                + filename
             )
-            raise HTTPException(
-                status_code=404,
-                detail="pipeline-card not found"
-            )
+            raise HTTPException(status_code=404, detail="pipeline-card not found")
 
-        with open(filename, 'r', encoding='utf-8') as f:
+        with open(filename, encoding="utf-8") as f:
             html_content = f.read()
 
-        return HTMLResponse(
-            content=html_content, status_code=200)
-
+        return HTMLResponse(content=html_content, status_code=200)
 
     @rt(f"{prefix}/task_traces", methods=["GET"])
     async def get_task_traces(request: Request):
@@ -261,33 +247,24 @@ def register(app, rt, prefix=""):
         try:
             task_id = int(task_id)
         except (TypeError, ValueError):
-            return Response(
-                f"Invalid task ID {task_id}", 500)
+            return Response(f"Invalid task ID {task_id}", 500)
 
-        dao = AsyncDAO(
-            db_url=os.environ["RP_METADATASTORE_ASYNC_URL"]
-        )
+        dao = AsyncDAO(db_url=os.environ["RP_METADATASTORE_ASYNC_URL"])
         task_traces = await dao.get_task_traces(task_id)
         if task_traces:
             for task_trace in task_traces:
-                task_trace["timestamp"] = int(
-                    task_trace["timestamp"].timestamp() * 1_000)
+                task_trace["timestamp"] = int(task_trace["timestamp"].timestamp() * 1_000)
 
         return JSONResponse(task_traces)
-
 
     @rt(f"{prefix}/execution_events", methods=["GET"])
     async def sse_execution_events(request: Request):
         client_info = ClientInfo(
-            ip=request.client.host,
-            port=request.client.port,
-            url=request.url.path
+            ip=request.client.host, port=request.client.port, url=request.url.path
         )
         return StreamingResponse(
-            multiplexed_event_generator(client_info=client_info),
-            media_type="text/event-stream"
+            multiplexed_event_generator(client_info=client_info), media_type="text/event-stream"
         )
-
 
     @rt(f"{prefix}/execution", methods=["GET"])
     def home(request: Request):
@@ -295,69 +272,54 @@ def register(app, rt, prefix=""):
         try:
             execution_id = int(execution_id)
         except (TypeError, ValueError):
-            return page_layout(
-                title="retrain-pipelines",
-                content=""
-            )
+            return page_layout(title="retrain-pipelines", content="")
 
-        return page_layout(title="retrain-pipelines", \
-            content=Div(# page content
-                H1(# execution-name
+        return page_layout(
+            title="retrain-pipelines",
+            content=Div(  # page content
+                H1(  # execution-name
                     style="padding-left: 30px; margin: 40px 0;",
                     cls="shiny-gold-text",
-                    id="execution-name"
+                    id="execution-name",
                 ),
-                Div(# DAG docstring
+                Div(  # DAG docstring
                     "",
-                    Div(
-                        cls="content"
-                    ),
-                    Div(
-                        "Show more",
-                        id="dag-docstring-show-more"
-                    ),
-                    id="dag-docstring"
+                    Div(cls="content"),
+                    Div("Show more", id="dag-docstring-show-more"),
+                    id="dag-docstring",
                 ),
-                H2(# subtitle
+                H2(  # subtitle
                     Div(
                         "execution # ",
                         Div(
                             id="execution-number",
-                            title=f"exec_id:\u00A0{execution_id}",
+                            title=f"exec_id:\u00a0{execution_id}",
                         ),
                         "/",
-                        Div(
-                            id="executions-count"
-                        ),
-                        "\u00A0-\u00A0",
-                        Div(
-                            id="utc-start-date-time-str"
-                        ),
+                        Div(id="executions-count"),
+                        "\u00a0-\u00a0",
+                        Div(id="utc-start-date-time-str"),
                         style=(
                             "display: flex; align-items: center; "
                             "flex-wrap: nowrap; white-space: nowrap;"
-                        )
+                        ),
                     ),
                     style=(
                         "padding-left: 10px; margin: 20px 0; "
                         "background-color: #FFFFCC40; "
                         "text-align: left; color: #FFEA66;"
                     ),
-                    id="subtitle"
+                    id="subtitle",
                 ),
-                Div(# pipeline-card button
+                Div(  # pipeline-card button
                     A(
                         Div(
+                            Div("pipeline-card"),
                             Div(
-                                "pipeline-card"
-                            ),
-                            Div(
-                                "\U0001F5D7", # &#x1f5d7;
+                                "\U0001f5d7",  # &#x1f5d7;
                                 style=(
-                                    "display: inline-block; "
-                                    "vertical-align: top; "
-                                    "margin-top: -5px;"
-                                )
+                                    "display: inline-block; vertical-align: top; margin-top: -5px;"
+                                ),
                             ),
                             style="""
                                 font-size: 16px;
@@ -387,14 +349,11 @@ def register(app, rt, prefix=""):
                                     drop-shadow(0 0 10px rgba(77,0,102,0.2))
                                     drop-shadow(0 4px 8px rgba(77,0,102,0.25))
                                     drop-shadow(3px 3px 6px rgba(77,0,102,0.4));
-                            """
+                            """,
                         ),
                         tabindex="0",
                         cls=["pill-button"],
-                        style=(
-                            "text-decoration: none; "
-                            "margin-right: 6em;"
-                        ),
+                        style=("text-decoration: none; margin-right: 6em;"),
                         href=f"/pipeline-card?exec_id={execution_id}",
                         _onkeydown="""
                             if(
@@ -410,7 +369,7 @@ def register(app, rt, prefix=""):
                                 event.preventDefault();
                                 this.click();
                             }
-                        """
+                        """,
                     ),
                     Style(""" /* pill-button */
                         .pill-button {
@@ -583,20 +542,19 @@ def register(app, rt, prefix=""):
                         }
                     """),
                     id="pipeline-card",
-                    style=(
-                        "width: 100%; "
-                        "text-align-last: right;"
-                    )
+                    style=("width: 100%; text-align-last: right;"),
                 ),
                 Script(f"""// async get execution-info (name, etc.)
                     function updateExecutionNumber(executionNumberJson) {{
                         // Update the executions counters (incl. tooltip)
                         //console.log("updateExecutionNumber ENTER", executionNumberJson);
-                        document.getElementById("execution-number").innerText = executionNumberJson.number;
+                        const execNumEl = document.getElementById("execution-number");
+                        execNumEl.innerText = executionNumberJson.number;
                         const executionsCount = document.getElementById("executions-count");
                         executionsCount.innerText = executionNumberJson.count;
+                        const ongoing = executionNumberJson.count - executionNumberJson.completed;
                         executionsCount.title =
-                            `${{executionNumberJson.count - executionNumberJson.completed}} ongoing\n` +
+                            `${{ongoing}} ongoing\n` +
                             `${{executionNumberJson.failed}} failed`;
                     }}
 
@@ -620,7 +578,8 @@ def register(app, rt, prefix=""):
                                 hour12: true,
                                 timeZone: 'UTC'
                             }};
-                            const parts = new Intl.DateTimeFormat('en-US', options).formatToParts(date);
+                            const fmt = new Intl.DateTimeFormat('en-US', options);
+                            const parts = fmt.formatToParts(date);
                             const partMap = {{}};
                             parts.forEach(part => {{
                                 partMap[part.type] = part.value;
@@ -628,8 +587,10 @@ def register(app, rt, prefix=""):
                             const currentYear = new Date().getUTCFullYear();
                             const formattedString = 
                                 `${{partMap.weekday}} ${{partMap.month}} ${{partMap.day}}` +
-                                (parseInt(partMap.year) !== currentYear ? ` ${{partMap.year}}` : '') +
-                                `, ${{partMap.hour}}:${{partMap.minute}}:${{partMap.second}} ${{partMap.dayPeriod}} UTC`;
+                                (parseInt(partMap.year) !== currentYear
+                                    ? ` ${{partMap.year}}` : '') +
+                                `, ${{partMap.hour}}:${{partMap.minute}}:` +
+                                `${{partMap.second}} ${{partMap.dayPeriod}} UTC`;
                             return formattedString
                         }}
 
@@ -698,13 +659,17 @@ def register(app, rt, prefix=""):
                 Script("""// DAG docstring 'show-more'
                     function checkDocstringOverflow() {
                         const dagDocstring = document.getElementById('dag-docstring');
-                        const dagDocstringContentDiv = document.querySelector("#dag-docstring .content");
+                        const dagDocstringContentDiv =
+                            document.querySelector("#dag-docstring .content");
                         const showMore = document.getElementById('dag-docstring-show-more');
 
                         // Calculating two lines of text height
-                        const lineHeight = parseFloat(getComputedStyle(dagDocstringContentDiv).lineHeight);
+                        const lineHeight = parseFloat(
+                            getComputedStyle(dagDocstringContentDiv).lineHeight
+                        );
                         const maxTwoLinesHeight = lineHeight * 2;
-                        //console.log("checkDocstringOverflow", lineHeight, maxTwoLinesHeight, dagDocstringContentDiv.scrollHeight);
+                        //console.log("checkDocstringOverflow", lineHeight,
+                        //    maxTwoLinesHeight, dagDocstringContentDiv.scrollHeight);
 
                         const overflows =
                             dagDocstringContentDiv.scrollHeight > maxTwoLinesHeight + 2;
@@ -722,7 +687,8 @@ def register(app, rt, prefix=""):
                     checkDocstringOverflow();
 
                     const dagDocstring = document.getElementById('dag-docstring');
-                    const showMoreDagDocstringBtn = document.getElementById('dag-docstring-show-more');
+                    const showMoreDagDocstringBtn =
+                        document.getElementById('dag-docstring-show-more');
 
                     showMoreDagDocstringBtn.addEventListener('click', () => {
                         if (dagDocstring.classList.contains('collapsed')) {
@@ -844,7 +810,9 @@ def register(app, rt, prefix=""):
                                 {{
                                     targetDiv.innerHTML = "";
                                     const script = document.createElement("script");
-                                    const inlineCode = html.replace(/<script[\s\S]*?>|<\/script>/gi, '');
+                                    const inlineCode = html.replace(
+                                        /<script[\s\S]*?>|<\/script>/gi, ''
+                                    );
                                     script.textContent = inlineCode;
                                     targetDiv.appendChild(script);
                                 }}
@@ -880,7 +848,8 @@ def register(app, rt, prefix=""):
                                     console.log("reconnected");
 
                                     // inject up-to-date Gantt chart
-                                    const targetDiv = document.getElementById("gantt-script-placeholder");
+                                    const targetDiv =
+                                        document.getElementById("gantt-script-placeholder");
                                     fetch("{prefix}/exec_current_progress?id={execution_id}",
                                           {{
                                                 method: 'GET',
@@ -917,7 +886,8 @@ def register(app, rt, prefix=""):
                                             // has been initialized/loaded before
                                             // => needs refreshing
                                             //console.log("needs refreshing");
-                                            const container = existingModal.querySelector("#tab-traces");
+                                            const container =
+                                                existingModal.querySelector("#tab-traces");
                                             const taskId =
                                                 existingModal.querySelector("#modal-task-id").textContent;
                                             const tracesContainer =
@@ -930,7 +900,8 @@ def register(app, rt, prefix=""):
                                             if (!wasAutoscroll) {{
                                                 const lines =
                                                     tracesContainer.querySelectorAll(".trace-line");
-                                                const visibleRect = tracesContainer.getBoundingClientRect();
+                                                const visibleRect =
+                                                    tracesContainer.getBoundingClientRect();
                                                 if (visibleRect.height > 0) {{
                                                     const scrollTop = tracesContainer.scrollTop;
                                                     for (let i = 0; i < lines.length; i++) {{
@@ -949,8 +920,10 @@ def register(app, rt, prefix=""):
                                                     const tasktypeUuid =
                                                         existingModal.querySelector(
                                                             "#modal-tasktype-uuid").textContent;
-                                                    //console.log("(execId, tasktypeUuid, taskId)", "  -  ",
-                                                    //            execId, "  -  ", tasktypeUuid, "  -  ", taskId);
+                                                    //console.log(
+                                                    //    "(execId, tasktypeUuid, taskId)",
+                                                    //    "  -  ", execId, "  -  ",
+                                                    //    tasktypeUuid, "  -  ", taskId);
                                                     const entry =
                                                         getTaskTracesCookieEntry(
                                                             execId, tasktypeUuid, taskId);
@@ -977,7 +950,8 @@ def register(app, rt, prefix=""):
                                                                 tracesContainer.scrollHeight;
                                                         }} else {{
                                                             //console.log(
-                                                            //    "firstVisibleIndex", firstVisibleIndex);
+                                                            //    "firstVisibleIndex",
+                                                            //    firstVisibleIndex);
                                                             const lines =
                                                                 tracesContainer.querySelectorAll(
                                                                     ".trace-line");
@@ -1033,7 +1007,6 @@ def register(app, rt, prefix=""):
                         padding-bottom: 2.5rem;
                     }
                 """),
-
                 Script("""// savePageAsSingleFile
                     async function savePageAsSingleFile() {
                         try {
@@ -1052,12 +1025,17 @@ def register(app, rt, prefix=""):
                                         inlinedStyles.push(css);
                                     }
                                 } catch (e) {
-                                    console.warn('Could not access stylesheet:', sheet.href || 'inline stylesheet', 'Error:', e.message);
+                                    console.warn(
+                                        'Could not access stylesheet:',
+                                        sheet.href || 'inline stylesheet',
+                                        'Error:', e.message
+                                    );
                                 }
                             }
 
                             // Remove existing style and link elements from clone
-                            const oldStyles = docClone.querySelectorAll('style, link[rel="stylesheet"]');
+                            const oldStyles =
+                                docClone.querySelectorAll('style, link[rel="stylesheet"]');
                             oldStyles.forEach(el => el.remove());
 
                             // Add new consolidated style element
@@ -1076,7 +1054,10 @@ def register(app, rt, prefix=""):
 
                                     const response = await fetch(src);
                                     if (!response.ok) {
-                                        console.warn(`Failed to fetch script: ${src} - Status: ${response.status}`);
+                                        console.warn(
+                                            `Failed to fetch script: ${src}`,
+                                            `- Status: ${response.status}`
+                                        );
                                         continue;
                                     }
 
@@ -1098,7 +1079,10 @@ def register(app, rt, prefix=""):
                                     script.parentNode.replaceChild(inlineScript, script);
 
                                 } catch (e) {
-                                    console.warn(`Could not inline script ${script.src}:`, e.message);
+                                    console.warn(
+                                        `Could not inline script ${script.src}:`,
+                                        e.message
+                                    );
                                 }
                             }
 
@@ -1115,7 +1099,10 @@ def register(app, rt, prefix=""):
                                 try {
                                     const response = await fetch(originalImg.src);
                                     if (!response.ok) {
-                                        console.warn(`Failed to fetch image: ${originalImg.src} - Status: ${response.status}`);
+                                        console.warn(
+                                            `Failed to fetch image: ${originalImg.src}`,
+                                            `- Status: ${response.status}`
+                                        );
                                         continue;
                                     }
 
@@ -1131,7 +1118,10 @@ def register(app, rt, prefix=""):
                                     console.log('Successfully inlined image:', originalImg.src);
 
                                 } catch (e) {
-                                    console.warn('Could not inline image:', originalImg.src, '- Error:', e.message);
+                                    console.warn(
+                                        'Could not inline image:', originalImg.src,
+                                        '- Error:', e.message
+                                    );
                                 }
                             }
 
@@ -1160,10 +1150,8 @@ def register(app, rt, prefix=""):
                     }
                 """),
                 # Button("Save Page", onclick="savePageAsSingleFile()"),
-
-                ## TODO, add stuff here (pipeline-card sections)
-
-                H1(# timeline
+                # TODO, add stuff here (pipeline-card sections)
+                H1(  # timeline
                     "Execution Timeline",
                     style="""
                         color: #6082B6;
@@ -1172,7 +1160,7 @@ def register(app, rt, prefix=""):
                         background-color: rgba(0, 0, 0, 0.03);
                         border-bottom: 1px solid rgba(0, 0, 0, 0.125);
                         text-align: center;
-                    """
+                    """,
                 ),
                 Script("const interBarsSpacing = 2;     /* in px */"),
                 Script(src="/collapsible_grouped_table.js"),
@@ -1182,13 +1170,16 @@ def register(app, rt, prefix=""):
                     .gantt-table {
                         border-collapse: collapse;
                         table-layout: fixed;
-                        width: calc(100% - 10px); /* left+right margin */
-                        margin: 6px 5px 4px 5px; /* extra room on top (vs. bottom) for reflexion effect */
+                        /* left+right margin */
+                        width: calc(100% - 10px);
+                        /* extra room on top (vs. bottom) for reflexion effect */
+                        margin: 6px 5px 4px 5px;
                         border-radius: 12px;
                         font-size: 14px; font-weight: bold; letter-spacing: 0.375px;
                         font-family: Robotto, Arial, sans-serif;
                         overflow: hidden;
-                        box-sizing: border-box; /* ensure padding affects size correctly */
+                        /* ensure padding affects size correctly */
+                        box-sizing: border-box;
                     }
 
                     .gantt-table thead {
@@ -1475,8 +1466,8 @@ def register(app, rt, prefix=""):
                         cursor: pointer;
                     }
                 """),
-                Div(# Gantt diagram
-                    Div(# collapse/expand all
+                Div(  # Gantt diagram
+                    Div(  # collapse/expand all
                         Span(
                             "collapse all",
                             style=(
@@ -1491,7 +1482,7 @@ def register(app, rt, prefix=""):
                             ),
                             _onmouseup="this.style.transform=''; this.style.textShadow=''",
                             _onmouseleave="this.style.transform=''; this.style.textShadow=''",
-                            _onclick=f"collapseAll('gantt-{execution_id}');"
+                            _onclick=f"collapseAll('gantt-{execution_id}');",
                         ),
                         Span("|", style="flex: 0 0 auto;"),
                         Span(
@@ -1508,7 +1499,7 @@ def register(app, rt, prefix=""):
                             ),
                             _onmouseup="this.style.transform=''; this.style.textShadow=''",
                             _onmouseleave="this.style.transform=''; this.style.textShadow=''",
-                            _onclick=f"expandAll('gantt-{execution_id}');"
+                            _onclick=f"expandAll('gantt-{execution_id}');",
                         ),
                         cls="glass-engraved",
                         style=(
@@ -1518,13 +1509,13 @@ def register(app, rt, prefix=""):
                             "align-items: baseline; "
                             "margin-bottom: 4px; padding: 0px 6px; "
                             "background: linear-gradient(135deg, "
-                                "rgba(77,0,102,0.2) 0%, "
-                                "rgba(77,0,102,0.7) 100%); "
+                            "rgba(77,0,102,0.2) 0%, "
+                            "rgba(77,0,102,0.7) 100%); "
                             "border: 1px solid rgba(222,226,230,0.5); "
                             "border-radius: 6px; "
                             "box-shadow: 0 2px 8px rgba(77,0,102,0.3), "
-                                "inset 0 1px 0 rgba(77,0,102,0.95);"
-                        )
+                            "inset 0 1px 0 rgba(77,0,102,0.95);"
+                        ),
                     ),
                     Div(
                         Table(
@@ -1532,15 +1523,10 @@ def register(app, rt, prefix=""):
                                 Col(id="task-col"),
                                 Col(id="timeline-col"),
                             ),
-                            Thead(
-                                Tr(
-                                    Th("task"),
-                                    Th("timeline")
-                                )
-                            ),
+                            Thead(Tr(Th("task"), Th("timeline"))),
                             Tbody(id="data-tbody"),
                             cls="gantt-table",
-                            id=f"gantt-{execution_id}"
+                            id=f"gantt-{execution_id}",
                         ),
                         style="""
                             border-radius: 12px;
@@ -1552,7 +1538,7 @@ def register(app, rt, prefix=""):
                             border: 1px solid rgba(255, 255, 255, 0.3);
                             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1),
                                         inset 0 1px 0 rgba(255, 255, 255, 0.6);
-                        """
+                        """,
                     ),
                     style="""
                         width: 90vw;
@@ -1564,15 +1550,15 @@ def register(app, rt, prefix=""):
                         box-shadow: 0 4px 12px rgba(0,0,0,0.1),
                                     inset 0 1px 0 rgba(255,255,255,0.6);
                         border: 1px solid rgba(222,226,230,0.4);
-                    """
+                    """,
                 ),
-                Div(# init Gantt diagram data (loaded async) and timeline renderer
+                Div(  # init Gantt diagram data (loaded async) and timeline renderer
                     Script("// Placeholder script (shall be replaced async)."),
                     id="gantt-script-placeholder",
                     hx_get=f"{prefix}/exec_current_progress?id={execution_id}",
                     hx_trigger="load",
                     hx_swap="innerHTML",
-                    hx_headers='{"Cache-Control": "no-cache"}'
+                    hx_headers='{"Cache-Control": "no-cache"}',
                 ),
                 Script(f"""// SSE events : retraining-pipeline task events
                     // additional event listeners to existing executionEventsSource
@@ -1609,7 +1595,9 @@ def register(app, rt, prefix=""):
                                     *    may not exists yet here)            *
                                     *************************************** */
                                     if (window.execGanttTimelineObj) {{
-                                        ganttInsert('execGanttTimelineObj', payload, interBarsSpacing);
+                                        ganttInsert(
+                                            'execGanttTimelineObj', payload, interBarsSpacing
+                                        );
                                     }} else {{
                                         requestAnimationFrame(checkAndInsert);
                                     }}
@@ -1688,7 +1676,9 @@ def register(app, rt, prefix=""):
                                     *    may not exists yet here)            *
                                     *************************************** */
                                     if (window.execGanttTimelineObj) {{
-                                        ganttUpdate('execGanttTimelineObj', payload, interBarsSpacing);
+                                        ganttUpdate(
+                                            'execGanttTimelineObj', payload, interBarsSpacing
+                                        );
                                     }} else {{
                                         requestAnimationFrame(checkAndUpdate);
                                     }}
@@ -1701,17 +1691,21 @@ def register(app, rt, prefix=""):
 
                     }}
                     registerTaskEvents();
-                    console.log("event-source listeners", listEventSourceListeners(executionEventsSource));
+                    console.log(
+                        "event-source listeners",
+                        listEventSourceListeners(executionEventsSource)
+                    );
                 """),
-
-                Script(f"""// AnsiUp dependency (ascii to html)
+                Script(
+                    f"""// AnsiUp dependency (ascii to html)
                     import {{ AnsiUp }} from '{prefix}/ansi_up.js';
                     window.AnsiUp = AnsiUp;
-                """, type="module"),
+                """,
+                    type="module",
+                ),
                 Script(src="/task_details_modal.js"),
                 Link(rel="stylesheet", href="/task_details_modal.css"),
-
-                H1(# DAG
+                H1(  # DAG
                     "Execution DAG",
                     style="""
                         color: #6082B6;
@@ -1720,7 +1714,7 @@ def register(app, rt, prefix=""):
                         background-color: rgba(0, 0, 0, 0.03);
                         border-bottom: 1px solid rgba(0, 0, 0, 0.125);
                         text-align: center;
-                    """
+                    """,
                 ),
                 Style(""" /* DAG */
                     #dag-docstring {
@@ -1773,14 +1767,14 @@ def register(app, rt, prefix=""):
                         z-index: 10;
                     }
                 """),
-                Div(# DAG renderer
+                Div(  # DAG renderer
                     # herein div will be async-dropped and
                     # tags from svg_template async-inserted to DOM here
-                    P("\u00A0 Loading DAG...", style="color: white;"),
+                    P("\u00a0 Loading DAG...", style="color: white;"),
                     hx_get=f"{prefix}/dag_rendering?id={execution_id}",
                     hx_trigger="load",
                     hx_swap="outerHTML",
-                    id="dag-anchor"
+                    id="dag-anchor",
                 ),
                 Script(""" // hide pipeline-card button on no eponyme DAG task
                     function hasNoPipelineCard(svg) {
@@ -1834,8 +1828,7 @@ def register(app, rt, prefix=""):
                         });
                     })();
                 """),
-                Link(rel="stylesheet", href=f"{prefix}/svg_dag.css")
+                Link(rel="stylesheet", href=f"{prefix}/svg_dag.css"),
             ),
-            body_cls=["body-execution"]
+            body_cls=["body-execution"],
         )
-

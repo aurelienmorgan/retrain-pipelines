@@ -1,52 +1,59 @@
-
-import os
 import logging
-
-from typing import Optional, Union, List
+import os
 from datetime import datetime, timezone
-from email.utils import formatdate, \
-    parsedate_to_datetime
-from fasthtml.common import Div, H1, H3, P, \
-    Span, Code, Input, Script, Style, \
-    Request, Response, FileResponse, JSONResponse, \
-    StreamingResponse
+from email.utils import formatdate, parsedate_to_datetime
+from typing import Any
+
+from fasthtml.common import (
+    H3,
+    Div,
+    FileResponse,
+    Input,
+    JSONResponse,
+    Request,
+    Response,
+    Script,
+    Span,
+    StreamingResponse,
+    Style,
+)
 
 from .. import APP_STATIC_DIR
-from .page_template import page_layout
-
-from ..utils.executions import get_users, \
-    get_pipeline_names, get_executions_ext
-from ..utils.executions.events import \
-    multiplexed_event_generator
 from ..utils import ClientInfo
+from ..utils.executions import get_executions_ext, get_pipeline_names, get_users
+from ..utils.executions.events import multiplexed_event_generator
+from .page_template import page_layout
 
 
 def AutoCompleteSelect(
     options_url: str,
     id: str,
-    placeholder: Optional[str] = "",
-    js_callback: Optional[str] = "",
-    style: Optional[str] = ""
+    placeholder: str | None = "",
+    js_callback: str | None = "",
+    style: str | None = "",
 ) -> Div:
-    """A DOM element of type auto-complete combobox
+    """Retrun a DOM element of type auto-complete combobox.
 
     Initializes from api endpoint
     that returns list of dropdown item strings.
 
-    Params:
-        - options_url (str):
-            the url to the endpoint
-            serving the list of dropdown values
-        - id (str):
-            the id of the DOM element
-        - placeholder (optional, str):
-            the placeholder of the textfield
-        - js_callback (optional, str):
-            the callback event listener js code
-        - style (optional, str):
-            custom css
-    Results:
-        - (Div)
+    Parameters
+    ----------
+    options_url : str
+        the url to the endpoint
+        serving the list of dropdown values
+    id : str
+        the id of the DOM element
+    placeholder : optional, str
+        the placeholder of the textfield
+    js_callback : optional, str
+        the callback event listener js code
+    style : optional, str
+        custom css
+
+    Returns
+    -------
+    Div
     """
     input_id = f"{id}-input"
     dropdown_id = f"{id}-dropdown"
@@ -70,12 +77,12 @@ def AutoCompleteSelect(
                 _onkeyup=f"if(event.key === 'Enter'){{ {js_callback} }}",
                 _onblur=f"window.g_delayedHideDropdown_{id}()",
             ),
-            Div(# container of .combo-option items
+            Div(  # container of .combo-option items
                 id=dropdown_id,
-                tabindex="-1", # so it doesn't get focusable when with scrollbars
-                cls="combo-dropdown"
+                tabindex="-1",  # so it doesn't get focusable when with scrollbars
+                cls="combo-dropdown",
             ),
-            cls="combo-root"
+            cls="combo-root",
         ),
         Script(f"""// dropdown, autocomplete, validate input
             (function(){{
@@ -379,19 +386,21 @@ def AutoCompleteSelect(
             }})();
         """),
         id=id.replace("_", "-"),
-        style=style
+        style=style,
     )
+
 
 def FilterElement(
     label: str,
-    *elements: Union[Div, Script, Style],
-    label_shadow_color: Optional[str] = None
+    *elements: Any,  # Div | Script | Style
+    label_shadow_color: str | None = None,
 ) -> Div:
     """Element with overlaying label on top left corner."""
     return Div(
-            Span(
-                label,
-                style=("""
+        Span(
+            label,
+            style=(
+                """
                   position: absolute;
                   line-height: 1em;
                   top: -0.75em;
@@ -408,42 +417,36 @@ def FilterElement(
                      1px  0   0 var(--label-shadow-color),
                      0    1px 0 var(--label-shadow-color);
                     z-index: 999; 
-                """)
+                """
             ),
-            elements,
-            style=(
-                "position: relative; "
-                f"--label-shadow-color: {label_shadow_color};"
-            )
-        )
+        ),
+        elements,
+        style=(f"position: relative; --label-shadow-color: {label_shadow_color};"),
+    )
+
 
 def MultiStatesToggler(
-    options: List[Div],
-    id: str,
-    js_callback: Optional[str] = "",
-    style: Optional[str] = ""
+    options: list[Div], id: str, js_callback: str | None = "", style: str | None = ""
 ) -> Div:
     # Add "bandit-toggle-label" to each option's class attribute
     options_with_cls = []
     for opt in options:
-        classes = (opt.attrs.get("class", "")
-                   if hasattr(opt, "attrs") else opt.cls or "")
+        classes = opt.attrs.get("class", "") if hasattr(opt, "attrs") else opt.cls or ""
         class_list = set(classes.split()) if classes else set()
         class_list.add("bandit-toggle-label")
         new_opt = Div(
             *opt.children,
             cls=" ".join(class_list),
-            **{k: v for k, v in (opt.attrs.items()
-               if hasattr(opt, "attrs") else {}) if k != "class"}
+            **{
+                k: v
+                for k, v in (opt.attrs.items() if hasattr(opt, "attrs") else {})
+                if k != "class"
+            },
         )
         options_with_cls.append(new_opt)
 
     return Div(
-        Div(
-            *options_with_cls,
-            id="banditLabels",
-            cls="bandit-toggle-labels"
-        ),
+        Div(*options_with_cls, id="banditLabels", cls="bandit-toggle-labels"),
         Style(f"""
             {style}
             .bandit-toggle-container {{
@@ -541,7 +544,8 @@ def MultiStatesToggler(
                     // Add all dataset entries as data-* attributes
                     for (const [key, value] of Object.entries(nextState.dataset || {{}})) {{
                         // Convert camelCase key to dash-case data attribute name
-                        const dataAttrName = 'data-' + key.replace(/[A-Z]/g, m => '-' + m.toLowerCase());
+                        const dataAttrName =
+                            'data-' + key.replace(/[A-Z]/g, m => '-' + m.toLowerCase());
                         newLabel.setAttribute(dataAttrName, value);
                     }}
 
@@ -585,67 +589,62 @@ def MultiStatesToggler(
         """),
         id=id,
         tabindex="0",
-        cls="bandit-toggle-container"
+        cls="bandit-toggle-container",
     )
+
 
 def register(app, rt, prefix=""):
     @rt("/favicon.ico")
     def favicon():
-        favicon_fullname = os.path.join(
-            APP_STATIC_DIR, "retrain-pipelines.ico")
+        favicon_fullname = os.path.join(APP_STATIC_DIR, "retrain-pipelines.ico")
         return FileResponse(favicon_fullname)
 
-
     @rt("/{fname:path}.{ext:static}")
-    async def get(request: Request, fname:str, ext:str):
-        """Serves static files, allows for webbrowser-caching."""
+    async def get(request: Request, fname: str, ext: str):
+        """Serve static files, allows for webbrowser-caching."""
         file_fullname = os.path.join(APP_STATIC_DIR, f"{fname}.{ext}")
         stat = os.stat(file_fullname)
         last_modified = formatdate(stat.st_mtime, usegmt=True)
         headers = {
             "Last-Modified": last_modified,
-            "Cache-Control": "public" # "no-cache" to force
-                                      # browser revalidation
-                                      # on each request
+            "Cache-Control": "public",  # "no-cache" to force
+            # browser revalidation
+            # on each request
         }
 
         # Check If-Modified-Since header
         if_modified_since = request.headers.get("if-modified-since")
         if if_modified_since:
             since_dt = parsedate_to_datetime(if_modified_since)
-            file_dt = datetime.utcfromtimestamp(stat.st_mtime) \
-                        .replace(tzinfo=timezone.utc) \
-                        .replace(microsecond=0)
+            file_dt = (
+                datetime
+                .utcfromtimestamp(stat.st_mtime)
+                .replace(tzinfo=timezone.utc)
+                .replace(microsecond=0)
+            )
             if file_dt <= since_dt:
                 return Response(status_code=304, headers=headers)
 
         return FileResponse(file_fullname, headers=headers)
-
 
     @rt(f"{prefix}/distinct_pipeline_names", methods=["GET"])
     async def get_distinct_pipeline_names():
         pipeline_names = await get_pipeline_names()
         return JSONResponse(pipeline_names)
 
-
     @rt(f"{prefix}/distinct_users", methods=["GET"])
     async def get_distinct_users():
         users = await get_users()
         return JSONResponse(users)
 
-
     @rt(f"{prefix}/executions_events", methods=["GET"])
     async def sse_executions_events(request: Request):
         client_info = ClientInfo(
-            ip=request.client.host,
-            port=request.client.port,
-            url=request.url.path
+            ip=request.client.host, port=request.client.port, url=request.url.path
         )
         return StreamingResponse(
-            multiplexed_event_generator(client_info=client_info),
-            media_type="text/event-stream"
+            multiplexed_event_generator(client_info=client_info), media_type="text/event-stream"
         )
-
 
     @rt(f"{prefix}/load_executions", methods=["POST"])
     async def get_execution_entries(request: Request):
@@ -656,12 +655,10 @@ def register(app, rt, prefix=""):
         if before_datetime_str:
             try:
                 before_datetime = datetime.strptime(
-                    before_datetime_str[:33],
-                    "%a %b %d %Y %H:%M:%S GMT%z"
+                    before_datetime_str[:33], "%a %b %d %Y %H:%M:%S GMT%z"
                 )
                 # Convert to UTC (timezone used by the DAG engine)
-                before_datetime = \
-                    before_datetime.astimezone(timezone.utc)
+                before_datetime = before_datetime.astimezone(timezone.utc)
             except Exception as e:
                 logging.getLogger().warn(e)
                 before_datetime = None
@@ -679,30 +676,31 @@ def register(app, rt, prefix=""):
             before_datetime=before_datetime,
             execs_status=execs_status,
             n=n,
-            descending=True
+            descending=True,
         )
 
         return execution_entries
 
-
     @rt(f"{prefix}/")
     def home():
-        return page_layout(current_page="/", title="retrain-pipelines", \
-            content=Div(# page content
-                Div(# params panel
+        return page_layout(
+            current_page="/",
+            title="retrain-pipelines",
+            content=Div(  # page content
+                Div(  # params panel
                     Div(
-                        Div(# label
+                        Div(  # label
                             H3(
                                 "Latest pipeline executions",
                                 style=(
                                     "color: white; margin: 0; white-space: nowrap; "
                                     "font-size: 16px; line-height: 1.5;"
-                                )
+                                ),
                             ),
-                            style="display: flex; align-items: baseline;"
+                            style="display: flex; align-items: baseline;",
                         ),
                         Div(
-                            FilterElement(# pipeline-name filter
+                            FilterElement(  # pipeline-name filter
                                 "pipeline",
                                 Div(
                                     AutoCompleteSelect(
@@ -714,13 +712,13 @@ def register(app, rt, prefix=""):
                                             "margin-right: 4px; "
                                             "scrollbar-width: thin; "
                                             "scrollbar-color: #4d0066 #FFFFCC20;"
-                                        )
+                                        ),
                                     ),
-                                    style="min-width: 50px; min-height: 18px;"
+                                    style="min-width: 50px; min-height: 18px;",
                                 ),
-                                label_shadow_color="rgba(77, 0, 102, .7)"
+                                label_shadow_color="rgba(77, 0, 102, .7)",
                             ),
-                            FilterElement(# username filter
+                            FilterElement(  # username filter
                                 "user",
                                 Div(
                                     AutoCompleteSelect(
@@ -732,11 +730,11 @@ def register(app, rt, prefix=""):
                                             "margin-right: 4px; "
                                             "scrollbar-width: thin; "
                                             "scrollbar-color: #4d0066 #FFFFCC20;"
-                                        )
+                                        ),
                                     ),
-                                    style="min-width: 50px; min-height: 18px;"
+                                    style="min-width: 50px; min-height: 18px;",
                                 ),
-                                label_shadow_color="rgba(77, 0, 102, .7)"
+                                label_shadow_color="rgba(77, 0, 102, .7)",
                             ),
                             Style("""
                                 #pipeline-name-autocomplete-input.combo-input {
@@ -746,15 +744,15 @@ def register(app, rt, prefix=""):
                                     min-width: 100px; width: 100px;
                                 }
                             """),
-                            FilterElement(# datetime filter
+                            FilterElement(  # datetime filter
                                 "before",
                                 Div(
-                                    id="pipeline-before-datetime", # picker container
+                                    id="pipeline-before-datetime",  # picker container
                                     callback="loadExecs();",
                                     style=(
                                         "min-width: 60px; min-height: 18px; "
                                         "--shadow-color: rgba(77, 0, 102, .3);"
-                                    )
+                                    ),
                                 ),
                                 Script(
                                     """
@@ -764,11 +762,11 @@ def register(app, rt, prefix=""):
                                             {COOKIE_PREFIX: 'executions_dashboard:'}
                                         );
                                     """,
-                                    type="module"
+                                    type="module",
                                 ),
-                                label_shadow_color="rgba(77, 0, 102, .7)"
+                                label_shadow_color="rgba(77, 0, 102, .7)",
                             ),
-                            Div(# clear filters
+                            Div(  # clear filters
                                 "clear filters",
                                 Style("""
                                     #clear-filters {
@@ -800,7 +798,8 @@ def register(app, rt, prefix=""):
                                     document.getElementById(
                                         "pipeline-before-datetime-selected").value = "";
 
-                                    // remove the filters cookies by setting their expiry in the past.
+                                    // remove the filters cookies
+                                    // by setting their expiry in the past.
                                     const cookies = document.cookie.split("; ");
                                     for (const cookie of cookies) {
                                         const [key, val] = cookie.split("=");
@@ -810,8 +809,8 @@ def register(app, rt, prefix=""):
                                             key === COOKIE_PREFIX + 'pipeline-before-datetime' ||
                                             key === COOKIE_PREFIX + 'pipeline-status-bandit-toggle'
                                         ) {
-                                            document.cookie =
-                                                `${key}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;`;
+                                            document.cookie = key +
+                                                "=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
                                         }
                                     }
 
@@ -820,27 +819,39 @@ def register(app, rt, prefix=""):
                                     );
                                 """,
                                 id="clear-filters",
-                                cls="glass-engraved"
+                                cls="glass-engraved",
                             ),
-                            MultiStatesToggler(# executions status filter
+                            MultiStatesToggler(  # executions status filter
                                 options=[
                                     Div("All Statuses", cls="all"),
-                                    Div("Successes", **{"data-execs-status": "success"}, cls="success"),
-                                    Div("Failures", **{"data-execs-status": "failure"}, cls="failure")
+                                    Div(
+                                        "Successes",
+                                        **{"data-execs-status": "success"},
+                                        cls="success",
+                                    ),
+                                    Div(
+                                        "Failures",
+                                        **{"data-execs-status": "failure"},
+                                        cls="failure",
+                                    ),
                                 ],
                                 id="pipeline-status-bandit-toggle",
-                                js_callback="setCookie(cookieKey, labels.children[1]); loadExecs();",
+                                js_callback=(
+                                    "setCookie(cookieKey, labels.children[1]); loadExecs();"
+                                ),
                                 style="""
                                     #pipeline-status-bandit-toggle {
                                         position: absolute;
                                         bottom: 2px;
                                         right: 3px;
                                     }
-                                """
+                                """,
                             ),
                             Script("""// MultiStatesToggler cookies
-                                const container = document.getElementById('pipeline-status-bandit-toggle');
-                                const labels = container.getElementsByClassName('bandit-toggle-labels')[0];
+                                const container =
+                                    document.getElementById('pipeline-status-bandit-toggle');
+                                const labels =
+                                    container.getElementsByClassName('bandit-toggle-labels')[0];
 
                                 // Helper function to set a cookie
                                 function setCookie(name, label) {
@@ -849,13 +860,14 @@ def register(app, rt, prefix=""):
                                     ) {
                                         // If dataset is empty, remove the cookie
                                         // by setting its expiry in the past.
-                                        document.cookie =
-                                            `${name}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;`;
+                                        document.cookie = name +
+                                            "=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
                                     } else {
                                         const expires = new Date(Date.now() +
                                             50*365*24*60*60*1000).toUTCString();
-                                        document.cookie =
-                                            `${name}=${label.dataset.execsStatus}; expires=${expires}; path=/`;
+                                        document.cookie = name + "=" +
+                                            label.dataset.execsStatus +
+                                            `; expires=${expires}; path=/`;
                                     }
                                 }
 
@@ -904,8 +916,10 @@ def register(app, rt, prefix=""):
                                             // and moving states up the states list
                                             // so currentIndex points to the right entry
                                             for (let i = 0;
-                                                 i < window["_states_pipeline-status-bandit-toggle"].length;
-                                                 i++
+                                                i < window[
+                                                    "_states_pipeline-status-bandit-toggle"
+                                                ].length;
+                                                i++
                                             ) {
                                                 const state =
                                                     window["_states_pipeline-status-bandit-toggle"][i];
@@ -913,7 +927,8 @@ def register(app, rt, prefix=""):
                                                     Object.keys(state.dataset).length > 0 &&
                                                     state.dataset.execsStatus === execsStatus
                                                 ) {
-                                                    // Remove all states before the current one (index i)
+                                                    // Remove all states before
+                                                    // the current one (index i)
                                                     const before =
                                                         window["_states_pipeline-status-bandit-toggle"
                                                             ].splice(0, i);
@@ -947,7 +962,8 @@ def register(app, rt, prefix=""):
                                             }
                                             // console.log("DOMContentLoaded EXIT",
                                             //     "labels", labels.cloneNode(true),
-                                            //     [... window["_states_pipeline-status-bandit-toggle"]]
+                                            //     [... window[
+                                            //         "_states_pipeline-status-bandit-toggle"]]
                                             // );
                                             return;
                                         }
@@ -973,7 +989,8 @@ def register(app, rt, prefix=""):
                                             labels.appendChild(labels.children[0]);
                                         }
                                         // adjust order of states
-                                        const states = window["_states_pipeline-status-bandit-toggle"];
+                                        const states =
+                                            window["_states_pipeline-status-bandit-toggle"];
                                         states.push(...states.splice(0, labelsIndex));
                                     }
                                     /* ************************************* */
@@ -986,20 +1003,18 @@ def register(app, rt, prefix=""):
                                 "align-items: baseline; "
                                 "padding: 12px 12px 12px 16px; "
                                 "background: linear-gradient(135deg, "
-                                    "rgba(255,255,255,0.1) 0%, "
-                                    "rgba(248,249,250,0.1) 100%); "
+                                "rgba(255,255,255,0.1) 0%, "
+                                "rgba(248,249,250,0.1) 100%); "
                                 "border: 1px solid rgba(222,226,230,0.5); "
                                 "border-radius: 10px; "
                                 "box-shadow: 0 2px 8px rgba(0,0,0,0.08), "
-                                    "inset 0 1px 0 rgba(255,255,255,0.8); "
+                                "inset 0 1px 0 rgba(255,255,255,0.8); "
                                 "color: white; "
                                 "margin-left: auto; "
                                 "height: 48px;"
-                            )
+                            ),
                         ),
-                        style=(
-                            "display: flex; align-items: baseline; margin-bottom: 8px;"
-                        )
+                        style=("display: flex; align-items: baseline; margin-bottom: 8px;"),
                     )
                 ),
                 Script(f"""// SSE multiplexed events : new retraining-pipeline execution
@@ -1186,7 +1201,11 @@ def register(app, rt, prefix=""):
                             const minutes = Math.floor((totalSeconds % 3600) / 60);
                             const hours = Math.floor(totalSeconds / 3600);
 
-                            return `${{hours}}:${{String(minutes).padStart(2, '0')}}:${{String(seconds).padStart(2, '0')}}.${{String(milliseconds).padStart(3, '0')}}`;
+                            const hh = String(hours);
+                            const mm = String(minutes).padStart(2, '0');
+                            const ss = String(seconds).padStart(2, '0');
+                            const ms = String(milliseconds).padStart(3, '0');
+                            return `${{hh}}:${{mm}}:${{ss}}.${{ms}}`;
                         }}
 
                         // Listen for incoming "an execution ended" messages from the server
@@ -1293,13 +1312,10 @@ def register(app, rt, prefix=""):
                     const observer = new MutationObserver(onClassChange);
                     observer.observe(statusCircle, { attributes: true });
                 """),
-                Div(# Actual list
+                Div(  # Actual list
                     Div(
-                        Div(# load-more
-                            Span(
-                                "load more",
-                                cls="shimmer-text"
-                            ),
+                        Div(  # load-more
+                            Span("load more", cls="shimmer-text"),
                             Style("""
                                 .shimmer-pill {
                                   width: 140px; 
@@ -1331,7 +1347,12 @@ def register(app, rt, prefix=""):
 
                                 /* Loading State */
                                 .shimmer-pill.loading {
-                                  background: linear-gradient(90deg, rgba(255,255,255,0.05), rgba(255,255,255,0.15), rgba(255,255,255,0.05));
+                                  background: linear-gradient(
+                                    90deg,
+                                    rgba(255,255,255,0.05),
+                                    rgba(255,255,255,0.15),
+                                    rgba(255,255,255,0.05)
+                                  );
                                   background-size: 300% 100%;
                                   animation: shimmer 2.5s ease-in-out infinite;
                                   box-shadow: 0 0 8px rgba(255,255,255,0.15);
@@ -1349,10 +1370,10 @@ def register(app, rt, prefix=""):
                             id="loader",
                         ),
                         id="loader-container",
-                        style="width: 100% display: flex; justify-content: center;"
+                        style="width: 100% display: flex; justify-content: center;",
                     ),
-                    Style(f""" /* execution-item (loaded at runtime) */
-                        .execution {{
+                    Style(""" /* execution-item (loaded at runtime) */
+                        .execution {
                             display: flex; align-items: flex-start;
 
                             background: var(--background-normal);
@@ -1370,9 +1391,9 @@ def register(app, rt, prefix=""):
                             backdrop-filter: blur(10px);
                             transition: transform 0.2s ease, margin 0.2s ease;
                             transform-origin: center center;
-                        }}
+                        }
 
-                        .execution-body {{
+                        .execution-body {
                             width: 100%;
                             display: flex;
                             align-items: center;
@@ -1381,18 +1402,18 @@ def register(app, rt, prefix=""):
                             padding-top: 3px; padding-bottom: 4px;
                             padding-left: 12px;
                             border-radius: 6px 0 0 6px;
-                        }}
+                        }
 
-                        .end_timestamp {{
+                        .end_timestamp {
                             min-width: 130px;
                             text-align: right;
 
                             padding-top: 3px; padding-bottom: 4px;
                             padding-right: 6px;
                             border-radius: 0 6px 6px 0;
-                        }}
+                        }
 
-                        .end_timestamp.success {{
+                        .end_timestamp.success {
                             --status-color: #28a745;
                             background: 
                                 linear-gradient(90deg,
@@ -1400,9 +1421,9 @@ def register(app, rt, prefix=""):
                                     rgba(from var(--status-color) r g b / 0.3) 30%,
                                     rgba(from var(--status-color) r g b / 0.6) 100%
                                 );
-                        }}
+                        }
 
-                        .end_timestamp.failure {{
+                        .end_timestamp.failure {
                             --status-color: #dc3545;
                             background: 
                                 linear-gradient(90deg,
@@ -1411,17 +1432,17 @@ def register(app, rt, prefix=""):
                                     rgba(from var(--status-color) r g b / 0.3) 40%,
                                     rgba(from var(--status-color) r g b / 0.6) 100%
                                 );
-                        }}
+                        }
 
-                        .execution:hover .success {{
+                        .execution:hover .success {
                             background:
                                 linear-gradient(90deg,
                                     transparent 0%,
                                     rgba(from var(--status-color) r g b / 0.4) 30%,
                                     rgba(from var(--status-color) r g b / 1) 100%
                                 );
-                        }}
-                        .execution:hover .failure {{
+                        }
+                        .execution:hover .failure {
                             background:
                                 linear-gradient(90deg,
                                     transparent 0%,
@@ -1429,21 +1450,21 @@ def register(app, rt, prefix=""):
                                     rgba(from var(--status-color) r g b / 0.4) 40%,
                                     rgba(from var(--status-color) r g b / 1) 100%
                                 );
-                        }}
+                        }
                     """),
                     id="executions-container",
-                    cls="wavy-items-list", # for anim script selector
+                    cls="wavy-items-list",  # for anim script selector
                     style=(
-                        "height: calc(100vh - 200px); " # window height minus header & footer
+                        "height: calc(100vh - 200px); "  # window height minus header & footer
                         "overflow-y: auto; padding: 8px 16px 4px 16px; "
                         "background: linear-gradient(135deg, "
-                            "rgba(255,255,255,0.05) 0%, "
-                            "rgba(248,249,250,0.05) 100%); "
+                        "rgba(255,255,255,0.05) 0%, "
+                        "rgba(248,249,250,0.05) 100%); "
                         "border: 1px solid rgba(222,226,230,0.6); "
                         "border-radius: 8px; "
                         "box-shadow: inset 0 2px 4px rgba(0,0,0,0.05), "
-                            "0 1px 3px rgba(0,0,0,0.1); "
-                    )
+                        "0 1px 3px rgba(0,0,0,0.1); "
+                    ),
                 ),
                 Script(src="/wavy_list_items.js"),
                 Script("""// Mouseover wavy effect on execution-entries
@@ -1475,7 +1496,8 @@ def register(app, rt, prefix=""):
                     observeContainer();
 
                 """),
-                Script("""// Cold start of executions list at page load time
+                Script(
+                    """// Cold start of executions list at page load time
                     const execContainer = document.getElementById("executions-container");
                     const loader = document.getElementById("loader");
                     const loaderContainer = document.getElementById("loader-container");
@@ -1525,7 +1547,8 @@ def register(app, rt, prefix=""):
                             if (!dropdown.hasChildNodes()) {
                                 // if initial page load
                                 // (init from cookie didn't occur yet)
-                                const pipeline_name_cookieKey = COOKIE_PREFIX + 'pipeline-name-autocomplete';
+                                const pipeline_name_cookieKey =
+                                    COOKIE_PREFIX + 'pipeline-name-autocomplete';
                                 for (const cookie of cookies) {
                                     const parts = cookie.split("=");
                                     if (parts[0] === pipeline_name_cookieKey) {
@@ -1554,7 +1577,8 @@ def register(app, rt, prefix=""):
                             if (!dropdown.hasChildNodes()) {
                                 // if initial page load
                                 // (init from cookie didn't occur yet)
-                                const username_cookieKey = COOKIE_PREFIX + 'pipeline-user-autocomplete';
+                                const username_cookieKey =
+                                    COOKIE_PREFIX + 'pipeline-user-autocomplete';
                                 for (const cookie of cookies) {
                                     const parts = cookie.split("=");
                                     if (parts[0] === username_cookieKey) {
@@ -1575,19 +1599,22 @@ def register(app, rt, prefix=""):
 
                         // retrieve executions status filter
                         var execsStatus = "";
-                        // const execsStatus_cookieKey = COOKIE_PREFIX + 'pipeline-status-bandit-toggle';
+                        // const execsStatus_cookieKey =
+                        //     COOKIE_PREFIX + 'pipeline-status-bandit-toggle';
                         // for (const cookie of cookies) {
                         //     const [key, val] = cookie.split("=");
                         //     if (key === execsStatus_cookieKey) {
                         //         execsStatus = decodeURIComponent(val || "");
                         //     }
                         // }
-                        const execs_statuses_togglerLabels = document.getElementById("banditLabels");
+                        const execs_statuses_togglerLabels =
+                            document.getElementById("banditLabels");
                         const execs_status_togglerValue =
                             execs_statuses_togglerLabels.children[
                                 execs_statuses_togglerLabels.children.length - 3];
                         if (execs_status_togglerValue.hasAttribute("data-execs-status")) {
-                            execsStatus = execs_status_togglerValue.getAttribute("data-execs-status");
+                            execsStatus =
+                                execs_status_togglerValue.getAttribute("data-execs-status");
                         }
                         // console.log("execsStatus", execsStatus);
 
@@ -1672,20 +1699,20 @@ def register(app, rt, prefix=""):
                     execContainer.addEventListener('scroll', function (event) {
                         const container = event.target;
                         const isAtBottom =
-                            container.scrollHeight - container.scrollTop <= container.clientHeight + 1;
+                            container.scrollHeight - container.scrollTop <=
+                                container.clientHeight + 1;
                         if (isAtBottom) {
                             loadExecs(event, true);
                         }
                     });
-                """.replace("{prefix}", prefix+"/" if prefix > "" else "")
+                """.replace("{prefix}", prefix + "/" if prefix > "" else "")
                 ),
                 style=(
                     "background: rgba(248, 249, 250, 0.3); padding: 8px 16px 4px 16px; "
                     "border-radius: 12px; "
                     "box-shadow: 0 4px 12px rgba(0,0,0,0.1), "
-                        "inset 0 1px 0 rgba(255,255,255,0.6); "
+                    "inset 0 1px 0 rgba(255,255,255,0.6); "
                     "border: 1px solid rgba(222,226,230,0.4);"
-                )
-            )
+                ),
+            ),
         )
-

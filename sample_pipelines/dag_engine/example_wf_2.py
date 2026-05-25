@@ -1,12 +1,8 @@
-
 import os
 
-from retrain_pipelines.dag_engine.core import \
-    TaskPayload, task, taskgroup, dag
-from retrain_pipelines.dag_engine.runtime import \
-    execute
-from retrain_pipelines.dag_engine.renderer import \
-    render_svg
+from retrain_pipelines.dag_engine.core import TaskPayload, task, taskgroup, dag
+from retrain_pipelines.dag_engine.runtime import execute
+from retrain_pipelines.dag_engine.renderer import render_svg
 
 
 # ---- Example: Group of tasks ----
@@ -15,7 +11,9 @@ from retrain_pipelines.dag_engine.renderer import \
 @task
 def start():
     # Root task
-    import time ; time.sleep(3)                             ### DEBUG - DELETE ###
+    import time
+
+    time.sleep(3)  ### DEBUG - DELETE ###
     return "start"
 
 
@@ -31,7 +29,6 @@ def snake_head_1(payload: TaskPayload):
 
 @task
 def snake_head_2(payload: TaskPayload):
-
     # Do whatever you want
 
     return payload["start"] + " snake_head_2"
@@ -39,7 +36,6 @@ def snake_head_2(payload: TaskPayload):
 
 @task
 def snake_head_3(payload: TaskPayload):
-
     # Do whatever you want
 
     return payload["start"] + " snake_head_3"
@@ -61,7 +57,7 @@ def join_snake_heads(payload: TaskPayload):
     this_task_result = [
         payload["snake_head_1"],
         payload["snake_head_2"],
-        payload["snake_head_3"]
+        payload["snake_head_3"],
     ]
     return this_task_result
 
@@ -69,19 +65,15 @@ def join_snake_heads(payload: TaskPayload):
 @task
 def end(payload: TaskPayload):
     # Since the herein task only has 1 direct parent =>
-    assert payload["join_snake_heads"] \
-            == payload.get("join_snake_heads") \
-            == payload
+    assert payload["join_snake_heads"] == payload.get("join_snake_heads") == payload
 
-    assert payload == ['start snake_head_1', 'start snake_head_2', \
-                       'start snake_head_3']
+    assert payload == ["start snake_head_1", "start snake_head_2", "start snake_head_3"]
     return None
 
 
 @dag(ui_css={"background": "#ffffff"})
 def retrain_pipeline():
-    """Simple taskgroup.
-    """
+    """Simple taskgroup."""
     # Compose the DAG using operator overloading (>>)
     return start >> snake_heads >> join_snake_heads >> end
 
@@ -90,19 +82,18 @@ if __name__ == "__main__":
     # print(f"to_tasktypes_list : {retrain_pipeline.to_tasktypes_list(serializable=True)}")
 
     # Render the DAG
-    svg_fullname = os.path.realpath(os.path.join(
-        os.path.dirname(os.path.realpath(__file__)), "dag.html"
-    ))
+    svg_fullname = os.path.realpath(
+        os.path.join(os.path.dirname(os.path.realpath(__file__)), "dag.html")
+    )
     render_svg(retrain_pipeline, svg_fullname)
 
     # Run the DAG
     final_result, context_dump = execute(retrain_pipeline, params=None)
     print(
-        f"execution {context_dump['exec_id']} - " +
-        f"{context_dump['pipeline_name']} - final result : {final_result}"
+        f"execution {context_dump['exec_id']} - "
+        + f"{context_dump['pipeline_name']} - final result : {final_result}"
     )
     import json
-    print("context_dump : " +
-          json.dumps(context_dump, indent=4))
-    print(f"DAG SVG written to {svg_fullname}")
 
+    print("context_dump : " + json.dumps(context_dump, indent=4))
+    print(f"DAG SVG written to {svg_fullname}")

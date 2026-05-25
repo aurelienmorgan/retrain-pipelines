@@ -1,40 +1,22 @@
-
-import os
 import json
-import time
-import grpc
-import random
 import logging
-import asyncio
-import requests
-import threading
-
-from uuid import UUID
+import os
+import random
+import time
+from datetime import date, datetime
 from functools import lru_cache
-from typing import List, Optional
-from datetime import datetime, date
+from uuid import UUID
 
-from google.protobuf.timestamp_pb2 \
-    import Timestamp
-
-from sqlalchemy import create_engine, QueuePool, \
-    Uuid, select, and_, desc, case, func, event, \
-    text
-from sqlalchemy.orm import scoped_session, \
-    sessionmaker, aliased, object_session
-from sqlalchemy.ext.asyncio import create_async_engine, \
-    AsyncSession
-
-
-from .model import Base, Execution, ExecutionExt, \
-    TaskType, Task, TaskTrace, TaskExt, TaskGroup
-
-
-from .grpc import task_trace_pb2, \
-    task_trace_pb2_grpc
+import grpc
+import requests
+from google.protobuf.timestamp_pb2 import Timestamp
+from sqlalchemy import QueuePool, Uuid, and_, case, create_engine, desc, event, func, select, text
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.orm import aliased, object_session, scoped_session, sessionmaker
 
 from ..grpc_client import GrpcClient
-
+from .grpc import task_trace_pb2
+from .model import Base, Execution, ExecutionExt, Task, TaskExt, TaskGroup, TaskTrace, TaskType
 
 logger = logging.getLogger(__name__)
 
@@ -58,17 +40,15 @@ class DAOBase:
         else:
             from sqlalchemy.pool import NullPool
 
-            if 'sqlite' in db_url:
+            if "sqlite" in db_url:
                 # For SQLite with multiprocessing,
                 # we use NullPool
                 self.engine = create_engine(
                     db_url,
                     poolclass=NullPool,
-                    connect_args={
-                        'timeout': 30,
-                        'check_same_thread': False
-                    }
+                    connect_args={"timeout": 30, "check_same_thread": False},
                 )
+
                 # Enable SQLite optimizations for concurrency
                 @event.listens_for(self.engine, "connect")
                 def set_sqlite_pragma(dbapi_conn, connection_record):
@@ -78,13 +58,10 @@ class DAOBase:
                     cursor.execute("PRAGMA synchronous=NORMAL")
                     cursor.execute("PRAGMA cache_size=-64000")
                     cursor.close()
+
             else:
                 self.engine = create_engine(
-                    db_url,
-                    poolclass=QueuePool,
-                    pool_size=5,
-                    max_overflow=10,
-                    pool_timeout=30
+                    db_url, poolclass=QueuePool, pool_size=5, max_overflow=10, pool_timeout=30
                 )
 
             Base.metadata.create_all(self.engine)
@@ -98,7 +75,7 @@ class DAOBase:
     def dispose(self):
         """Release all pooled connections held by this DAO instance."""
         try:
-            if hasattr(self, 'Session'):
+            if hasattr(self, "Session"):
                 self.Session.remove()
         except Exception:
             pass
@@ -108,9 +85,7 @@ class DAOBase:
             pass
 
     def _get_session(self):
-        return self.session_factory() \
-               if self.is_async else self.Session()
-
+        return self.session_factory() if self.is_async else self.Session()
 
     def _add_entity(self, entity_class, **kwargs):
         # truncate any datetime fields before insert
@@ -123,30 +98,26 @@ class DAOBase:
         else:
             for attempt in range(5):
                 try:
-                    added_entity = self._sync_add_entity(
-                        entity_class, **kwargs
-                    )
+                    added_entity = self._sync_add_entity(entity_class, **kwargs)
                     if attempt > 0:
                         logger.warning(
-                            f"[blink]_sync_add_entity - {attempt+1} - "
-                            f"{entity_class} [{kwargs}]" +
-                            f"\nSUCCEEDED[/]"
+                            f"[blink]_sync_add_entity - {attempt + 1} - "
+                            f"{entity_class} [{kwargs}]" + "\nSUCCEEDED[/]"
                         )
                     return added_entity
                 except Exception as e:
                     # database lock
-                    if hasattr(self, 'Session'):
+                    if hasattr(self, "Session"):
                         self.Session.remove()
                     if attempt < 4:
                         # Exponential backoff with jitter
-                        base_delay = self.base_delay * (2 ** attempt)
+                        base_delay = self.base_delay * (2**attempt)
                         jitter = random.uniform(0, base_delay * 0.3)
                         delay = min(self.max_delay, base_delay + jitter)
 
                         logger.warning(
-                            f"[blink]_sync_add_entity - retry {attempt+1} - "
-                            f"{entity_class} [{kwargs}]" +
-                            f"\ndelay={delay:.2f}s: {e}[/]"
+                            f"[blink]_sync_add_entity - retry {attempt + 1} - "
+                            f"{entity_class} [{kwargs}]" + f"\ndelay={delay:.2f}s: {e}[/]"
                         )
                         time.sleep(delay)
                     else:
@@ -158,14 +129,13 @@ class DAOBase:
         session = self._get_session()
         try:
             # CRITICAL: Acquire immediate write lock for SQLite
-            if 'sqlite' in str(self.engine.url):
+            if "sqlite" in str(self.engine.url):
                 session.execute(text("BEGIN IMMEDIATE"))
 
             new_entity = entity_class(**kwargs)
             session.add(new_entity)
             session.flush()
-            entity_id = getattr(new_entity, "id", None) \
-                        or getattr(new_entity, "uuid", None)
+            entity_id = getattr(new_entity, "id", None) or getattr(new_entity, "uuid", None)
             session.commit()
             return entity_id
         except Exception:
@@ -183,7 +153,6 @@ class DAOBase:
             await session.commit()
             return entity_id
 
-
     def _batch_add_entities(self, entity_class, **kwargs):
         # truncate any datetime fields before insert
         for item in list(kwargs.values())[0]:
@@ -196,28 +165,22 @@ class DAOBase:
         else:
             for attempt in range(5):
                 try:
-                    batch_added_entity = \
-                        self._sync_batch_add_entities(entity_class, **kwargs)
+                    batch_added_entity = self._sync_batch_add_entities(entity_class, **kwargs)
                     if attempt > 0:
                         logger.warning(
-                            f"[blink]_sync_batch_add_entities - " +
-                            f"retry {attempt+1} - "
-                            f"{entity_class} [{kwargs}]" +
-                            f"\nSUCCEEDED[/]"
+                            "[blink]_sync_batch_add_entities - " + f"retry {attempt + 1} - "
+                            f"{entity_class} [{kwargs}]" + "\nSUCCEEDED[/]"
                         )
                     return batch_added_entity
                 except Exception as e:
                     # database lock
-                    if hasattr(self, 'Session'):
+                    if hasattr(self, "Session"):
                         self.Session.remove()
                     if attempt < 4:
-                        delay = min(self.max_delay,
-                                    self.base_delay * (2 ** attempt))
+                        delay = min(self.max_delay, self.base_delay * (2**attempt))
                         logger.warning(
-                            "[blink]_sync_batch_add_entities - " +
-                            f"retry {attempt+1} - "
-                            f"{entity_class} [{kwargs}]" +
-                            f"\ndelay={delay:.2f}s: {e}[/]"
+                            "[blink]_sync_batch_add_entities - " + f"retry {attempt + 1} - "
+                            f"{entity_class} [{kwargs}]" + f"\ndelay={delay:.2f}s: {e}[/]"
                         )
                         time.sleep(delay)
                     else:
@@ -229,11 +192,10 @@ class DAOBase:
         session = self._get_session()
         try:
             # CRITICAL: Acquire immediate write lock for SQLite
-            if 'sqlite' in str(self.engine.url):
+            if "sqlite" in str(self.engine.url):
                 session.execute(text("BEGIN IMMEDIATE"))
 
-            session.add_all([entity_class(**item) \
-                             for item in list(kwargs.values())[0]])
+            session.add_all([entity_class(**item) for item in list(kwargs.values())[0]])
             session.flush()
             session.expire_all()
             session.commit()
@@ -249,7 +211,6 @@ class DAOBase:
             await session.flush()
             await session.commit()
 
-
     def _update_entity(self, entity_class, entity_id, **kwargs):
         # truncate any datetime fields before update
         for k, v in kwargs.items():
@@ -257,35 +218,26 @@ class DAOBase:
                 kwargs[k] = _truncate_to_millis(v)
 
         if self.is_async:
-            return self._async_update_entity(
-                    entity_class, entity_id, **kwargs
-                )
+            return self._async_update_entity(entity_class, entity_id, **kwargs)
         else:
             for attempt in range(5):
                 try:
-                    updated_entity = self._sync_update_entity(
-                        entity_class, entity_id, **kwargs
-                    )
+                    updated_entity = self._sync_update_entity(entity_class, entity_id, **kwargs)
                     if attempt > 0:
                         logger.warning(
-                            f"[blink]_sync_update_entity - " +
-                            f"retry {attempt+1} - "
-                            f"{entity_class} [{kwargs}]" +
-                            f"\nSUCCEEDED[/]"
+                            "[blink]_sync_update_entity - " + f"retry {attempt + 1} - "
+                            f"{entity_class} [{kwargs}]" + "\nSUCCEEDED[/]"
                         )
                     return updated_entity
                 except Exception as e:
                     # database lock
-                    if hasattr(self, 'Session'):
+                    if hasattr(self, "Session"):
                         self.Session.remove()
                     if attempt < 4:
-                        delay = min(self.max_delay,
-                                    self.base_delay * (2 ** attempt))
+                        delay = min(self.max_delay, self.base_delay * (2**attempt))
                         logger.warning(
-                            f"[blink]_sync_update_entity - retry " +
-                            f"retry {attempt+1} - "
-                            f"{entity_class} [{kwargs}]" +
-                            f"\ndelay={delay:.2f}s: {e}[/]"
+                            "[blink]_sync_update_entity - retry " + f"retry {attempt + 1} - "
+                            f"{entity_class} [{kwargs}]" + f"\ndelay={delay:.2f}s: {e}[/]"
                         )
                         time.sleep(delay)
                     else:
@@ -293,16 +245,14 @@ class DAOBase:
                         # on the last attempt
                         raise
 
-    def _sync_update_entity(
-        self, entity_class, entity_id, **kwargs
-    ):
+    def _sync_update_entity(self, entity_class, entity_id, **kwargs):
         session = self._get_session()
         try:
             # CRITICAL: Acquire immediate write lock for SQLite
-            if 'sqlite' in str(self.engine.url):
+            if "sqlite" in str(self.engine.url):
                 session.execute(text("BEGIN IMMEDIATE"))
 
-            entity = session.query(entity_class).get(entity_id)
+            entity = session.get(entity_class, entity_id)
             if not entity:
                 session.close()
                 return None
@@ -316,13 +266,9 @@ class DAOBase:
         finally:
             session.close()
 
-    async def _async_update_entity(
-        self, entity_class, entity_id, **kwargs
-    ):
+    async def _async_update_entity(self, entity_class, entity_id, **kwargs):
         async with self._get_session() as session:
-            result = await session.execute(
-                select(entity_class).filter_by(id=entity_id)
-            )
+            result = await session.execute(select(entity_class).filter_by(id=entity_id))
             entity = result.scalar_one_or_none()
             if not entity:
                 return None
@@ -330,7 +276,6 @@ class DAOBase:
                 setattr(entity, key, value)
             await session.commit()
             return entity
-
 
     def _get_entity(self, entity_class, **filters):
         if self.is_async:
@@ -340,18 +285,14 @@ class DAOBase:
 
     def _sync_get_entity(self, entity_class, **filters):
         session = self._get_session()
-        result = session.query(entity_class) \
-                    .filter_by(**filters).first()
+        result = session.query(entity_class).filter_by(**filters).first()
         session.close()
         return result
 
     async def _async_get_entity(self, entity_class, **filters):
         async with self._get_session() as session:
-            result = await session.execute(
-                select(entity_class).filter_by(**filters)
-            )
+            result = await session.execute(select(entity_class).filter_by(**filters))
             return result.scalar_one_or_none()
-
 
     def _get_entities(self, entity_class, **filters):
         if self.is_async:
@@ -367,9 +308,7 @@ class DAOBase:
 
     async def _async_get_entities(self, entity_class, **filters):
         async with self._get_session() as session:
-            result = await session.execute(
-                select(entity_class).filter_by(**filters)
-            )
+            result = await session.execute(select(entity_class).filter_by(**filters))
             return result.scalars().all()
 
 
@@ -397,7 +336,7 @@ class DAO(DAOBase):
         """Update task row’s fields by its id."""
         return self._update_entity(Task, entity_id=id, **kwargs)
 
-    def get_executions(self, exec_name) -> List[Execution]:
+    def get_executions(self, exec_name) -> list[Execution]:
         return self._get_entities(Execution, exec_name=exec_name)
 
     def get_execution(self, id) -> Execution:
@@ -406,7 +345,7 @@ class DAO(DAOBase):
     def get_task(self, id) -> Task:
         return self._get_entity(Task, id=id)
 
-    def get_tasks_by_execution(self, exec_id) -> List[Task]:
+    def get_tasks_by_execution(self, exec_id) -> list[Task]:
         return self._get_entities(Task, exec_id=exec_id)
 
     def add_task_trace(self, **kwargs):
@@ -427,29 +366,31 @@ class AsyncDAO(DAOBase):
         return await self._get_entity(Execution, id=id)
 
     async def get_executions_count(
-        self,
-        pipeline_name: str,
-        execs_status: Optional[str] = None
+        self, pipeline_name: str, execs_status: str | None = None
     ) -> int:
         """Count executions filtered by pipeline_name and optionally status.
 
-        Note: no cache, executions count is a living var.
+        Parameters
+        ----------
+        pipeline_name : str
+            the pipeline name to consider.
+        execs_status : str
+            any None/success/failure.
 
-        Params:
-            - pipeline_name (str):
-                the pipeline name to consider
-            - execs_status (str):
-                any None/success/failure
+        Returns
+        -------
+        int
+            count of matching executions.
 
-        Results:
-            - int:
-                count of matching executions
+        Notes
+        -----
+        no cache, executions count is a living var.
         """
         filters = [Execution.name == pipeline_name]
 
         if execs_status:
             failed_subquery = (
-                select(func.max(case((Task.failed == True, 1), else_=0)))
+                select(func.max(case((Task.failed.is_(True), 1), else_=0)))
                 .where(Task.exec_id == Execution.id)
                 .scalar_subquery()
             )
@@ -466,9 +407,7 @@ class AsyncDAO(DAOBase):
             result = await session.execute(statement)
             return result.scalar()
 
-    async def get_distinct_execution_names(
-        self, sorted=False
-    ) -> List[str]:
+    async def get_distinct_execution_names(self, sorted=False) -> list[str]:
         statement = select(Execution.name).distinct()
         if sorted:
             statement = statement.order_by(Execution.name)
@@ -477,13 +416,10 @@ class AsyncDAO(DAOBase):
             result = await session.execute(statement)
             return [row[0] for row in result.all()]
 
-    async def get_distinct_execution_usernames(
-        self, sorted=False
-    ) -> List[str]:
+    async def get_distinct_execution_usernames(self, sorted=False) -> list[str]:
         statement = select(Execution.username).distinct()
         if sorted:
-            statement = statement.order_by(
-                Execution.username)
+            statement = statement.order_by(Execution.username)
 
         async with self._get_session() as session:
             result = await session.execute(statement)
@@ -491,47 +427,46 @@ class AsyncDAO(DAOBase):
 
     async def get_executions_ext(
         self,
-        pipeline_name: Optional[str] = None,
-        username: Optional[str] = None,
-        before_datetime: Optional[datetime] = None,
-        execs_status: Optional[str] = None,
-        n: Optional[int] = None,
-        descending: Optional[bool] = False
-    ) -> List[ExecutionExt]:
-        """Lists Execution records from a given start time.
+        pipeline_name: str | None = None,
+        username: str | None = None,
+        before_datetime: datetime | None = None,
+        execs_status: str | None = None,
+        n: int | None = None,
+        descending: bool | None = False,
+    ) -> list[ExecutionExt]:
+        """List Execution records from a given start time.
 
         extended to include 'failed y/n' status.
 
-        Params:
-            - pipeline_name (str):
-                the only retraining pipeline to consider
-                (if mentioned)
-            - username (str):
-                the user having lunched the executions
-                to consider (if mentioned)
-            - before_datetime (datetime):
-                UTC time from which to start listing
-            - execs_status str):
-                any (None)/success/failure
-            - n (int):
-                number of Executions to retrieve
-            - descending (bool):
-                sorting order, wheter latest comes first
-                or last
+        Parameters
+        ----------
+        pipeline_name : str
+            the only retraining pipeline to consider
+            (if mentioned)
+        username : str
+            the user having lunched the executions
+            to consider (if mentioned)
+        before_datetime : datetime
+            UTC time from which to start listing
+        execs_status : str
+            any (None)/success/failure
+        n : int
+            number of Executions to retrieve
+        descending : bool
+            sorting order, wheter latest comes first
+            or last
 
-        Results:
-            List[ExecutionExt]
+        Returns
+        -------
+        list[ExecutionExt]
         """
         # Subquery to check if execution has any failed tasks
         failed_subquery = (
-            select(func.max(case((Task.failed == True, 1), else_=0)))
+            select(func.max(case((Task.failed.is_(True), 1), else_=0)))
             .where(Task.exec_id == Execution.id)
             .scalar_subquery()
         )
-        statement = select(
-            Execution,
-            failed_subquery.label('has_failed_task')
-        )
+        statement = select(Execution, failed_subquery.label("has_failed_task"))
 
         filters = []
         if pipeline_name is not None:
@@ -542,8 +477,7 @@ class AsyncDAO(DAOBase):
             filters.append(Execution._start_timestamp <= before_datetime)
         if execs_status is not None:
             if execs_status == "success":
-                filters.append(and_(failed_subquery == 0,
-                                    Execution._end_timestamp.is_not(None)))
+                filters.append(and_(failed_subquery == 0, Execution._end_timestamp.is_not(None)))
             elif execs_status == "failure":
                 filters.append(failed_subquery == 1)
 
@@ -569,21 +503,21 @@ class AsyncDAO(DAOBase):
 
             return executions_ext
 
-    async def get_execution_tasks_list(
-        self, execution_id: int
-    ) -> Optional[List[TaskExt]]:
+    async def get_execution_tasks_list(self, execution_id: int) -> list[TaskExt] | None:
         """
-        Return all Task records for the given execution_id
-        as list.
+        Return all Task records for the given execution_id as list.
 
         Note: no cache, tasks are living vars.
 
-        Params:
-            - execution_id (int):
-                The Execution.id to filter TaskType items on.
+        Parameters
+        ----------
+        execution_id : int
+            The Execution.id to filter TaskType items on.
 
-        Results:
-            list of tasks if found, else None
+        Returns
+        -------
+        list, optional
+            list of tasks if found, else None.
         """
         tasktype_subq = (
             select(
@@ -593,7 +527,7 @@ class AsyncDAO(DAOBase):
                 TaskType.ui_css,
                 TaskType.is_parallel,
                 TaskType.merge_func,
-                TaskType.taskgroup_uuid
+                TaskType.taskgroup_uuid,
             )
             .where(TaskType.exec_id == execution_id)
             .subquery()
@@ -606,13 +540,9 @@ class AsyncDAO(DAOBase):
                 tasktype_subq.c.is_parallel,
                 tasktype_subq.c.merge_func,
                 tasktype_subq.c.taskgroup_uuid,
-
-                Task
+                Task,
             )
-            .where(and_(
-                Task.tasktype_uuid == tasktype_subq.c.uuid,
-                Task.exec_id == execution_id
-            ))
+            .where(and_(Task.tasktype_uuid == tasktype_subq.c.uuid, Task.exec_id == execution_id))
             .order_by(Task._start_timestamp, Task.id)
         )
 
@@ -625,39 +555,36 @@ class AsyncDAO(DAOBase):
 
             # Convert ORM objects to model objects
             out_list = []
-            for (
-                name, ui_css, is_parallel, merge_func, taskgroup_uuid,
-                task_orm_obj
-            ) in rows:
-                task_ext = TaskExt(**{**task_orm_obj.__dict__,
-                                      "name": name, "ui_css": ui_css,
-                                      "is_parallel": is_parallel,
-                                      "merge_func": merge_func["name"] \
-                                                    if merge_func else None,
-                                      "taskgroup_uuid": taskgroup_uuid})
+            for name, ui_css, is_parallel, merge_func, taskgroup_uuid, task_orm_obj in rows:
+                task_ext = TaskExt(**{
+                    **task_orm_obj.__dict__,
+                    "name": name,
+                    "ui_css": ui_css,
+                    "is_parallel": is_parallel,
+                    "merge_func": merge_func["name"] if merge_func else None,
+                    "taskgroup_uuid": taskgroup_uuid,
+                })
                 out_list.append(task_ext)
 
             return out_list
 
     @lru_cache
-    async def get_execution_tasktypes_list(
-        self, execution_id: int
-    ) -> Optional[List[TaskType]]:
+    async def get_execution_tasktypes_list(self, execution_id: int) -> list[TaskType] | None:
         """
-        Return all TaskType rows for the given execution_id
-        as list.
+        Return all TaskType rows for the given execution_id as list.
 
-        Params:
-            - execution_id (int):
-                The Execution.id to filter TaskType items on.
+        Parameters
+        ----------
+        execution_id : int
+            The Execution.id to filter TaskType items on.
 
-        Results:
-            list of tasktypes if found, else None
+        Returns
+        -------
+        list, optional
+            list of tasktypes if found, else None.
         """
         statement = (
-            select(TaskType)
-            .where(TaskType.exec_id == execution_id)
-            .order_by(TaskType.order)
+            select(TaskType).where(TaskType.exec_id == execution_id).order_by(TaskType.order)
         )
 
         async with self._get_session() as session:
@@ -675,24 +602,22 @@ class AsyncDAO(DAOBase):
             return out_list
 
     @lru_cache
-    async def get_execution_taskgroups_list(
-        self, execution_id: int
-    ) -> Optional[List[TaskGroup]]:
+    async def get_execution_taskgroups_list(self, execution_id: int) -> list[TaskGroup] | None:
         """
-        Return all TaskGroup records for the given execution_id
-        as list.
+        Return all TaskGroup records for the given execution_id as list.
 
-        Params:
-            - execution_id (int):
-                The Execution.id to filter TaskGroup items on.
+        Parameters
+        ----------
+        execution_id : int
+            The Execution.id to filter TaskGroup items on.
 
-        Results:
-            list of taskgroups if found, else None
+        Returns
+        -------
+        list, optional
+            list of taskgroups if found, else None.
         """
         statement = (
-            select(TaskGroup)
-            .where(TaskGroup.exec_id == execution_id)
-            .order_by(TaskGroup.order)
+            select(TaskGroup).where(TaskGroup.exec_id == execution_id).order_by(TaskGroup.order)
         )
 
         async with self._get_session() as session:
@@ -711,17 +636,15 @@ class AsyncDAO(DAOBase):
 
     async def get_execution_tasks_with_name(
         self, execution_id: int, task_type_name: str
-    ) -> Optional[List[Task]]:
-        stmt = select(Task).join(
-            TaskType,
-            and_(
-                Task.exec_id == TaskType.exec_id,
-                Task.tasktype_uuid == TaskType.uuid
+    ) -> list[Task] | None:
+        stmt = (
+            select(Task)
+            .join(
+                TaskType,
+                and_(Task.exec_id == TaskType.exec_id, Task.tasktype_uuid == TaskType.uuid),
             )
-        ).where(and_(
-            Task.exec_id == execution_id,
-            TaskType.name == task_type_name
-        ))
+            .where(and_(Task.exec_id == execution_id, TaskType.name == task_type_name))
+        )
 
         async with self._get_session() as session:
             result = await session.execute(stmt)
@@ -729,28 +652,29 @@ class AsyncDAO(DAOBase):
 
             return tasks_list
 
-
     @lru_cache
-    async def get_execution_info(
-        self, execution_id: int
-    ) -> Optional[dict]:
+    async def get_execution_info(self, execution_id: int) -> dict | None:
         """
         Return basic info (name and _start_timestamp) for an Execution.
 
-        Params:
-            - execution_id (int):
-                the Execution.id to query.
+        Parameters
+        ----------
+        execution_id : int
+            the Execution.id to query.
 
-        Results:
-            dict with keys 'name' and '_start_timestamp' if found,
-            else None
+        Returns
+        -------
+        dict, optional
+            keys :
+                - 'name' (str)
+                - 'username' (str)
+                - '_start_timestamp' (str) - ISO
+                - 'docstring' (str)
+            None if not found.
         """
-        statement = (
-            select(Execution.name, Execution.username,
-                   Execution._start_timestamp,
-                   Execution.docstring)
-            .where(Execution.id == execution_id)
-        )
+        statement = select(
+            Execution.name, Execution.username, Execution._start_timestamp, Execution.docstring
+        ).where(Execution.id == execution_id)
         async with self._get_session() as session:
             result = await session.execute(statement)
             row = result.first()
@@ -761,38 +685,36 @@ class AsyncDAO(DAOBase):
                 "name": name,
                 "username": username,
                 "start_timestamp": _start_timestamp.isoformat(),
-                "docstring": docstring
+                "docstring": docstring,
             }
 
-    async def get_execution_number(
-        self, execution_id: int
-    ) -> Optional[dict]:
+    async def get_execution_number(self, execution_id: int) -> dict | None:
         """
         Return occurrences info for an given Execution name.
 
         Note: no cache, executions count is a living var.
 
-        Params:
-            - execution_id (int):
-                the Execution.id to query for a name.
+        Parameters
+        ----------
+        execution_id : int
+            the Execution.id to query for a name.
 
-        Returns:
-            dict if execution found else None.
-            Includes:
+        Returns
+        -------
+        dict, optional
+            keys :
               - execution name
-              - total executions with the same name
+              - total count of executions with the same name
               - number: count of executions with
                 start_ts <= that execution's start_ts
               - completed: count executions with
                 non-null _end_timestamp
               - failed: count of completed executions that
                 have at least one failed Task
+            None if not found.
         """
         exec_subq = (
-            select(
-                Execution.name,
-                Execution._start_timestamp.label("start_ts")
-            )
+            select(Execution.name, Execution._start_timestamp.label("start_ts"))
             .where(Execution.id == execution_id)
             .subquery()
         )
@@ -802,7 +724,7 @@ class AsyncDAO(DAOBase):
         failed_exists = (
             select(1)
             .where(task_alias.exec_id == Execution.id)
-            .where(task_alias.failed == True)
+            .where(task_alias.failed.is_(True))
             .limit(1)
             .exists()
         )
@@ -812,18 +734,11 @@ class AsyncDAO(DAOBase):
                 Execution.name,
                 func.count(Execution.id).label("total_count"),
                 func.count(
-                    func.nullif(
-                        Execution._start_timestamp > exec_subq.c.start_ts, True
-                    )
+                    func.nullif(Execution._start_timestamp > exec_subq.c.start_ts, True)
                 ).label("number"),
+                func.count(func.nullif(Execution._end_timestamp is None, True)).label("completed"),
                 func.count(
-                    func.nullif(Execution._end_timestamp == None, True)
-                ).label("completed"),
-                func.count(
-                    func.nullif(
-                        (Execution._end_timestamp != None) & failed_exists,
-                        False
-                    )
+                    func.nullif((Execution._end_timestamp.is_not(None)) & failed_exists, False)
                 ).label("failed"),
             )
             .where(Execution.name == exec_subq.c.name)
@@ -845,10 +760,8 @@ class AsyncDAO(DAOBase):
             }
 
     @lru_cache
-    async def get_taskgroups_hierarchy(
-        self, taskgroup_uuid: UUID
-    ) -> Optional[List[dict]]:
-        """Returns a hierarchical list of nested taskgroups.
+    async def get_taskgroups_hierarchy(self, taskgroup_uuid: UUID) -> list[dict] | None:
+        """Return a hierarchical list of nested taskgroups.
 
         Upward, starting from the one passed as argument.
         Deepest first.
@@ -872,13 +785,10 @@ class AsyncDAO(DAOBase):
         SELECT * FROM parent_chain ORDER BY "order";
         """
         async with self._get_session() as session:
-            result = await session.execute(
-                                text(recursive_sql),
-                                {"start_uuid": taskgroup_uuid.hex})
+            result = await session.execute(text(recursive_sql), {"start_uuid": taskgroup_uuid.hex})
             rows = result.fetchall()
             if not rows:
-                logger.warning(
-                    f"TaskGroup {taskgroup_uuid} not found.")
+                logger.warning(f"TaskGroup {taskgroup_uuid} not found.")
                 return None
 
             out = []
@@ -890,20 +800,14 @@ class AsyncDAO(DAOBase):
                         str(UUID(hex=mapping["uuid"]))
                     ),
                     "name": mapping.get("name"),
-                    "ui_css": json.loads(mapping.get("ui_css")) \
-                              if mapping.get("ui_css") else None
+                    "ui_css": json.loads(mapping.get("ui_css")) if mapping.get("ui_css") else None,
                 })
 
             return out
 
     @lru_cache
-    async def get_tasktype_docstring(
-        self, tasktype_uuid: str
-    ) -> Optional[str]:
-        statement = (
-            select(TaskType.docstring)
-            .where(TaskType.uuid == UUID(tasktype_uuid))
-        )
+    async def get_tasktype_docstring(self, tasktype_uuid: str) -> str | None:
+        statement = select(TaskType.docstring).where(TaskType.uuid == UUID(tasktype_uuid))
         async with self._get_session() as session:
             result = await session.execute(statement)
             row = result.first()
@@ -911,27 +815,26 @@ class AsyncDAO(DAOBase):
                 return None
             return row[0]
 
-
-    async def get_task_traces(
-        self, task_id: int
-    ) -> Optional[List[dict]]:
+    async def get_task_traces(self, task_id: int) -> list[dict] | None:
         """
-        Return all TaskTrace records for the given task_id
-        as list of dictionaries.
+        Return all TaskTrace records for the given task_id.
 
-        Params:
-            - task_id (int):
-                The Task.id to filter TaskTrace items on.
+        As list of dictionaries.
 
-        Results:
-            list of trace dicts if found, else None
+        Parameters
+        ----------
+        task_id : int
+            The Task.id to filter TaskTrace items on.
+
+        Returns
+        -------
+        list, optional
+            list of trace dicts if found, else None.
         """
         statement = (
             select(TaskTrace)
             .where(TaskTrace.task_id == task_id)
-            .order_by(
-                TaskTrace.timestamp, TaskTrace.microsec,
-                TaskTrace.microsec_idx, TaskTrace.id)
+            .order_by(TaskTrace.timestamp, TaskTrace.microsec, TaskTrace.microsec_idx, TaskTrace.id)
         )
 
         async with self._get_session() as session:
@@ -950,20 +853,20 @@ class AsyncDAO(DAOBase):
                     "microsec": trace_orm_obj.microsec,
                     "microsec_idx": trace_orm_obj.microsec_idx,
                     "content": trace_orm_obj.content,
-                    "is_err": trace_orm_obj.is_err
+                    "is_err": trace_orm_obj.is_err,
                 })
 
             return out_list
 
 
-#////////////////////////////////////////////////////////////////////////////
+# ////////////////////////////////////////////////////////////////////////////
 
 
-new_execution_api_endpoint = \
-    f"{os.environ['RP_WEB_SERVER_URL']}/api/v1/new_execution_event"
+new_execution_api_endpoint = f"{os.environ['RP_WEB_SERVER_URL']}/api/v1/new_execution_event"
+
 
 @event.listens_for(Execution, "after_insert")
-def after_insert_listener(mapper, connection, target):
+def after_insert_execution_listener(mapper, connection, target):
     """DAG-engine notifies WebConsole server.
 
     This fires when Execution is created.
@@ -981,17 +884,14 @@ def after_insert_listener(mapper, connection, target):
 
     try:
         requests.post(new_execution_api_endpoint, json=data_snapshot)
-    except requests.exceptions.ConnectionError as ce:
-        logger.info(
-            "WebConsole apparently not running " +
-            f"({os.environ['RP_WEB_SERVER_URL']})"
-        )
+    except requests.exceptions.ConnectionError:
+        logger.info("WebConsole apparently not running " + f"({os.environ['RP_WEB_SERVER_URL']})")
     except Exception as ex:
         logger.warning(ex)
 
 
-execution_ended_api_endpoint = \
-    f"{os.environ['RP_WEB_SERVER_URL']}/api/v1/execution_end_event"
+execution_ended_api_endpoint = f"{os.environ['RP_WEB_SERVER_URL']}/api/v1/execution_end_event"
+
 
 @event.listens_for(Execution._end_timestamp, "set", retval=False)
 def after_end_timestamp_change(target, newValue, oldvalue, initiator):
@@ -1020,24 +920,23 @@ def after_end_timestamp_change(target, newValue, oldvalue, initiator):
 
         try:
             requests.post(execution_ended_api_endpoint, json=data_snapshot)
-        except requests.exceptions.ConnectionError as ce:
+        except requests.exceptions.ConnectionError:
             logger.info(
-                "WebConsole apparently not running " +
-                f"({os.environ['RP_WEB_SERVER_URL']})"
+                "WebConsole apparently not running " + f"({os.environ['RP_WEB_SERVER_URL']})"
             )
         except Exception as ex:
             logger.warning(ex)
 
 
-#////////////////////////////////////////////////////////////////////////////
+# ////////////////////////////////////////////////////////////////////////////
 
 
-new_task_api_endpoint = \
-    f"{os.environ['RP_WEB_SERVER_URL']}/api/v1/new_task_event"
+new_task_api_endpoint = f"{os.environ['RP_WEB_SERVER_URL']}/api/v1/new_task_event"
+
 
 @event.listens_for(Task, "after_insert")
-def after_insert_listener(mapper, connection, target):
-    """DAG-engine notifies WebConsole server.
+def after_insert_task_listener(mapper, connection, target):
+    """Norify WebConsole server from DAG-engine.
 
     This fires when Task is created.
     Emits a TaskExt dict.
@@ -1080,11 +979,15 @@ def after_insert_listener(mapper, connection, target):
             data_snapshot["order"] = tasktype.order
             data_snapshot["is_parallel"] = tasktype.is_parallel
             data_snapshot["merge_func"] = tasktype.merge_func
-            data_snapshot["taskgroup_uuid"] = str(getattr(tasktype, "taskgroup_uuid", "")) \
-                if getattr(tasktype, "taskgroup_uuid", None) is not None else None
+            data_snapshot["taskgroup_uuid"] = (
+                str(getattr(tasktype, "taskgroup_uuid", ""))
+                if getattr(tasktype, "taskgroup_uuid", None) is not None
+                else None
+            )
         session.close()
-    except Exception as ex:
+    except Exception:
         import traceback as _traceback
+
         # Do NOT use traceback.print_exc() here: it routes through
         # builtins.print which may be monkey-patched by rp_logging in the
         # worker process, causing infinite recursion if the patch was applied
@@ -1100,18 +1003,18 @@ def after_insert_listener(mapper, connection, target):
 
     try:
         requests.post(new_task_api_endpoint, json=data_snapshot)
-    except requests.exceptions.ConnectionError as ce:
+    except requests.exceptions.ConnectionError:
         # logger.info(
-            # "WebConsole apparently not running " +
-            # f"({os.environ['RP_WEB_SERVER_URL']})"
+        # "WebConsole apparently not running " +
+        # f"({os.environ['RP_WEB_SERVER_URL']})"
         # )
         pass
     except Exception as ex:
         logger.warning(ex)
 
 
-task_ended_api_endpoint = \
-    f"{os.environ['RP_WEB_SERVER_URL']}/api/v1/task_end_event"
+task_ended_api_endpoint = f"{os.environ['RP_WEB_SERVER_URL']}/api/v1/task_end_event"
+
 
 @event.listens_for(Task, "after_update")
 def after_task_update(mapper, connection, target):
@@ -1120,7 +1023,6 @@ def after_task_update(mapper, connection, target):
     This fires when Task's _end_timestamp changes.
     Emits a TaskExt dict.
     """
-
     if target._end_timestamp is not None:
         # Here, both _end_timestamp and failed are up-to-date
         # --- retrieve Task fields ---
@@ -1143,11 +1045,9 @@ def after_task_update(mapper, connection, target):
         try:
             session = object_session(target)
             if session is None:
-                logger.warning(
-                   "No active session for Task; skipping notification.")
+                logger.warning("No active session for Task; skipping notification.")
                 return
-            tasktype = session.get(
-                TaskType, (target.exec_id, target.tasktype_uuid))
+            tasktype = session.get(TaskType, (target.exec_id, target.tasktype_uuid))
             # Add TaskType fields for TaskExt
             data_snapshot["docstring"] = tasktype.docstring
             data_snapshot["name"] = tasktype.name
@@ -1155,13 +1055,15 @@ def after_task_update(mapper, connection, target):
             data_snapshot["order"] = tasktype.order
             data_snapshot["is_parallel"] = tasktype.is_parallel
             data_snapshot["merge_func"] = tasktype.merge_func
-            data_snapshot["taskgroup_uuid"] = \
-                str(getattr(tasktype, "taskgroup_uuid", "")) \
-                if getattr(tasktype, "taskgroup_uuid", None) is not None \
+            data_snapshot["taskgroup_uuid"] = (
+                str(getattr(tasktype, "taskgroup_uuid", ""))
+                if getattr(tasktype, "taskgroup_uuid", None) is not None
                 else None
+            )
             # DO NOT close the object session we conveniently take advantage of !!
-        except Exception as ex:
+        except Exception:
             import traceback
+
             traceback.print_exc()
             logger.exception("Worker thread crashed")
 
@@ -1169,14 +1071,15 @@ def after_task_update(mapper, connection, target):
 
         try:
             requests.post(task_ended_api_endpoint, json=data_snapshot)
-        except requests.exceptions.ConnectionError as ce:
+        except requests.exceptions.ConnectionError:
             # logger.info(
-                # "WebConsole apparently not running " +
-                # f"({os.environ['RP_WEB_SERVER_URL']})"
+            # "WebConsole apparently not running " +
+            # f"({os.environ['RP_WEB_SERVER_URL']})"
             # )
             pass
         except Exception as ex:
             logger.warning(ex)
+
 
 # ------
 
@@ -1186,9 +1089,10 @@ Each trace individual-streams immediately
 to WebConsole via gRPC.
 """
 
+
 @event.listens_for(TaskTrace, "after_insert")
-def after_insert_listener(mapper, connection, target):
-    """DAG-engine notifies WebConsole server via gRPC.
+def after_insert_task_trace_listener(mapper, connection, target):
+    """Notify WebConsole server via gRPC from DAG-engine.
 
     Each trace is sent immediately as it arrives.
     """
@@ -1206,21 +1110,18 @@ def after_insert_listener(mapper, connection, target):
             microsec=target.microsec,
             microsec_idx=target.microsec_idx,
             content=target.content,
-            is_err=target.is_err
+            is_err=target.is_err,
         )
 
         try:
             GrpcClient.stub().SendTrace(trace)
         except grpc.RpcError as e:
-            logger.error(
-                f"gRPC error: '{target.content}' - {e.code()} - {e.details()}")
+            logger.error(f"gRPC error: '{target.content}' - {e.code()} - {e.details()}")
         except Exception as ex:
-            logger.error(
-                f"Error sending trace: {ex}")
+            logger.error(f"Error sending trace: {ex}")
     else:
         # logger.info(
-            # "WebConsole apparently not running " +
-            # f"({os.environ['RP_WEB_SERVER_URL']})"
+        # "WebConsole apparently not running " +
+        # f"({os.environ['RP_WEB_SERVER_URL']})"
         # )
         pass
-

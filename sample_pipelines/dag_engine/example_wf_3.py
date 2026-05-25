@@ -1,13 +1,8 @@
-
 import os
 
-from retrain_pipelines.dag_engine.core import \
-    TaskPayload, task, taskgroup, \
-    dag, UiCss
-from retrain_pipelines.dag_engine.runtime import \
-    execute
-from retrain_pipelines.dag_engine.renderer import \
-    render_svg
+from retrain_pipelines.dag_engine.core import TaskPayload, task, taskgroup, dag, UiCss
+from retrain_pipelines.dag_engine.runtime import execute
+from retrain_pipelines.dag_engine.renderer import render_svg
 
 
 # ---- Example: Several groups of tasks, chained ----
@@ -16,13 +11,14 @@ from retrain_pipelines.dag_engine.renderer import \
 @task
 def start():
     """Root task."""
-    import time ; time.sleep(3)                             ### DEBUG - DELETE ###
+    import time
+
+    time.sleep(3)  ### DEBUG - DELETE ###
     return
 
 
 @task
 def snake_head_A1(_):
-
     # Do whatever you want
     print("Do whatever you want - A1")
 
@@ -31,7 +27,6 @@ def snake_head_A1(_):
 
 @task
 def snake_head_A2(_):
-
     # Do whatever you want
 
     return "A2"
@@ -39,7 +34,6 @@ def snake_head_A2(_):
 
 @task
 def snake_head_A3(_):
-
     # Do whatever you want
 
     return "A3"
@@ -72,7 +66,7 @@ def snake_head_B1(snake_heads_A_results: TaskPayload):
     this_task_result = [
         ("B1_" + snake_heads_A_results["snake_head_A1"]),
         ("B1_" + snake_heads_A_results["snake_head_A2"]),
-        ("B1_" + snake_heads_A_results["snake_head_A3"])
+        ("B1_" + snake_heads_A_results["snake_head_A3"]),
     ]
 
     print(this_task_result)
@@ -94,7 +88,7 @@ def snake_head_B2(snake_heads_A_results: TaskPayload):
     this_task_result = [
         ("B2_" + snake_heads_A_results["snake_head_A1"]),
         ("B2_" + snake_heads_A_results["snake_head_A2"]),
-        ("B2_" + snake_heads_A_results["snake_head_A3"])
+        ("B2_" + snake_heads_A_results["snake_head_A3"]),
     ]
 
     print(this_task_result)
@@ -116,7 +110,7 @@ def snake_head_B3(snake_heads_A_results: TaskPayload):
     this_task_result = [
         ("B3_" + snake_heads_A_results["snake_head_A1"]),
         ("B3_" + snake_heads_A_results["snake_head_A2"]),
-        ("B3_" + snake_heads_A_results["snake_head_A3"])
+        ("B3_" + snake_heads_A_results["snake_head_A3"]),
     ]
 
     print(this_task_result)
@@ -149,9 +143,9 @@ def join_snake_heads(snake_heads_B_results: TaskPayload):
     just for fun (and because "why not?")
     """
     this_task_result = (
-        snake_heads_B_results["snake_head_B1"] +
-        snake_heads_B_results["snake_head_B2"] +
-        snake_heads_B_results["snake_head_B3"]
+        snake_heads_B_results["snake_head_B1"]
+        + snake_heads_B_results["snake_head_B2"]
+        + snake_heads_B_results["snake_head_B3"]
     )
     return this_task_result
 
@@ -159,13 +153,19 @@ def join_snake_heads(snake_heads_B_results: TaskPayload):
 @task
 def end(payload: TaskPayload):
     # Since the herein task only has 1 direct parent =>
-    assert payload["join_snake_heads"] \
-            == payload.get("join_snake_heads") \
-            == payload
+    assert payload["join_snake_heads"] == payload.get("join_snake_heads") == payload
 
-    assert payload == ['B1_A1', 'B1_A2', 'B1_A3', \
-                       'B2_A1', 'B2_A2', 'B2_A3', \
-                       'B3_A1', 'B3_A2', 'B3_A3']
+    assert payload == [
+        "B1_A1",
+        "B1_A2",
+        "B1_A3",
+        "B2_A1",
+        "B2_A2",
+        "B2_A3",
+        "B3_A1",
+        "B3_A2",
+        "B3_A3",
+    ]
     return None
 
 
@@ -185,19 +185,18 @@ if __name__ == "__main__":
     # print(f"to_tasktypes_list : {retrain_pipeline.to_tasktypes_list(serializable=True)}")
 
     # Render the DAG
-    svg_fullname = os.path.realpath(os.path.join(
-        os.path.dirname(os.path.realpath(__file__)), "dag.html"
-    ))
+    svg_fullname = os.path.realpath(
+        os.path.join(os.path.dirname(os.path.realpath(__file__)), "dag.html")
+    )
     render_svg(retrain_pipeline, svg_fullname)
 
     # Run the DAG
     final_result, context_dump = execute(retrain_pipeline, params=None)
     print(
-        f"execution {context_dump['exec_id']} - " +
-        f"{context_dump['pipeline_name']} - final result : {final_result}"
+        f"execution {context_dump['exec_id']} - "
+        + f"{context_dump['pipeline_name']} - final result : {final_result}"
     )
     import json
-    print("context_dump : " +
-          json.dumps(context_dump, indent=4))
-    print(f"DAG SVG written to {svg_fullname}")
 
+    print("context_dump : " + json.dumps(context_dump, indent=4))
+    print(f"DAG SVG written to {svg_fullname}")

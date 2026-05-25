@@ -1,8 +1,9 @@
-
 import os
-import re
 import shutil
 import subprocess
+
+from setuptools import setup
+from setuptools.command.install import install
 
 LICENSE = "LICENSE"
 if os.path.exists(os.path.join("..", LICENSE)):
@@ -12,28 +13,33 @@ README = "README.md"
 if os.path.exists(os.path.join("..", README)):
     shutil.copy(os.path.join("..", README), README)
 
-from setuptools import setup, find_packages
-from setuptools.command.install import install
-
 
 class DependenciesCheckInstallCommand(install):
-    """Check for graphviz."""
+    """Check for graphviz.
+
+    !! LEGACY !! DELETE WHOLE THING !!
+    """
+
     def run(self):
         try:
             # Check if 'dot' (Graphviz executable) is available
-            subprocess.check_call(['dot', '-V'],
-                                  stdout=subprocess.DEVNULL,
-                                  stderr=subprocess.DEVNULL)
+            subprocess.check_call(
+                ["dot", "-V"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
         except (FileNotFoundError, subprocess.CalledProcessError):
             # Graphviz not installed or not found
-            print("Graphviz is not installed. Please install it " +
-                  "manually using 'sudo apt install graphviz' " +
-                  "for Debian-based systems, or " +
-                  "visit https://graphviz.org/download/ " +
-                  "for other platforms.")
+            print(
+                "Graphviz is not installed. Please install it "
+                + "manually using 'sudo apt install graphviz' "
+                + "for Debian-based systems, or "
+                + "visit https://graphviz.org/download/ "
+                + "for other platforms."
+            )
             # prompt the user to install it
-            if input("Do you want to continue installation " +
-                     "without Graphviz? [y/N]: ").lower() != 'y':
+            if (
+                input("Do you want to continue installation " + "without Graphviz? [y/N]: ").lower()
+                != "y"
+            ):
                 print("Installation aborted due to missing Graphviz.")
                 return
 
@@ -41,11 +47,14 @@ class DependenciesCheckInstallCommand(install):
 
 
 setup(
-    name='retrain_pipelines',
+    name="retrain_pipelines",
     author="Aurelien-Morgan",
     license="Apache-2.0",
+    # https://mypy.readthedocs.io/en/stable/running_mypy.html#missing-imports
+    packages=["retrain_pipelines"],
+    package_data={"retrain_pipelines": ["py.typed"]},
+    # graphviz  #                                           !! LEGACY !! DELETE !!
     cmdclass={
-        'install': DependenciesCheckInstallCommand,
+        "install": DependenciesCheckInstallCommand,
     },
 )
-

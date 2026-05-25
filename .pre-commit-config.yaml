@@ -1,0 +1,52 @@
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff check
+        entry: ruff check
+        language: system
+        types: [python]
+        args:
+          [
+            "pkg_src",
+            "--fix",
+            "--show-fixes",
+            "--exclude", "pkg_src/build/",
+            "--exclude", "*.ipynb",
+            "--exclude", "pkg_src/retrain_pipelines/dag_engine/db/alembic/versions/",
+            "--exclude", "pkg_src/retrain_pipelines/dag_engine/db/grpc/task_trace_pb2.py",
+            "--exclude", "pkg_src/retrain_pipelines/dag_engine/db/grpc/task_trace_pb2_grpc.py",
+          ]
+        pass_filenames: false
+
+      - id: ruff-format
+        name: ruff format
+        entry: ruff format
+        language: system
+        types: [python]
+        args:
+          [
+            "pkg_src",
+            "--exclude", "pkg_src/build/",
+            "--exclude", "*.ipynb",
+            "--exclude", "pkg_src/retrain_pipelines/dag_engine/db/alembic/versions/",
+            "--exclude", "pkg_src/retrain_pipelines/dag_engine/db/grpc/task_trace_pb2.py",
+            "--exclude", "pkg_src/retrain_pipelines/dag_engine/db/grpc/task_trace_pb2_grpc.py",
+          ]
+        pass_filenames: false
+
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy
+        language: system
+        pass_filenames: false
+        entry: bash -c 'MYPYPATH=pkg_src:pkg_src/.mypy_stubs python -m mypy pkg_src --exclude pkg_src/build/'
+
+  - repo: local
+    hooks:
+      - id: pytest-unit
+        name: pytest unit
+        language: system
+        pass_filenames: false
+        entry: pytest tests/unit

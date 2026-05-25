@@ -66,6 +66,7 @@ dependencies = [
     "pillow>=10.4.0",
     "regex>=2022.10.31",
     "rich>=14.0.0",
+    "SQLAlchemy>=2.0.41",
     "alembic>=1.16.2",
     "cloudpickle>=3.0.0",
     "aiosqlite>=0.21.0",
@@ -83,7 +84,12 @@ local = [
     "pyngrok>=7.5.1"
 ]
 dev = [
-    "sqlite-web"
+    "sqlite-web",
+    "pytest>=8.3.3",
+    "pytest-env>=1.1.5",
+    "ruff>=0.15.12",
+    "mypy>=2.0.0",
+    "pre-commit>=4.6.0"
 ]
 
 [tool.setuptools_scm]
@@ -99,28 +105,74 @@ where = ["."]
 include-package-data = true
 
 [tool.setuptools.package-data]
-"retrain_pipelines.pipeline_card.static" = ["*.js"]
-"retrain_pipelines.model.mf_tabnet_classif_torchserve" = ["Dockerfile.torchserve"]
+"retrain_pipelines" = ["*launcher.sh"]
+"retrain_pipelines.dag_engine.web_console.static" = ["*.*"]
+"retrain_pipelines.dag_engine.web_console.utils.execution" = ["svg_template.html"]
+"retrain_pipelines.dag_engine.db.alembic" = ["script.py.mako"]
+"retrain_pipelines.dag_engine.db.grpc" = ["README.txt", "*.proto"]
+"retrain_pipelines.model" = ["**/Dockerfile.*", "**/.dockerignore", "**/*template.*"]
+"retrain_pipelines.pipeline_card" = ["**/*template.*"]
 
 [tool.setuptools.exclude-package-data]
 "*" = ["MANIFEST.in"]
 
 [tool.pytest.ini_options]
 addopts = "--maxfail=1 --disable-warnings -q"
-testpaths = ["tests"]
+testpaths = ["tests/unit"]
 
 [tool.ruff]
-src = ["src"]
-fix = true
-lint.select = ["E", "F", "B", "UP", "YTT", "C", "DTZ", "PYI", "PT", "I", "FURB", "RUF"]
-lint.ignore = ["B028"]
-lint.preview = true
+preview = true
+src = ["pkg_src"]
+target-version = "py310"
+show-fixes = true
+line-length = 100
+exclude = [
+    "*.ipynb",
+    "**/*.ipynb",
+    "pkg_src/retrain_pipelines/dag_engine/db/alembic/versions/",
+    "pkg_src/retrain_pipelines/dag_engine/db/grpc/task_trace_pb2_grpc.py",
+    "pkg_src/retrain_pipelines/dag_engine/db/grpc/task_trace_pb2.py",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "D"]
+extend-select = [
+    "D417",   # Param in signature missing from docstring
+    "DOC102", # Documented param not in signature - REQUIRES PREVIEW FLAG
+    "D414",   # Section has no content
+    "D406",   # Section name missing trailing newline
+    "D407",   # Missing dashed underline after section header
+    "D408",   # Underline not on line immediately after section name
+    "D409",   # Underline length doesn't match section name
+    "D410",   # Missing blank line after section
+    "D411",   # Missing blank line before section
+]
+ignore = [
+    "B019",  # Use of `functools.lru_cache` or `functools.cache` on methods can lead to memory leaks
+    "D100",  # Missing docstring in public module
+    "D101",  # Missing docstring in public class
+    "D102",  # Missing docstring in public method
+    "D103",  # Missing docstring in public function"
+    "D104",  # Missing docstring in public package
+    "D105",  # Missing docstring in magic method"
+    "D106",  # Missing docstring in public nested class
+    "E701",  # Multiple statements on one line (colon)
+    "E702",  # Multiple statements on one line (semicolon)
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+mypy_path = ["pkg_src", "pkg_src/.mypy_stubs"]
 
 # alias / entrypoint for CLI utility
 [project.scripts]
 retrain_pipelines_legacy = "retrain_pipelines.legacy_launcher:cli_utility"
 retrain_pipelines = "retrain_pipelines.launcher:cli_utility"
-webconsole_start = "retrain_pipelines.dag_engine.web_console.main:webconsole_start_cli"
+webconsole_start = "retrain_pipelines.dag_engine.web_console.main:webconsole_start"
 webconsole_shutdown = "retrain_pipelines.dag_engine.web_console.main:webconsole_shutdown_cli"
 
 [project.urls]

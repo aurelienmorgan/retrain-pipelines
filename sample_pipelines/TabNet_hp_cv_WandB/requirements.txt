@@ -7,7 +7,8 @@ torch-model-archiver===0.11.1
 scikit-learn===1.5.1
 matplotlib===3.9.2
 pydantic===2.11.7
-docker===7.1.0
+conda-pack===0.8.0
+docker-py===7.1.0
 plotly===5.24.0
 nbformat===5.10.4
 beautifulsoup4===4.12.3

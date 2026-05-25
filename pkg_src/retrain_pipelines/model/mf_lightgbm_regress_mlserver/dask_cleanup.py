@@ -1,4 +1,3 @@
-
 import gc
 import os
 import sys
@@ -7,8 +6,9 @@ import time
 
 def nuke_dask_cpp():
     """
-    In case the dag has already executed on that same python interpreter,
-    need to do a hard reset.
+    In case the DAG has already executed on that same python interpreter.
+
+    Need to do a hard reset.
 
     Total Dask + LightGBM C++ cleanup:
     - Close all live dask.distributed clients/scheduler/workers
@@ -19,7 +19,6 @@ def nuke_dask_cpp():
     - Force garbage collection
     - Attempt to free C++ resources by clearing LightGBM booster objects
     """
-
     # 0) Close all live dask.distributed clients BEFORE touching sys.modules.
     #    The dask.distributed.Client created inside dask_regressor_fit (called
     #    from the inline train_model task, i.e. in the main process) is never
@@ -114,13 +113,16 @@ def nuke_dask_cpp():
     #    We retrieve the function's own name from the current frame's code
     #    object — no hard-coding required.
     import inspect as _inspect
+
     _self_name = _inspect.currentframe().f_code.co_name
     for name in list(globals()):
         if name == _self_name:
             continue
         if "dask" in name.lower() or "lgb" in name.lower() or "lightgbm" in name.lower():
-            try: del globals()[name]
-            except Exception: pass
+            try:
+                del globals()[name]
+            except Exception:
+                pass
 
     # 4) Force garbage collection
     gc.collect()
@@ -157,16 +159,10 @@ def nuke_dask_cpp():
     #    guarantees the canonical distributed is the fully-initialised one
     #    from the dask ecosystem, not a side-effect of lightgbm's import path.
     try:
-        import dask                   # re-creates normalize_token Dispatch
-        import dask.base              # explicit: normalize_token lives here
-        import dask.array             # dask_trainer imports dask.array as da
-        import dask.dataframe         # re-registers dataframe collections
-        import dask_expr._util        # registers _BackendData with normalize_token
-        import dask_expr._collection  # registers remaining collection types
-        import dask.distributed       # re-initialises distributed machinery;
-                                      # must precede lightgbm re-import so that
-                                      # lightgbm.dask's `from distributed import
-                                      # default_client` binds to THIS object
+        pass  # registers remaining collection types
+    # must precede lightgbm re-import so that
+    # lightgbm.dask's `from distributed import
+    # default_client` binds to THIS object
     except Exception:
         pass
 
@@ -184,6 +180,7 @@ def nuke_dask_cpp():
     #    split-brain.  Explicit ordering here makes the invariant robust.
     try:
         import lightgbm as lgb
+
         # Attempt to free LightGBM C++ state directly.
         # If any LightGBM Booster objects exist, free their memory.
         for obj in gc.get_objects():
@@ -255,8 +252,7 @@ def nuke_dask_cpp():
                 for _attr_name, _old_attr in vars(_old_mod).items():
                     if isinstance(_old_attr, type):
                         _fresh_attr = getattr(_fresh_mod, _attr_name, None)
-                        if _fresh_attr is not None and \
-                           _fresh_attr is not _old_attr:
+                        if _fresh_attr is not None and _fresh_attr is not _old_attr:
                             _old_to_new[id(_old_attr)] = _fresh_attr
             except Exception:
                 pass
@@ -268,9 +264,11 @@ def nuke_dask_cpp():
                     continue
                 # Skip the freshly-imported dask and lightgbm modules
                 # themselves — they already have the correct references.
-                if _mod_name.startswith("dask") or \
-                   _mod_name.startswith("distributed") or \
-                   _mod_name.startswith("lightgbm"):
+                if (
+                    _mod_name.startswith("dask")
+                    or _mod_name.startswith("distributed")
+                    or _mod_name.startswith("lightgbm")
+                ):
                     continue
                 try:
                     for _attr_name, _attr_val in list(vars(_mod).items()):
@@ -298,4 +296,3 @@ def nuke_dask_cpp():
     # 🔟 Final garbage collection sweep
     gc.collect()
     gc.collect()
-

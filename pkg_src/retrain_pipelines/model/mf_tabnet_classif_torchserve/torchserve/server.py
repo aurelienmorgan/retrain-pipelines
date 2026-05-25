@@ -1,28 +1,27 @@
-
 import time
+
 import requests
 
-def await_server_ready(
-    retries: int = 10,
-    delay: int = 2,
-    port: int = 9080
-) -> bool:
-    """
-    Params:
-        - retries (int):
-            number of attempts before giving up.
-        - delay (int):
-            delay (seconds) between attempts.
-        - port (int):
-            server HTTP port.
 
-    Results:
-        - (bool):
-            true if the server became ready
-            within the retry window.
-            false otherwise.
-    """
+def await_server_ready(retries: int = 10, delay: int = 2, port: int = 9080) -> bool:
+    """Await server readiness.
 
+    Parameters
+    ----------
+    retries : int
+        number of attempts before giving up.
+    delay : int
+        delay (seconds) between attempts.
+    port : int
+        server HTTP port.
+
+    Returns
+    -------
+    bool
+        true if the server became ready
+        within the retry window.
+        false otherwise.
+    """
     url = f"http://localhost:{port}/ping"
     for _ in range(retries):
         try:
@@ -36,7 +35,6 @@ def await_server_ready(
         print(f"Retrying in {delay} seconds...")
         time.sleep(delay)
 
-    print(f"Server did not become ready after {retries*delay} seconds.")
+    print(f"Server did not become ready after {retries * delay} seconds.")
 
     return False
-

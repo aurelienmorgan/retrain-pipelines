@@ -1,8 +1,5 @@
-
 import requests
-
-from pydantic import BaseModel, Field
-from typing import List, Optional
+from pydantic import BaseModel
 
 
 class Worker(BaseModel):
@@ -14,6 +11,7 @@ class Worker(BaseModel):
     gpu: bool
     gpuUsage: str
 
+
 class ModelInfo(BaseModel):
     modelName: str
     modelVersion: str
@@ -24,13 +22,10 @@ class ModelInfo(BaseModel):
     batchSize: int
     maxBatchDelay: int
     loadedAtStartup: bool
-    workers: List[Worker]
+    workers: list[Worker]
 
 
-def fetch_model_info(
-    model_name: str,
-    port: int
-) -> List[ModelInfo]:
+def fetch_model_info(model_name: str, port: int) -> ModelInfo:
     # TorchServe management API
     api_url = f"http://localhost:{port}/models/{model_name}"
 
@@ -40,49 +35,41 @@ def fetch_model_info(
     data = response.json()
 
     # Validate & parse response
-    model_info = [ModelInfo(**model_info)
-                  for model_info in data][0]
+    model_info = [ModelInfo(**model_info) for model_info in data][0]
     # print(model_info)
 
     return model_info
 
 
-def endpoint_still_starting(
-    model_name: str,
-    port: int = 9081
-) -> bool:
-    """
-    all model workers still have "STARTING" status.
-    """
-    """
+def endpoint_still_starting(model_name: str, port: int = 9081) -> bool:
+    """Test whether the endpoint is in "starting" state.
+
+    (i.e. all model workers still have "STARTING" status).
+
     Side note :
     if we move too fast, the worker never has time to
     move aways from its starting idle state
     @see TorchServe warmup (loading/unloading) policy.
+    You can also access '/home/model-server/model-store/logs/model_log.log'
+    from the TorchServe service container.
     """
-
     model_info = fetch_model_info(model_name, port)
 
     # print(f"endpoint_still_starting ? => {model_info.workers}")
-    return all([worker.status.lower()
-                in ["starting", "unloading"]
-                for worker in model_info.workers])
+    return all([
+        worker.status.lower() in ["starting", "unloading"] for worker in model_info.workers
+    ])
 
 
-def endpoint_is_ready(
-    model_name: str,
-    port: int = 9081
-) -> bool:
-    """
+def endpoint_is_ready(model_name: str, port: int = 9081) -> bool:
+    """Test whether the model is ready.
+
     At least model worker has "READY" status.
     """
-
     model_info = fetch_model_info(model_name, port)
 
     # Print the parsed model info
-    is_ready = any(["ready" == worker.status.lower()
-                    for worker in model_info.workers])
+    is_ready = any(["ready" == worker.status.lower() for worker in model_info.workers])
     print(f"endpoint_is_ready ? => {model_info.workers}")
 
     return is_ready
-

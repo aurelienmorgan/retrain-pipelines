@@ -244,8 +244,13 @@ For instance&nbsp;:
 
 # build from source
     python -m build --verbose pkg_src
+
 # install from source (dev mode)
+    git clone https://github.com/aurelienmorgan/retrain-pipelines.git
+    cd retrain-pipelines
     pip install -e pkg_src[dev,local]
+    pre-commit install
+
 # install from remote source
     pip install "retrain-pipelines[dev,local] @ git+https://github.com/aurelienmorgan/retrain-pipelines.git@master#subdirectory=pkg_src"
 

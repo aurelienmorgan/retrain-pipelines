@@ -1,25 +1,18 @@
-
-import logging
-
-from enum import Enum, auto
 from datetime import datetime
-from collections import defaultdict
-from pydantic import BaseModel, Field, \
-    ConfigDict
-from typing import List, Tuple, Union, \
-    Optional
+from enum import Enum, auto
+from typing import Any, cast
 
-from fasthtml.common import Div, Style, Script, \
-    to_xml
+from fasthtml.common import Script
+from pydantic import BaseModel, ConfigDict
 
-from ....db.model import TaskExt, TaskGroup
 from .....utils import hex_to_rgba
+from ....db.model import TaskExt, TaskGroup
 
 
 class ParallelLines:
-    rank: Optional[List[int]]
+    rank: list[int] | None
     lines: dict
-    merging_task: Optional[TaskExt]
+    merging_task: TaskExt | None
 
     def __init__(self, rank, lines, merging_task=None):
         self.rank = rank
@@ -27,8 +20,7 @@ class ParallelLines:
         self.merging_task = merging_task
 
     def __repr__(self):
-        return "PP" + str([self.lines] + \
-               ([self.merging_task] if self.merging_task else []))
+        return "PP" + str([self.lines] + ([self.merging_task] if self.merging_task else []))
 
 
 class GroupTypes(Enum):
@@ -38,7 +30,7 @@ class GroupTypes(Enum):
     PARALLEL_LINE = auto()
 
 
-class Style(dict):
+class CustomStyleDict(dict):
     def __new__(cls, *args, **kwargs):
         instance = super().__new__(cls)
         return instance
@@ -59,7 +51,7 @@ class Style(dict):
             data = kwargs
 
         # Pydantic validation
-        validated = StyleValidator(**data)
+        validated = CustomStyleDictValidator(**data)
         super().__init__(validated.model_dump())
 
     def __setattr__(self, key, value):
@@ -69,65 +61,46 @@ class Style(dict):
         try:
             return self[key]
         except KeyError:
-            raise AttributeError(f"'Style' object has no attribute '{key}'")
+            raise AttributeError(f"'CustomStyleDict' object has no attribute '{key}'") from None
 
     def __setitem__(self, key, value):
         # Validate on set
         temp = dict(self)
         temp[key] = value
-        validated = StyleValidator(**temp)
+        _ = CustomStyleDictValidator(**temp)
         super().__setitem__(key, value)
 
-class StyleValidator(BaseModel):
-    model_config = ConfigDict(extra='forbid')
 
-    color: Optional[str] = None
-    background: Optional[str] = None
-    border: Optional[str] = None
-    labelUnderlay: Optional[str] = None
+class CustomStyleDictValidator(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    color: str | None = None
+    background: str | None = None
+    border: str | None = None
+    labelUnderlay: str | None = None
 
 
 DEFAULT_GROUP_STYLES = {
-    GroupTypes.NONE:
-        Style("#FFFFFF", "#4d0066", "#FFD700"),
-    GroupTypes.TASKGROUP:
-        Style("#FFD700", "#4d0066", "#000000"),
-    GroupTypes.PARALLEL_LINES:
-        Style("#FFFFFF", "#4d0066", "#FEAFFF"),
-    GroupTypes.PARALLEL_LINE:
-        Style("#FFFFFF", "#4d0066", "#FFD700")
+    GroupTypes.NONE: CustomStyleDict("#FFFFFF", "#4d0066", "#FFD700"),
+    GroupTypes.TASKGROUP: CustomStyleDict("#FFD700", "#4d0066", "#000000"),
+    GroupTypes.PARALLEL_LINES: CustomStyleDict("#FFFFFF", "#4d0066", "#FEAFFF"),
+    GroupTypes.PARALLEL_LINE: CustomStyleDict("#FFFFFF", "#4d0066", "#FFD700"),
 }
 
 
-def fill_defaults(
-    group_style: Style,
-    group_type: GroupTypes
-) -> None:
-    """
-    in place
-    """
+def fill_defaults(group_style: CustomStyleDict, group_type: GroupTypes) -> None:
+    """In place."""
     group_style.color = hex_to_rgba(
-        (
-            group_style.color or
-            DEFAULT_GROUP_STYLES[group_type].color
-        ),
-        0.75
+        (group_style.color or DEFAULT_GROUP_STYLES[group_type].color), 0.75
     )
     group_style.background = hex_to_rgba(
-        (
-            group_style.background or
-            DEFAULT_GROUP_STYLES[group_type].background
-        ),
-        0.65
+        (group_style.background or DEFAULT_GROUP_STYLES[group_type].background), 0.65
     )
     group_style.border = hex_to_rgba(
-        (
-            group_style.border or
-            DEFAULT_GROUP_STYLES[group_type].border
-        ),
+        (group_style.border or DEFAULT_GROUP_STYLES[group_type].border),
         # no transparency, so border color DOES NOT
         # vary depending on the row it is hovering
-        1
+        1,
     )
 
     return None
@@ -135,17 +108,18 @@ def fill_defaults(
 
 class GroupedRows:
     """collapsible grouped table rows serializer."""
+
     def __init__(
         self,
         id: str,
-        uuid: str,
+        uuid: str | None,
         name: str,
-        start_timestamp: Optional[datetime],
-        end_timestamp: Optional[datetime],
-        callbacks: Optional[str],
-        extraClasses: Optional[List[str]],
-        children: Optional[List["GroupedRows"]],
-        style: Optional[dict]
+        start_timestamp: datetime | None,
+        end_timestamp: datetime | None,
+        callbacks: list[str] | None,
+        extraClasses: list[str] | None,
+        children: list["GroupedRows"] | None,
+        style: dict | None,
     ):
         self.id = id
         self.uuid = uuid
@@ -159,8 +133,7 @@ class GroupedRows:
 
     def to_js_literal(self):
         """
-        Convert a nested Python structure
-        to a JavaScript literal string.
+        Convert a nested Python structure to a JavaScript literal string.
 
         Recursively serializes Python
         dicts, lists, primitives, None, and booleans
@@ -169,6 +142,7 @@ class GroupedRows:
         True/False map to true/false,
         and strings are single-quoted.
         """
+
         def recursive_js(obj):
             # If object is class with to_js_literal, call it
             if hasattr(obj, "to_js_literal") and callable(obj.to_js_literal):
@@ -195,40 +169,34 @@ class GroupedRows:
                 return repr(str(obj))
 
         js_literal = (
-            "{" +
-                f"id: {recursive_js(self.id)}, " +
-                "cells: {" +
-                    "name: { " +
-                        f"value: {recursive_js(self.name)}, " +
-                        "attributes: {" +
-                            (
-                                f"uuid: {recursive_js(self.uuid)} "
-                                if self.uuid else ""
-                            ) +
-                        "} " +
-                    "}, " +
-                    "timeline: {" +
-                        "value: null, " +
-                        "attributes: {" +
-                            (
-                                f"start_timestamp: {recursive_js(self.start_timestamp)}, "
-                                if self.start_timestamp else ""
-                            ) +
-                            (
-                                f"end_timestamp: {recursive_js(self.end_timestamp)}"
-                                if self.end_timestamp else ""
-                            ) +
-                        "}" +
-                    "}" +
-                "}, " +
-                (f"callbacks: {recursive_js(self.callbacks)}, " if self.callbacks else "") +
-                (f"extraClasses: {recursive_js(self.extraClasses)}, " if self.extraClasses else "") +
-                (f"children: {recursive_js(self.children)}, " if self.children else "") +
-                f"style: {recursive_js(self.style)}" +
-            "}"
+            "{"
+            + f"id: {recursive_js(self.id)}, "
+            + "cells: {"
+            + "name: { "
+            + f"value: {recursive_js(self.name)}, "
+            + "attributes: {"
+            + (f"uuid: {recursive_js(self.uuid)} " if self.uuid else "")
+            + "} "
+            + "}, "
+            + "timeline: {"
+            + "value: null, "
+            + "attributes: {"
+            + (
+                f"start_timestamp: {recursive_js(self.start_timestamp)}, "
+                if self.start_timestamp
+                else ""
+            )
+            + (f"end_timestamp: {recursive_js(self.end_timestamp)}" if self.end_timestamp else "")
+            + "}"
+            + "}"
+            + "}, "
+            + (f"callbacks: {recursive_js(self.callbacks)}, " if self.callbacks else "")
+            + (f"extraClasses: {recursive_js(self.extraClasses)}, " if self.extraClasses else "")
+            + (f"children: {recursive_js(self.children)}, " if self.children else "")
+            + f"style: {recursive_js(self.style)}"
+            + "}"
         )
         return js_literal
-
 
     def __repr__(self) -> str:
         return (
@@ -241,13 +209,11 @@ class GroupedRows:
 
 
 def _organize_tasks(
-    tasks_list: List[TaskExt],
-    taskgroups_list: List[TaskGroup]
-) -> List[Union[TaskExt, Tuple]]:
-    """Returns a topologically-organized structure
+    tasks_list: list[TaskExt], taskgroups_list: list[TaskGroup]
+) -> list[TaskExt | tuple[Any, ...] | ParallelLines]:
+    """Topologically-organized structure of executed task instances.
 
-    of executed task instances (incl. taskgroups
-    and parallel sub-DAG lines).
+    (incl. taskgroups and parallel sub-DAG lines).
 
     e.g.:
     ```
@@ -274,41 +240,41 @@ def _organize_tasks(
     #  'task6', ('tg3', ['task7', 'task8']), 'task9']
     ```
 
-    Params:
-        - tasks_list (List[TaskExt]):
-            the exhaustive (topologically sorted)
-            list of tasks for a given execution.
-        - taskgroups_list (List[TaskGroup]):
-            the exhaustive (topologically sorted)
-            list of taskgroups for that execution.
+    Parameters
+    ----------
+    tasks_list : List[TaskExt]
+        the exhaustive (topologically sorted)
+        list of tasks for a given execution.
+    taskgroups_list : List[TaskGroup]
+        the exhaustive (topologically sorted)
+        list of taskgroups for that execution.
 
-    Results:
-        - (List[Union[TaskExt, Tuple]]):
-            a nested list of
-            "task" and "tuple(taskgroup, tasks)".
+    Returns
+    -------
+    List[Union[TaskExt, Tuple]]
+        a nested list of
+        "task" and "tuple(taskgroup, tasks)".
     """
-    task_by_id = {task_ext.id: task_ext for task_ext in tasks_list}
-    taskgroup_by_uuid = {str(tg.uuid): tg for tg in taskgroups_list} \
-                        if taskgroups_list else {}
+    taskgroup_by_uuid = {str(tg.uuid): tg for tg in taskgroups_list} if taskgroups_list else {}
 
-    children_map = {}
+    children_map: dict[str, list[Any]] = {}
     parent_of_taskgroup = {}
-    if taskgroups_list:
+    if len(taskgroups_list) > 0:
         # Map each taskgroup to its direct children (tasks and taskgroups)
         for tg in taskgroups_list:
             for tg_element_uuid in tg.elements:
                 # check if element is a task and, if so, add its id
                 for task_ext in tasks_list:
                     if str(task_ext.tasktype_uuid) == tg_element_uuid:
-                        children_map[str(tg.uuid)] = \
-                            ([] if not str(tg.uuid) in children_map
-                             else children_map[str(tg.uuid)]) + [task_ext.id]
+                        children_map[str(tg.uuid)] = (
+                            [] if str(tg.uuid) not in children_map else children_map[str(tg.uuid)]
+                        ) + [task_ext.id]
                         # DO NOT BREAK, parallel tasks have different ids
                         # but common tasktype uuid
 
-                children_map[str(tg.uuid)] = \
-                    ([] if not str(tg.uuid) in children_map
-                     else children_map[str(tg.uuid)]) + tg.elements
+                children_map[str(tg.uuid)] = (
+                    [] if str(tg.uuid) not in children_map else children_map[str(tg.uuid)]
+                ) + tg.elements
 
         # Determine which taskgroup (if any) contains each taskgroup
         for tg in taskgroups_list:
@@ -316,12 +282,10 @@ def _organize_tasks(
                 if element in taskgroup_by_uuid:
                     parent_of_taskgroup[element] = str(tg.uuid)
 
-    emitted = set()
-    result = []
+    emitted: set[int | str] = set()
+    result: list[TaskExt | tuple[Any, ...] | ParallelLines] = []
 
-    def emit_taskgroup(tg_uuid, rank: Optional[List[str]]):
-        takgroup_rank = None
-
+    def emit_taskgroup(tg_uuid, rank: list[str] | None):
         children = []
 
         # First, collect all child taskgroup UUIDs for this taskgroup
@@ -334,15 +298,19 @@ def _organize_tasks(
         # Iterate over tasks_list to maintain chronological order
         for task_ext in tasks_list:
             # Check if this task belongs to the current taskgroup
-            if (str(task_ext.taskgroup_uuid) == tg_uuid and
-                task_ext.id not in emitted and
-                (rank is None or rank == task_ext.rank)):
-                emitted.add(task_ext.id)
+            if (
+                str(task_ext.taskgroup_uuid) == tg_uuid
+                and task_ext.id not in emitted
+                and (rank is None or rank == task_ext.rank)
+            ):
+                emitted.add(cast(int, task_ext.id))
                 children.append(task_ext)
             # Check if we need to emit a nested taskgroup at this position
             # This happens when we encounter the first task of a child taskgroup
-            elif (str(task_ext.taskgroup_uuid) in child_taskgroup_uuids and
-                  parent_of_taskgroup.get(str(task_ext.taskgroup_uuid)) == tg_uuid):
+            elif (
+                str(task_ext.taskgroup_uuid) in child_taskgroup_uuids
+                and parent_of_taskgroup.get(str(task_ext.taskgroup_uuid)) == tg_uuid
+            ):
                 child_tg_uuid = str(task_ext.taskgroup_uuid)
                 if f"{rank or []}-{child_tg_uuid}" not in emitted:
                     child_tg_struct = emit_taskgroup(child_tg_uuid, rank)
@@ -353,74 +321,85 @@ def _organize_tasks(
 
         return (taskgroup_by_uuid[tg_uuid], children)
 
-
-    branching_number_in_series = {(): 0} # counter on occurence,
-                                         # in case several are chained in series
-                                         # (open-and-close, then again open-and-close)
-    parallel_lines = {}                  # we identify sub-DAGs with "top/number-depth/rank"
+    branching_number_in_series = {(): 0}  # counter on occurence,
+    # in case several are chained in series
+    # (open-and-close, then again open-and-close)
+    parallel_lines = {}  # we identify sub-DAGs with "top/number-depth/rank"
 
     for task_ext in tasks_list:
-        # print(f"{task_ext.id}-{task_ext.tasktype_uuid}, {task_ext.rank}, {branching_number_in_series}, {list(parallel_lines.keys())}")
+        # print(f"{task_ext.id}-{task_ext.tasktype_uuid}, " +
+        #       f"{task_ext.rank}, {branching_number_in_series}, " +
+        #       f"{list(parallel_lines.keys())}")
 
         if task_ext.taskgroup_uuid is None or task_ext.taskgroup_uuid == "":
             if task_ext.is_parallel:
+                assert task_ext.rank is not None
+
                 if tuple(task_ext.rank[:-1]) not in branching_number_in_series:
                     branching_number_in_series[tuple(task_ext.rank[:-1])] = 0
 
-                branching_number = branching_number_in_series[tuple(task_ext.rank[:-1])] \
-                                   if task_ext.rank is not None else None
+                branching_number = (
+                    branching_number_in_series[tuple(task_ext.rank[:-1])]
+                    if task_ext.rank is not None
+                    else None
+                )
 
                 if f"{branching_number}-{task_ext.rank[:-1]}" not in parallel_lines:
                     # first branch on newly encountered parallel sub-DAG
                     # create and object that will keep on being constructed
                     # as we further loop over tasks_list
-                    parallel_lines[f"{branching_number}-{task_ext.rank[:-1]}"] = \
-                        ParallelLines(task_ext.rank[:-1], {tuple(task_ext.rank): [task_ext]})
+                    parallel_lines[f"{branching_number}-{task_ext.rank[:-1]}"] = ParallelLines(
+                        task_ext.rank[:-1], {tuple(task_ext.rank): [task_ext]}
+                    )
                     if len(task_ext.rank) == 1:
                         # top-level new sub-DAG
                         result.append(parallel_lines[f"{branching_number}-{task_ext.rank[:-1]}"])
                     else:
                         # nested branching
                         parallel_lines[
-                            f"""{
-                                    branching_number_in_series[tuple(task_ext.rank[:-2])]
-                                }-{
-                                    task_ext.rank[:-2]
-                                }"""] \
-                            .lines[tuple(task_ext.rank[:-1])].append(
-                                parallel_lines[f"{branching_number}-{task_ext.rank[:-1]}"]
-                            )
+                            f"""{branching_number_in_series[tuple(task_ext.rank[:-2])]}-{
+                                task_ext.rank[:-2]
+                            }"""
+                        ].lines[tuple(task_ext.rank[:-1])].append(
+                            parallel_lines[f"{branching_number}-{task_ext.rank[:-1]}"]
+                        )
                 else:
                     # new branch opens on existing parallel sub-DAG (any depth)
-                    parallel_lines[f"{branching_number}-{task_ext.rank[:-1]}"] \
-                        .lines[tuple(task_ext.rank)] = [task_ext]
+                    parallel_lines[f"{branching_number}-{task_ext.rank[:-1]}"].lines[
+                        tuple(task_ext.rank)
+                    ] = [task_ext]
 
             elif task_ext.rank is not None and task_ext.merge_func is None:
+                assert task_ext.rank is not None
+
                 # standard task inside a parallel line (any depth)
-                parallel_lines[f"{branching_number}-{task_ext.rank[:-1]}"] \
-                    .lines[tuple(task_ext.rank)].append(task_ext)
+                parallel_lines[f"{branching_number}-{task_ext.rank[:-1]}"].lines[
+                    tuple(task_ext.rank)
+                ].append(task_ext)
 
             elif task_ext.merge_func is not None:
                 # try:
                 parallel_lines[
-                        f"""{branching_number_in_series[
-                                tuple(task_ext.rank) if task_ext.rank is not None else ()
-                          ]}-{task_ext.rank if task_ext.rank is not None else []}"""
-                    ].merging_task = task_ext
+                    f"""{
+                        branching_number_in_series[
+                            tuple(task_ext.rank) if task_ext.rank is not None else ()
+                        ]
+                    }-{task_ext.rank if task_ext.rank is not None else []}"""
+                ].merging_task = task_ext
                 # except Exception as ex:
-                    # # TODO - bug in the DAG engine where merge tasks
-                    # # sometimes (TBC, but probably a mishandeled async "future" issue)
-                    # # get a wrong rank
-                    # logging.getLogger().error(f"{task_ext} rank={task_ext.rank}?")
-                    # logging.getLogger().error(ex)
+                # # TODO - bug in the DAG engine where merge tasks
+                # # sometimes (TBC, but probably a mishandeled async "future" issue)
+                # # get a wrong rank
+                # logging.getLogger().error(f"{task_ext} rank={task_ext.rank}?")
+                # logging.getLogger().error(ex)
 
                 branching_number_in_series[
-                        tuple(task_ext.rank) if task_ext.rank is not None else ()
-                    ] += 1
+                    tuple(task_ext.rank) if task_ext.rank is not None else ()
+                ] += 1
 
             else:
                 result.append(task_ext)
-            emitted.add(task_ext.id)
+            emitted.add(cast(int, task_ext.id))
         else:
             tg_uuid = str(task_ext.taskgroup_uuid)
             # Find the top-most taskgroup that contains this task and isn't emitted
@@ -432,12 +411,13 @@ def _organize_tasks(
                 current = parent_uuid
 
             if f"{task_ext.rank or []}-{current}" not in emitted:
-                tg_struct = emit_taskgroup(current, rank=task_ext.rank)
+                tg_struct = emit_taskgroup(current, rank=cast(list[str] | None, task_ext.rank))
 
                 if task_ext.rank is not None and task_ext.merge_func is None:
                     # standard task inside a parallel line (any depth)
-                    parallel_lines[f"{branching_number}-{task_ext.rank[:-1]}"] \
-                        .lines[tuple(task_ext.rank)].append(tg_struct)
+                    parallel_lines[f"{branching_number}-{task_ext.rank[:-1]}"].lines[
+                        tuple(task_ext.rank)
+                    ].append(tg_struct)
                 else:
                     result.append(tg_struct)
 
@@ -446,36 +426,35 @@ def _organize_tasks(
 
 
 def draw_chart(
-    execution_id: int,
-    tasks_list: List[TaskExt],
-    taskgroups_list: List[TaskGroup]
+    execution_id: int, tasks_list: list[TaskExt], taskgroups_list: list[TaskGroup]
 ) -> Script:
-    """The js list of row literals.
+    """Return the js list of row literals.
 
     for the Gantt diagramm of a given execution.
     Format is the one expected by
     the collapsible-grouped-table init function.
 
-    Params:
-        - execution_id (int):
-            The id of the execution
-            to draw a Gantt diagramm for.
-        - tasks_list (List[TaskExt]):
-            the exhaustive (topologically sorted)
-            list of tasks for a given execution.
-        - taskgroups_list (List[TaskGroup]):
-            the exhaustive (topologically sorted)
-            list of taskgroups for that execution.
+    Parameters
+    ----------
+    execution_id : int
+        The id of the execution
+        to draw a Gantt diagramm for.
+    tasks_list : List[TaskExt]
+        the exhaustive (topologically sorted)
+        list of tasks for a given execution.
+    taskgroups_list : List[TaskGroup]
+        the exhaustive (topologically sorted)
+        list of taskgroups for that execution.
 
-    Results:
-        - (Script)
+    Returns
+    -------
+    Script
     """
-
     current_organize_tasks = _organize_tasks(tasks_list, taskgroups_list)
 
     rows = []
     for element in current_organize_tasks:
-        if isinstance(element, Tuple):
+        if isinstance(element, tuple):
             # taskgroup
             rows.append(taskgroup_grouped_rows(element))
         elif isinstance(element, ParallelLines):
@@ -486,8 +465,7 @@ def draw_chart(
             rows.append(task_row(element))
 
     js_rows = "[" + ", ".join(r.to_js_literal() for r in rows) + "]"
-    return (
-        Script(f"""
+    return Script(f"""
             (function refreshScript() {{
                 const tableData = {js_rows};
 
@@ -523,50 +501,41 @@ def draw_chart(
                 initFormat('execGanttTimelineObj');
             }})();
         """)
-    )
 
 
-def task_row(
-    task_ext: TaskExt,
-    labelUnderlay: Optional[str]=None
-) -> GroupedRows:
+def task_row(task_ext: TaskExt, labelUnderlay: str | None = None) -> GroupedRows:
+    """Return a Task element.
+
+    Parameters
+    ----------
+    task_ext : TaskExt
+        the (extended) task data-object.
+    labelUnderlay : str
+        overwrite default. Used for tasks within taskgroups.
     """
-    Params:
-        - task_ext (TaskExt):
-        - labelUnderlay (str):
-            overwrite default. Used for tasks within taskgroups.
-    """
-
     # fill_defaults, complementing ui_css if need be
-    row_style = Style(
-        task_ext.ui_css,
-        labelUnderlay=labelUnderlay or "#4d0066"
-    )
+    row_style = CustomStyleDict(task_ext.ui_css, labelUnderlay=labelUnderlay or "#4d0066")
     fill_defaults(row_style, GroupTypes.NONE)
 
     result = GroupedRows(
-        id=task_ext.id,
+        id=str(task_ext.id),
         uuid=str(task_ext.tasktype_uuid),
         name=task_ext.name,
         start_timestamp=task_ext.start_timestamp,
         end_timestamp=task_ext.end_timestamp,
         callbacks=["showDetailsModal(this);"],
-        extraClasses=["task"] + \
-                     ([] if not task_ext.failed else ["failed"]),
+        extraClasses=["task"] + ([] if not task_ext.failed else ["failed"]),
         children=None,
-        style=row_style
+        style=row_style,
     )
 
     return result
 
 
-def parallel_grouped_rows(
-    parallel_lines: ParallelLines
-) -> GroupedRows:
+def parallel_grouped_rows(parallel_lines: ParallelLines) -> GroupedRows:
     # get one of the split instances
     # of the opening parallel task
-    parralel_task_ext = \
-        parallel_lines.lines[next(iter(parallel_lines.lines))][0]
+    parralel_task_ext = parallel_lines.lines[next(iter(parallel_lines.lines))][0]
     # print(f"sub-DAG {parralel_task_ext.name} : {parallel_lines}")
 
     parallel_lines_list = []
@@ -575,17 +544,16 @@ def parallel_grouped_rows(
         for element in elements_list:
             if isinstance(element, ParallelLines):
                 line_rows.append(parallel_grouped_rows(element))
-            elif isinstance(element, Tuple):
+            elif isinstance(element, tuple):
                 line_rows.append(taskgroup_grouped_rows(element))
             else:
                 line_rows.append(task_row(element))
 
         # fill_defaults, complementing ui_css if need be
-        group_rows_style = Style(parralel_task_ext.ui_css, labelUnderlay="#4d0066")
+        group_rows_style = CustomStyleDict(parralel_task_ext.ui_css, labelUnderlay="#4d0066")
         fill_defaults(group_rows_style, GroupTypes.PARALLEL_LINE)
 
-        parallel_line_rank_suffix = \
-            f".[{','.join(map(str, parallel_line_rank))}]"
+        parallel_line_rank_suffix = f".[{','.join(map(str, parallel_line_rank))}]"
         parallel_lines_list.append(
             GroupedRows(
                 id=f"{parralel_task_ext.name}{parallel_line_rank_suffix}",
@@ -596,7 +564,7 @@ def parallel_grouped_rows(
                 callbacks=["toggleHeaderTimeline('execGanttTimelineObj', this);"],
                 extraClasses=["parallel-line"],
                 children=line_rows,
-                style=group_rows_style
+                style=group_rows_style,
             )
         )
 
@@ -605,56 +573,53 @@ def parallel_grouped_rows(
         parallel_lines_list.append(task_row(parallel_lines.merging_task))
 
     # fill_defaults, complementing ui_css if need be
-    group_rows_style = Style(parralel_task_ext.ui_css, labelUnderlay="#4d0066")
+    group_rows_style = CustomStyleDict(parralel_task_ext.ui_css, labelUnderlay="#4d0066")
     fill_defaults(group_rows_style, GroupTypes.PARALLEL_LINES)
 
     return GroupedRows(
-        id=parralel_task_ext.name + (
+        id=parralel_task_ext.name
+        + (
             f".[{','.join(map(str, parralel_task_ext.rank[:-1]))}]"
-            if len(parralel_task_ext.rank) > 1 else ""
+            if len(parralel_task_ext.rank) > 1
+            else ""
         ),
         uuid=None,
         name="Distributed sub-pipeline",
         start_timestamp=None,
         end_timestamp=None,
         callbacks=["toggleHeaderTimeline('execGanttTimelineObj', this);"],
-                extraClasses=["parallel-lines"],
+        extraClasses=["parallel-lines"],
         children=parallel_lines_list,
-        style=group_rows_style
+        style=group_rows_style,
     )
 
 
 def taskgroup_grouped_rows(
-    taskgroup_tuple: Tuple[TaskGroup, List[Union[TaskExt, Tuple]]],
-    rank: Optional[List[str]] = None
+    taskgroup_tuple: tuple[TaskGroup, list[TaskExt | tuple]], rank: list[str] | None = None
 ) -> GroupedRows:
     taskgroup, taskgroup_elements = taskgroup_tuple
 
     # fill_defaults, complementing ui_css if need be
-    group_rows_style = Style(taskgroup.ui_css, labelUnderlay="#4d0066")
+    group_rows_style = CustomStyleDict(taskgroup.ui_css, labelUnderlay="#4d0066")
     fill_defaults(group_rows_style, GroupTypes.TASKGROUP)
 
     elements = []
     for element in taskgroup_elements:
-        if isinstance(element, Tuple):
+        if isinstance(element, tuple):
             elements.append(taskgroup_grouped_rows(element, rank))
         else:
             # standard task (for taskgroup in parallel branch)
-            rank = element.rank
+            rank = cast(list[str] | None, element.rank)
             elements.append(task_row(element, labelUnderlay=group_rows_style.background))
 
     return GroupedRows(
-        id=str(taskgroup.uuid) + (
-            f".[{','.join(map(str, rank))}]"
-            if rank else ""
-        ),
+        id=str(taskgroup.uuid) + (f".[{','.join(map(str, rank))}]" if rank else ""),
         uuid=str(taskgroup.uuid),
-        name=taskgroup.name,
+        name=str(taskgroup.name),
         start_timestamp=None,
         end_timestamp=None,
         callbacks=["toggleHeaderTimeline('execGanttTimelineObj', this);"],
         extraClasses=["taskgroup"],
         children=elements,
-        style=group_rows_style
+        style=group_rows_style,
     )
-

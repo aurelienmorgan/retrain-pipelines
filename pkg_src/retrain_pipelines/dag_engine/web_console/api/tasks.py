@@ -1,18 +1,16 @@
-
 import logging
-
-from datetime import datetime
 
 from fasthtml.common import Request, Response
 
-from .open_api import rt_api
 from ...db.model import TaskExt
 from ..utils.execution import events as execution_events
+from .open_api import rt_api
 
 
 def register(app, rt, prefix=""):
     @rt_api(
-        rt, url= f"{prefix}/api/v1/new_task_event",
+        rt,
+        url=f"{prefix}/api/v1/new_task_event",
         methods=["POST"],
         schema={
             "requestBody": {
@@ -23,78 +21,70 @@ def register(app, rt, prefix=""):
                             "properties": {
                                 "id": {"type": "integer"},
                                 "exec_id": {"type": "integer"},
-                                "tasktype_uuid": {
-                                    "type": "string",
-                                    "format": "uuid"
-                                },
+                                "tasktype_uuid": {"type": "string", "format": "uuid"},
                                 "name": {"type": "string"},
-                                "is_parallel": {
-                                    "type": "boolean",
-                                    "default": "false"
-                                },
+                                "is_parallel": {"type": "boolean", "default": "false"},
                                 "merge_func": {
                                     "type": "object",
                                     "properties": {
                                         "name": {"type": "string"},
-                                        "docstring": {"type": "string"}
+                                        "docstring": {"type": "string"},
                                     },
-                                    "required": ["name", "docstring"]
+                                    "required": ["name", "docstring"],
                                 },
                                 "docstring": {"type": "string"},
                                 "ui_css": {
                                     "type": "object",
                                     "properties": {
                                         "color": {
-                                              "type": "string",
-                                              "pattern": "^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$"
+                                            "type": "string",
+                                            "pattern": "^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$",
                                         },
                                         "background": {
-                                              "type": "string",
-                                              "pattern": "^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$"
+                                            "type": "string",
+                                            "pattern": "^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$",
                                         },
                                         "border": {
-                                              "type": "string",
-                                              "pattern": "^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$"
+                                            "type": "string",
+                                            "pattern": "^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$",
                                         },
                                         "labelUnderlay": {
-                                              "type": "string",
-                                              "pattern": "^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$"
-                                        }
+                                            "type": "string",
+                                            "pattern": "^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$",
+                                        },
                                     },
-                                    "required": ["color", "background", "border"]
+                                    "required": ["color", "background", "border"],
                                 },
                                 "rank": {
                                     "type": "array",
                                     "items": {"type": "integer"},
-                                    "default": ""
+                                    "default": "",
                                 },
                                 "taskgroup_uuid": {
                                     "type": "string",
                                     "format": "uuid",
-                                    "default": ""
+                                    "default": "",
                                 },
-                                "start_timestamp": {
-                                    "type": "string",
-                                    "format": "date-time"
-                                }
+                                "start_timestamp": {"type": "string", "format": "date-time"},
                             },
-                            "required": ["id", "exec_id", "tasktype_uuid",
-                                         "name", "is_parallel", "ui_css",
-                                         "start_timestamp"]
+                            "required": [
+                                "id",
+                                "exec_id",
+                                "tasktype_uuid",
+                                "name",
+                                "is_parallel",
+                                "ui_css",
+                                "start_timestamp",
+                            ],
                         }
                     }
                 }
             },
-            "responses": {
-                "200": {"description": "OK"},
-                "422": {"description": "Invalid input"}
-            }
+            "responses": {"200": {"description": "OK"}, "422": {"description": "Invalid input"}},
         },
-        category="Tasks"
+        category="Tasks",
     )
-    async def post_new_task_event(
-        request: Request
-    ):
+    async def post_new_task_event(request: Request):
         """DAG-engine notifies of a new pipeline execution task."""
         data = await request.json()
 
@@ -103,15 +93,13 @@ def register(app, rt, prefix=""):
             task_ext = TaskExt(data)
         except (KeyError, ValueError, TypeError) as e:
             logging.getLogger().warn(e)
-            return Response(status_code=422,
-                            content=f"Invalid input: {str(e)}")
+            return Response(status_code=422, content=f"Invalid input: {str(e)}")
 
         # make payload serializable
         task_ext_dict = task_ext.__dict__
         del task_ext_dict["_sa_instance_state"]
         task_ext_dict = {
-            (k[1:] if k.startswith('_') else k): v
-            for k, v in task_ext.__dict__.items()
+            (k[1:] if k.startswith("_") else k): v for k, v in task_ext.__dict__.items()
         }
 
         # dispatch 'new Task' event
@@ -123,7 +111,8 @@ def register(app, rt, prefix=""):
         return Response(status_code=200)
 
     @rt_api(
-        rt, url= f"{prefix}/api/v1/task_end_event",
+        rt,
+        url=f"{prefix}/api/v1/task_end_event",
         methods=["POST"],
         schema={
             "requestBody": {
@@ -134,82 +123,71 @@ def register(app, rt, prefix=""):
                             "properties": {
                                 "id": {"type": "integer"},
                                 "exec_id": {"type": "integer"},
-                                "tasktype_uuid": {
-                                    "type": "string",
-                                    "format": "uuid"
-                                },
+                                "tasktype_uuid": {"type": "string", "format": "uuid"},
                                 "name": {"type": "string"},
-                                "is_parallel": {
-                                    "type": "boolean",
-                                    "default": "false"
-                                },
+                                "is_parallel": {"type": "boolean", "default": "false"},
                                 "merge_func": {
                                     "type": "object",
                                     "properties": {
                                         "name": {"type": "string"},
-                                        "docstring": {"type": "string"}
+                                        "docstring": {"type": "string"},
                                     },
-                                    "required": ["name", "docstring"]
+                                    "required": ["name", "docstring"],
                                 },
                                 "docstring": {"type": "string"},
                                 "ui_css": {
                                     "type": "object",
                                     "properties": {
                                         "color": {
-                                              "type": "string",
-                                              "pattern": "^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$"
+                                            "type": "string",
+                                            "pattern": "^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$",
                                         },
                                         "background": {
-                                              "type": "string",
-                                              "pattern": "^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$"
+                                            "type": "string",
+                                            "pattern": "^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$",
                                         },
                                         "border": {
-                                              "type": "string",
-                                              "pattern": "^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$"
+                                            "type": "string",
+                                            "pattern": "^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$",
                                         },
                                         "labelUnderlay": {
-                                              "type": "string",
-                                              "pattern": "^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$"
-                                        }
+                                            "type": "string",
+                                            "pattern": "^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$",
+                                        },
                                     },
-                                    "required": ["color", "background", "border"]
+                                    "required": ["color", "background", "border"],
                                 },
                                 "rank": {
                                     "type": "array",
                                     "items": {"type": "integer"},
-                                    "default": ""
+                                    "default": "",
                                 },
                                 "taskgroup_uuid": {
                                     "type": "string",
                                     "format": "uuid",
-                                    "default": ""
+                                    "default": "",
                                 },
-                                "start_timestamp": {
-                                    "type": "string",
-                                    "format": "date-time"
-                                },
-                                "end_timestamp": {
-                                    "type": "string",
-                                    "format": "date-time"
-                                }
+                                "start_timestamp": {"type": "string", "format": "date-time"},
+                                "end_timestamp": {"type": "string", "format": "date-time"},
                             },
-                            "required": ["id", "exec_id", "tasktype_uuid",
-                                         "name", "is_parallel", "ui_css",
-                                         "start_timestamp, end_timestamp"]
+                            "required": [
+                                "id",
+                                "exec_id",
+                                "tasktype_uuid",
+                                "name",
+                                "is_parallel",
+                                "ui_css",
+                                "start_timestamp, end_timestamp",
+                            ],
                         }
                     }
                 }
             },
-            "responses": {
-                "200": {"description": "OK"},
-                "422": {"description": "Invalid input"}
-            }
+            "responses": {"200": {"description": "OK"}, "422": {"description": "Invalid input"}},
         },
-        category="Tasks"
+        category="Tasks",
     )
-    async def post_task_end_event(
-        request: Request
-    ):
+    async def post_task_end_event(request: Request):
         data = await request.json()
 
         # validate posted data
@@ -217,15 +195,13 @@ def register(app, rt, prefix=""):
             task_ext = TaskExt(data)
         except (KeyError, ValueError, TypeError) as e:
             logging.getLogger().warn(e)
-            return Response(status_code=422,
-                            content=f"Invalid input: {str(e)}")
+            return Response(status_code=422, content=f"Invalid input: {str(e)}")
 
         # make payload serializable
         task_ext_dict = task_ext.__dict__
         del task_ext_dict["_sa_instance_state"]
         task_ext_dict = {
-            (k[1:] if k.startswith('_') else k): v
-            for k, v in task_ext.__dict__.items()
+            (k[1:] if k.startswith("_") else k): v for k, v in task_ext.__dict__.items()
         }
 
         # dispatch 'Task end' event
@@ -235,4 +211,3 @@ def register(app, rt, prefix=""):
             await q.put(task_ext_dict)
 
         return Response(status_code=200)
-

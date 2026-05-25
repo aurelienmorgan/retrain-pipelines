@@ -1,23 +1,17 @@
-
-import importlib
+import json
+import logging
 import os
 import sys
-import logging
-import json
 
+import lightgbm as lgb
 import numpy as np
 import pandas as pd
-import lightgbm as lgb
-
-from sklearn.preprocessing import OrdinalEncoder
-
 from mlserver import MLModel
-from mlserver.types import InferenceRequest, \
-    InferenceResponse, ResponseOutput
+from mlserver.types import InferenceRequest, InferenceResponse, ResponseOutput
+from sklearn.preprocessing import OrdinalEncoder
 
 
 class LightGBMModel(MLModel):
-
     async def load(self):
         logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger(__name__)
@@ -29,39 +23,39 @@ class LightGBMModel(MLModel):
         sys.path.append(local_folder)
         self.logger.debug(sys.path)
 
-        from preprocessing import preprocess_data_fct
+        from preprocessing import preprocess_data_fct  # type: ignore[import-not-found]
+
         self.preprocess_data_fct = preprocess_data_fct
 
         # load the preprocessing fitted buckets edges
-        buckets_dict_path = \
-            os.path.join(local_folder, "buckets_params.json")
+        buckets_dict_path = os.path.join(local_folder, "buckets_params.json")
         if os.path.exists(buckets_dict_path):
-            with open(buckets_dict_path, "r") as json_file:
+            with open(buckets_dict_path) as json_file:
                 buckets_dict = json.load(json_file)
             self.buckets = buckets_dict
         else:
             self.buckets = {}
 
         # load the preprocessing fitted OrdinalEncoder
-        encoder_file = os.path.join(local_folder,
-                                    "encoder_params.json")
+        encoder_file = os.path.join(local_folder, "encoder_params.json")
         self.logger.debug(encoder_file)
-        with open(encoder_file, "r") as json_file:
+        with open(encoder_file) as json_file:
             encoder_dict = json.load(json_file)
         if encoder_dict:
             # case "raw features count at least one
             #       that is categorical"
             encoder = OrdinalEncoder(
-                categories=[encoder_dict[feature]
-                            for feature in encoder_dict.keys()],
+                categories=[encoder_dict[feature] for feature in encoder_dict.keys()],
                 handle_unknown="use_encoded_value",
-                unknown_value=-1
+                unknown_value=-1,
             )
             # still needs to be considered "fitted" at this stage =>
             # Manually set the fit flag and other necessary attributes
-            encoder.fit(np.array([encoder_dict[feature][0]
-                                  for feature in encoder_dict.keys()]
-                                ).reshape(1, -1))
+            encoder.fit(
+                np.array([encoder_dict[feature][0] for feature in encoder_dict.keys()]).reshape(
+                    1, -1
+                )
+            )
             # Set n_features_in_ & feature_names_in_ attributes
             encoder.n_features_in_ = len(encoder_dict)
             encoder.feature_names_in_ = np.array(list(encoder_dict.keys()))
@@ -70,21 +64,17 @@ class LightGBMModel(MLModel):
         self.encoder = encoder
 
         # load the model itself
-        self.model = lgb.Booster(
-            model_file=os.path.join(local_folder,
-                                    "model.txt")
-        )
-        self.logger.info(
-            f"LightGBM expected feature names: {self.model.feature_name()}")
+        self.model = lgb.Booster(model_file=os.path.join(local_folder, "model.txt"))
+        self.logger.info(f"LightGBM expected feature names: {self.model.feature_name()}")
 
-    async def predict(
-        self, request: InferenceRequest
-    ) -> InferenceResponse:
+    async def predict(self, request: InferenceRequest) -> InferenceResponse:
         """
         'predict' method.
 
-        Params:
-            - **kwargs (dict):
+        Parameters
+        ----------
+        request: InferenceRequest
+            input : **kwargs : dict
                 Arbitrary keyword arguments.
                 Each key-value pair represents a feature,
                 where the key is the feature name
@@ -92,9 +82,10 @@ class LightGBMModel(MLModel):
                 and the value is the feature data
                 (which should be a list or array-like object).
 
-        Results:
-            - (int):
-                predicted class
+        Returns
+        -------
+        int
+            predicted class
         """
         self.logger.debug(request)
 
@@ -111,11 +102,7 @@ class LightGBMModel(MLModel):
 
         X_raw = pd.DataFrame(kwargs)
 
-        X_preprocessed = self.preprocess_data_fct(
-            X_raw,
-            self.encoder,
-            self.buckets
-        )
+        X_preprocessed = self.preprocess_data_fct(X_raw, self.encoder, self.buckets)
 
         preds = self.model.predict(X_preprocessed)
 
@@ -130,4 +117,3 @@ class LightGBMModel(MLModel):
                 )
             ],
         )
-

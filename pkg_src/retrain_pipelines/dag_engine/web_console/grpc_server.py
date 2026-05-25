@@ -1,38 +1,28 @@
-
 """gRPC server for task traces.
 
 Receives task traces from DAG engine
 and dispatches to SSE subscribers.
 """
 
-import grpc
-import logging
 import asyncio
+import logging
 import threading
-
-from datetime import datetime
 from concurrent import futures
 from urllib.parse import unquote
-from google.protobuf.timestamp_pb2 import Timestamp
 
-from grpc_health.v1 import health_pb2
-from grpc_health.v1 import health_pb2_grpc
+import grpc
+from grpc_health.v1 import health_pb2, health_pb2_grpc
 from grpc_health.v1.health import HealthServicer
 
-
-from .utils import ClientInfo
-from ..db.grpc import task_trace_pb2
-from ..db.grpc import task_trace_pb2_grpc
-
 from ...utils import in_notebook
-
+from ..db.grpc import task_trace_pb2, task_trace_pb2_grpc
+from .utils import ClientInfo
 from .utils.execution import events as execution_events
-
 
 logger = logging.getLogger(__name__)
 uvicorn_logger = logging.getLogger("uvicorn.access")
 
-_thread_loops = {}
+_thread_loops: dict[int, asyncio.AbstractEventLoop] = {}
 _thread_loops_lock = threading.Lock()
 
 
@@ -54,25 +44,23 @@ def _get_client_address(grpc_context):
 
     return ip, int(port)
 
+
 def logging__task_trace_received(
-    grpc_context: "_Context",
-    trace_id: int
+    grpc_context: "grpc._server._Context",  # noqa: F821
+    trace_id: int,
 ):
-    """Add an entry to WebConsole server access log
+    """Add an entry to WebConsole server access log.
 
-    Params:
-        - grpc_context (grpc._server._Context):
-            gRPC context
-        - trace_id (int):
+    Parameters
+    ----------
+    grpc_context : grpc._server._Context
+        gRPC context
+    trace_id : int
+        the id of the task-trace to log.
     """
-    grpc_client_host, grpc_client_port = \
-        _get_client_address(grpc_context)
+    grpc_client_host, grpc_client_port = _get_client_address(grpc_context)
 
-    client_info = ClientInfo(
-        ip=grpc_client_host,
-        port=grpc_client_port,
-        url=""
-    )
+    client_info = ClientInfo(ip=grpc_client_host, port=grpc_client_port, url="")
 
     # for logging, assign an event loop to current thread
     # In a Notebook, nest_asyncio patches get_running_loop()
@@ -92,24 +80,23 @@ def logging__task_trace_received(
             if thread_id not in _thread_loops:
                 _thread_loops[thread_id] = asyncio.new_event_loop()
             asyncio.set_event_loop(_thread_loops[thread_id])
-            loop = _thread_loops[thread_id]
     else:
         try:
-            loop = asyncio.get_running_loop()
+            _ = asyncio.get_running_loop()
         except RuntimeError:
             thread_id = threading.get_ident()
             with _thread_loops_lock:
                 if thread_id not in _thread_loops:
                     _thread_loops[thread_id] = asyncio.new_event_loop()
                 asyncio.set_event_loop(_thread_loops[thread_id])
-                loop = _thread_loops[thread_id]
-    
+
     uvicorn_logger.info(
         '%s - "%s %s %s" %d',
         f"{client_info['ip']}:{client_info['port']}",
         "grpc",
         f"{client_info['url']} taskTrace({trace_id})",
-        "2.0", 200
+        "2.0",
+        200,
     )
 
 
@@ -117,17 +104,12 @@ def create_health_servicer() -> HealthServicer:
     health_servicer = HealthServicer()
 
     # Overall server health
-    health_servicer.set(
-        "",
-        health_pb2.HealthCheckResponse.SERVING
-    )
+    health_servicer.set("", health_pb2.HealthCheckResponse.SERVING)
 
     # TaskTrace service health
     health_servicer.set(
-        task_trace_pb2.DESCRIPTOR.services_by_name[
-            'TaskTraceService'
-        ].full_name,
-        health_pb2.HealthCheckResponse.SERVING
+        task_trace_pb2.DESCRIPTOR.services_by_name["TaskTraceService"].full_name,
+        health_pb2.HealthCheckResponse.SERVING,
     )
 
     return health_servicer
@@ -135,25 +117,28 @@ def create_health_servicer() -> HealthServicer:
 
 class TaskTraceServicer(task_trace_pb2_grpc.TaskTraceServiceServicer):
     """Handles incoming task trace events from DAG engine.
-    
-    Forwards incoming gRPC payload to SSE subscribers."""
+
+    Forwards incoming gRPC payload to SSE subscribers.
+    """
 
     def SendTrace(
         self,
-        payload: task_trace_pb2.TaskTrace,
-        grpc_context: "_Context"
+        payload: task_trace_pb2.TaskTrace,  # type: ignore[name-defined]
+        grpc_context: "grpc._server._Context",  # noqa: F821
     ):
         """Receive and process a single task trace.
 
-        Params:
-            - payload (task_trace_pb2.TaskTrace):
-                TaskTrace protobuf message
-            - grpc_context (grpc._server._Context):
-                gRPC context
+        Parameters
+        ----------
+        payload : task_trace_pb2.TaskTrace
+            TaskTrace protobuf message
+        grpc_context : grpc._server._Context
+            gRPC context
 
-        Results:
-             - (TraceAck):
-                Acknowledgment with processing status
+        Returns
+        -------
+        TraceAck
+            Acknowledgment with processing status
         """
         logging__task_trace_received(grpc_context, trace_id=payload.id)
 
@@ -161,8 +146,7 @@ class TaskTraceServicer(task_trace_pb2_grpc.TaskTraceServiceServicer):
             # Dispatch to SSE subscribers, if any
             try:
                 # Convert protobuf timestamp to epoch milliseconds
-                trace_timestamp = int(
-                    payload.timestamp.ToDatetime().timestamp() * 1_000)
+                trace_timestamp = int(payload.timestamp.ToDatetime().timestamp() * 1_000)
 
                 # Build trace dict
                 trace_dict = {
@@ -172,48 +156,43 @@ class TaskTraceServicer(task_trace_pb2_grpc.TaskTraceServiceServicer):
                     "microsec": payload.microsec,
                     "microsec_idx": payload.microsec_idx,
                     "content": payload.content,
-                    "is_err": payload.is_err
+                    "is_err": payload.is_err,
                 }
 
                 for q, _ in execution_events.task_trace_subscribers:
                     q.put_nowait(trace_dict)
 
-                return task_trace_pb2.TraceAck(
-                    success=True,
-                    message="Trace dispatched"
+                return task_trace_pb2.TraceAck(  # type: ignore[attr-defined]
+                    success=True, message="Trace dispatched"
                 )
 
             except Exception as ex:
-                logger.error(f"Error processing trace: {ex}",
-                             exc_info=True)
+                logger.error(f"Error processing trace: {ex}", exc_info=True)
                 grpc_context.set_code(grpc.StatusCode.INTERNAL)
                 grpc_context.set_details(str(ex))
-                return task_trace_pb2.TraceAck(
-                    success=False,
-                    message=f"Error: {ex}"
+                return task_trace_pb2.TraceAck(  # type: ignore[attr-defined]
+                    success=False, message=f"Error: {ex}"
                 )
         else:
-            return task_trace_pb2.TraceAck(
-                success=True,
-                message="Trace consumed"
+            return task_trace_pb2.TraceAck(  # type: ignore[attr-defined]
+                success=True, message="Trace consumed"
             )
 
 
-def serve_grpc(
-    grpc_port: int,
-    max_workers:int = 10
-) -> grpc.Server:
+def serve_grpc(grpc_port: int, max_workers: int = 10) -> grpc.Server:
     """Start the gRPC server.
 
-    Params (int):
-        grpc_port:
-            Port to listen on
-        max_workers (int):
-            Thread pool size
-        
-    Results:
-         - (grpc.Server):
-            server instance
+    Parameters
+    ----------
+    grpc_port : int
+        Port to listen on
+    max_workers : int
+        Thread pool size
+
+    Returns
+    -------
+    grpc.Server
+        server instance
     """
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=max_workers))
 
@@ -223,28 +202,22 @@ def serve_grpc(
 
     # health check
     health_servicer = create_health_servicer()
-    health_pb2_grpc.add_HealthServicer_to_server(
-        health_servicer,
-        server
-    )
+    health_pb2_grpc.add_HealthServicer_to_server(health_servicer, server)
 
     # taskTrace
-    task_trace_pb2_grpc.add_TaskTraceServiceServicer_to_server(
-        TaskTraceServicer(), 
-        server
-    )
+    task_trace_pb2_grpc.add_TaskTraceServiceServicer_to_server(TaskTraceServicer(), server)
     #################
 
     # # Add reflection for grpcui/grpcurl
     # from grpc_reflection.v1alpha import reflection
     # SERVICE_NAMES = (
-        # task_trace_pb2.DESCRIPTOR.services_by_name['TaskTraceService'].full_name,
-        # reflection.SERVICE_NAME,
+    # task_trace_pb2.DESCRIPTOR.services_by_name['TaskTraceService'].full_name,
+    # reflection.SERVICE_NAME,
     # )
     # reflection.enable_server_reflection(SERVICE_NAMES, server)
 
     # Listen
-    server.add_insecure_port(f'[::]:{grpc_port}')
+    server.add_insecure_port(f"[::]:{grpc_port}")
     server.start()
 
     logger.info(f"gRPC TaskTraceService started on port {grpc_port}")
@@ -252,24 +225,29 @@ def serve_grpc(
 
 
 def serve_grpc_secure(
-    grpc_port, 
-    private_key_path='server.key', 
-    certificate_path='server.crt',
-    max_workers=10
+    grpc_port: int,
+    private_key_path: str = "server.key",
+    certificate_path: str = "server.crt",
+    max_workers: int = 10,
 ):
     """Start the gRPC server with TLS.
 
-    Params:
-        port: Port to listen on
-        private_key_path: Path to private key file
-        certificate_path: Path to certificate file
-        max_workers: Thread pool size
+    Parameters
+    ----------
+    grpc_port : int
+        Port to listen on
+    private_key_path : str
+        Path to private key file
+    certificate_path : str
+        Path to certificate file
+    max_workers : int
+        Thread pool size
 
-    Results:
-        grpc.Server instance
+    Returns
+    -------
+    grpc.Server
     """
-    server = grpc.server(futures.ThreadPoolExecutor(
-                max_workers=max_workers))
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=max_workers))
 
     #################
     # Add servicers #
@@ -277,40 +255,31 @@ def serve_grpc_secure(
 
     # health check
     health_servicer = create_health_servicer()
-    health_pb2_grpc.add_HealthServicer_to_server(
-        health_servicer,
-        server
-    )
+    health_pb2_grpc.add_HealthServicer_to_server(health_servicer, server)
 
     # taskTrace
-    task_trace_pb2_grpc.add_TaskTraceServiceServicer_to_server(
-        TaskTraceServicer(), 
-        server
-    )
+    task_trace_pb2_grpc.add_TaskTraceServiceServicer_to_server(TaskTraceServicer(), server)
     #################
 
     # # Add reflection for grpcui/grpcurl
     # from grpc_reflection.v1alpha import reflection
     # SERVICE_NAMES = (
-        # task_trace_pb2.DESCRIPTOR.services_by_name['TaskTraceService'].full_name,
-        # reflection.SERVICE_NAME,
+    # task_trace_pb2.DESCRIPTOR.services_by_name['TaskTraceService'].full_name,
+    # reflection.SERVICE_NAME,
     # )
     # reflection.enable_server_reflection(SERVICE_NAMES, server)
 
     # Load credentials
-    with open(private_key_path, 'rb') as f:
+    with open(private_key_path, "rb") as f:
         private_key = f.read()
-    with open(certificate_path, 'rb') as f:
+    with open(certificate_path, "rb") as f:
         certificate_chain = f.read()
 
-    server_credentials = grpc.ssl_server_credentials(
-        ((private_key, certificate_chain),)
-    )
+    server_credentials = grpc.ssl_server_credentials(((private_key, certificate_chain),))
 
     # Listen with TLS
-    server.add_secure_port(f'[::]:{grpc_port}', server_credentials)
+    server.add_secure_port(f"[::]:{grpc_port}", server_credentials)
     server.start()
 
     logger.info(f"gRPC TaskTraceService started (TLS) on port {grpc_port}")
     return server
-

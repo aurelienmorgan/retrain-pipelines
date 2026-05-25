@@ -1,20 +1,15 @@
-
 from pydantic import BaseModel
-from typing import List, Optional
 
 
 class Request(BaseModel):
-    adapter_name: Optional[str] = None
-    queries_list: List[str]
+    adapter_name: str | None = None
+    queries_list: list[str]
 
     class Config:
         json_schema_extra = {
             "example": {
                 "adapter_name": "func_caller_lora",
-                "queries_list": [
-                    "Hello there, how's it hanging?",
-                    "Is 49 a perfect square?"
-                ]
+                "queries_list": ["Hello there, how's it hanging?", "Is 49 a perfect square?"],
             }
         }
 
@@ -27,5 +22,4 @@ class QueryOutput(BaseModel):
 
 
 class Response(BaseModel):
-    output: List[QueryOutput]
-
+    output: list[QueryOutput]

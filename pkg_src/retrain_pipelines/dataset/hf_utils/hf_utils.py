@@ -1,26 +1,20 @@
-
 import os
-import re
-import sys
-import json
 import random
+import re
 import shutil
 import tempfile
-import traceback
+from collections.abc import Callable, Iterator
+from typing import Literal, cast
 
 import pandas as pd
 import polars as pl
-
-from typing import Optional, Callable, Iterator
-
-from datasets import load_dataset, \
-    IterableDataset, DatasetDict
+from datasets import DatasetDict, IterableDataset, load_dataset
 from huggingface_hub import HfApi
 
 from retrain_pipelines import __version__
-from retrain_pipelines.utils.hf_utils import \
-    get_repo_branches_commits_files, local_repo_folder_to_hub
-
+from retrain_pipelines.utils.hf_utils import (
+    local_repo_folder_to_hub,
+)
 
 # import logging
 # logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -28,42 +22,43 @@ from retrain_pipelines.utils.hf_utils import \
 
 def get_lazy_df(
     repo_id: str,
-    commit_hash: str = None,
-    config_name: str = None,
-    hf_token:str = None,
+    commit_hash: str | None = None,
+    config_name: str | None = None,
+    hf_token: str | None = None,
 ) -> dict:
+    """Retrieve Polars lazy dataframe object.
+
+    For a given HuggingFace-hosted dataset "revision".
+
+    Parameters
+    ----------
+    repo_id : str
+        Path to the HuggingFace dataset.
+    commit_hash : Optional, str
+        particular "revision" of the dataset
+        to scan.
+        Note:
+            think of commit_hash as a "by reference"
+            parameter. If None, it is updated
+            to convey the actual (latest) value
+            info back to the caller
+    config_name : str
+        Only consider a given dataset split (e.g. "train").
+    hf_token : Optional, str
+        Needed if the HF dataset is "gated"
+        (requires to be granted access).
+        @see https://huggingface.co/docs/hub/en/datasets-gated
+
+    Returns
+    -------
+    dict
+        - repo_id (str)
+        - commit_hash (str):
+            gets handy when no input value
+            is given as input.
+        - commit_datetime (datetime)
+        - lazydf (pl.lazyframe.frame.LazyFrame)
     """
-    Polars lazy dataframe object
-    for a given HuggingFace-hosted dataset "revision".
-
-    Params:
-        - repo_id (str):
-            Path to the HuggingFace dataset.
-        - commit_hash (Optional, str):
-            particular "revision" of the dataset
-            to scan.
-            Note:
-                think of commit_hash as a "by reference"
-                parameter. If None, it is updated
-                to convey the actual (latest) value
-                info back to the caller
-        - config_name (str):
-            Only consider a given dataset split (e.g. "train").
-        - hf_token (Optional, str):
-            Needed if the HF dataset is "gated"
-            (requires to be granted access).
-            @see https://huggingface.co/docs/hub/en/datasets-gated
-
-    Results:
-        - (dict):
-            - repo_id (str)
-            - commit_hash (str):
-                gets handy when no input value
-                is given as input.
-            - commit_datetime (datetime)
-            - lazydf (pl.lazyframe.frame.LazyFrame)
-    """
-
     # get dataset reference
     ds_kwargs = {"path": repo_id}
     if commit_hash:
@@ -81,10 +76,11 @@ def get_lazy_df(
             url = list(first_split._info.download_checksums.keys())[0]
         else:
             url = list(ds._info.download_checksums.keys())[0]
-        commit_hash = url.split('@')[1].split('/')[0]
+        commit_hash = url.split("@")[1].split("/")[0]
     # get revision datetime
     commit_info = HfApi().list_repo_commits(
-        repo_id=repo_id, repo_type="dataset", revision=commit_hash)
+        repo_id=repo_id, repo_type="dataset", revision=commit_hash
+    )
     for commit in commit_info:
         if commit.commit_id == commit_hash:
             commit_datetime = commit.created_at
@@ -93,46 +89,47 @@ def get_lazy_df(
     # If split not specified, ds is a dict of splits
     if isinstance(ds, dict):
         # Concatenate all splits
-        dfs = []
-        for split_name, split_ds in ds.items():
-            df = pl.from_arrow(split_ds.data.table)
+        dfs: list[pl.DataFrame] = []
+        for _split_name, split_ds in ds.items():
+            df = cast(pl.DataFrame, pl.from_arrow(split_ds.data.table))
             dfs.append(df)
 
         # Concatenate vertically
-        lazy_df = pl.concat(dfs, how="vertical").lazy()
+        lazy_df = cast(pl.DataFrame, pl.concat(dfs, how="vertical")).lazy()
     else:
         # Single split
-        lazy_df = pl.from_arrow(ds.data.table).lazy()
+        lazy_df = cast(pl.DataFrame, pl.from_arrow(ds.data.table)).lazy()
 
     print(lazy_df.explain())
 
     return {
-            "repo_id": repo_id,
-            "commit_hash": commit_hash,
-            "commit_datetime": commit_datetime,
-            "lazy_df": lazy_df
-        }
+        "repo_id": repo_id,
+        "commit_hash": commit_hash,
+        "commit_datetime": commit_datetime,
+        "lazy_df": lazy_df,
+    }
 
 
 def get_column_info(
     lazy_df: pl.lazyframe.frame.LazyFrame,
-    engine: str = "cpu"
+    engine: Literal["cpu", "gpu"] = "cpu",
 ) -> pd.DataFrame:
-    """
-    Basic types description.
+    """Retrieve basic types description.
+
     Aggregate min/max for numericals and
     words count for strings.
 
-    Params:
-        - lazy_df (pl.lazyframe.frame.LazyFrame):
-            the dataset table to consider.
-        - engine (str):
-            Polars' engine (cpu or gpu)
+    Parameters
+    ----------
+    lazy_df : pl.lazyframe.frame.LazyFrame
+        the dataset table to consider.
+    engine : str
+        Polars' engine (cpu or gpu)
 
-    Results:
-        - (pd.DataFrame):
+    Returns
+    -------
+    pd.DataFrame
     """
-
     schema = lazy_df.limit(1).collect(engine=engine)[0].schema
 
     def count_words(text):
@@ -140,47 +137,54 @@ def get_column_info(
             return 0
         return len(re.findall(r"\w+", str(text)))
 
-    result = lazy_df.select([
-        pl.col(c).min().alias(f"{c}_min")
-        if t in [pl.Int64, pl.Float64]
-        else pl.lit(None).alias(f"{c}_min")
-        for c, t in schema.items()
-    ] + [
-        pl.col(c).max().alias(f"{c}_max")
-        if t in [pl.Int64, pl.Float64]
-        else pl.lit(None).alias(f"{c}_max")
-        for c, t in schema.items()
-    ] + [
-        pl.col(c).map_elements(lambda x: count_words(x),
-                               return_dtype=pl.Int64
-                              ).min().alias(f"{c}_min_words")
-        if t == pl.Utf8
-        else pl.lit(None).alias(f"{c}_min_words")
-        for c, t in schema.items()
-    ] + [
-        pl.col(c).map_elements(lambda x: count_words(x),
-                               return_dtype=pl.Int64
-                              ).max().alias(f"{c}_max_words")
-        if t == pl.Utf8
-        else pl.lit(None).alias(f"{c}_max_words")
-        for c, t in schema.items()
-    ])
+    result = lazy_df.select(
+        [
+            pl.col(c).min().alias(f"{c}_min")
+            if t in [pl.Int64, pl.Float64]
+            else pl.lit(None).alias(f"{c}_min")
+            for c, t in schema.items()
+        ]
+        + [
+            pl.col(c).max().alias(f"{c}_max")
+            if t in [pl.Int64, pl.Float64]
+            else pl.lit(None).alias(f"{c}_max")
+            for c, t in schema.items()
+        ]
+        + [
+            pl
+            .col(c)
+            .map_elements(lambda x: count_words(x), return_dtype=pl.Int64)
+            .min()
+            .alias(f"{c}_min_words")
+            if t == pl.Utf8
+            else pl.lit(None).alias(f"{c}_min_words")
+            for c, t in schema.items()
+        ]
+        + [
+            pl
+            .col(c)
+            .map_elements(lambda x: count_words(x), return_dtype=pl.Int64)
+            .max()
+            .alias(f"{c}_max_words")
+            if t == pl.Utf8
+            else pl.lit(None).alias(f"{c}_max_words")
+            for c, t in schema.items()
+        ]
+    )
     df = result.collect(engine=engine)
 
     column_info = {}
     for col, dtype in schema.items():
         if dtype in [pl.Int64, pl.Float64]:
-            column_info[col] = \
-                f"{str(dtype)} - " + \
-                f"[{df[0][f'{col}_min'][0]}-" + \
-                f"{df[0][f'{col}_max'][0]}]"
+            column_info[col] = (
+                f"{str(dtype)} - " + f"[{df[0][f'{col}_min'][0]}-" + f"{df[0][f'{col}_max'][0]}]"
+            )
         elif dtype == pl.Utf8:
-            column_info[col] = \
-                f"[{df[0][f'{col}_min_words'][0]}-" + \
-                f"{df[0][f'{col}_max_words'][0]}] words"
+            column_info[col] = (
+                f"[{df[0][f'{col}_min_words'][0]}-" + f"{df[0][f'{col}_max_words'][0]}] words"
+            )
         else:
-            raise NotImplementedError(
-                f"Data type '{dtype}' not implemented")
+            raise NotImplementedError(f"Data type '{dtype}' not implemented")
 
     return pd.DataFrame(column_info, index=["Range"])
 
@@ -188,10 +192,10 @@ def get_column_info(
 def iterable_dataset_multi_buffer_sampler(
     dataset: IterableDataset,
     total_samples: int,
-    attributes_selector: Optional[Callable]=None,
+    attributes_selector: Callable | None = None,
     buffer_size: int = 1000,
     num_passes: int = 3,
-    seed: int = None
+    seed: int | None = None,
 ) -> Iterator:
     """
     Lazy random sampling with multiple buffer passes.
@@ -205,42 +209,36 @@ def iterable_dataset_multi_buffer_sampler(
 
     Enables selective attribute extraction.
 
-    Usage:
-    ```python
-    samples = list(iterable_dataset_multi_buffer_sampler(
-        hf_streaming_dataset['train'],
-        total_samples=1000,
-        buffer_size=2000,
-        num_passes=3,
-        selector=lambda x: {
-            # Select desired attributes
-            'key1': x['key1'],
-            'key2': x['key2']
-        }
-    ))
-    ```
+    Parameters
+    ----------
+    dataset : IterableDataset
+        Input streaming dataset.
+    total_samples : int
+        Number of samples to return.
+    attributes_selector : Callable, optional
+        Optional function transforming each input item to a subset
+        of desired attributes. Extracted pre-yield.
+    buffer_size : int
+        Size of each sampling buffer. Larger values improve randomization.
+    num_passes : int
+        Number of shuffling passes. More passes improve coverage.
+    seed : int, optional
+        Random seed for reproducibility.
 
-    Parameters:
-        - dataset (IterableDataset):
-            Input streaming dataset
-        - total_samples (int):
-            Number of samples to return
-        - selector: Optional[Callable] = None
-            Transform input item.
-            Optional function transforming input item
-            to subset of desired attributes.
-            Extract specific attributes pre-yield
-        - buffer_size (int):
-            Size of each buffer.
-            Larger buffer for better randomization.
-        - num_passes (int):
-            Number of shuffling passes.
-            Multiple passes for better coverage.
-        - seed (int):
-            Random seed for reproducibility
+    Returns
+    -------
+    Iterator
+        Lazily sampled items from the dataset.
 
-    Results:
-        - (Iterator)
+    Examples
+    --------
+    >>> samples = list(iterable_dataset_multi_buffer_sampler(
+    ...     hf_streaming_dataset['train'],
+    ...     total_samples=1000,
+    ...     buffer_size=2000,
+    ...     num_passes=3,
+    ...     attributes_selector=lambda x: {'key1': x['key1'], 'key2': x['key2']}
+    ... ))
     """
     if seed is not None:
         random.seed(seed)
@@ -251,18 +249,13 @@ def iterable_dataset_multi_buffer_sampler(
     for pass_idx in range(num_passes):
         # Adjust samples for last pass to include remainder
         current_samples = (
-            samples_per_pass + remainder
-            if pass_idx == num_passes - 1
-            else samples_per_pass
+            samples_per_pass + remainder if pass_idx == num_passes - 1 else samples_per_pass
         )
 
         # Get samples with a fresh buffer
-        buffer = []
+        buffer: list = []
         for item in dataset:
-            item = (
-                attributes_selector(item)
-                if attributes_selector else item
-            )
+            item = attributes_selector(item) if attributes_selector else item
             if len(buffer) < buffer_size:
                 buffer.append(item)
             else:
@@ -285,13 +278,11 @@ def iterable_dataset_multi_buffer_sampler(
             current_samples -= 1
 
 
-def dataset_dict_to_config_str(
-    dataset_dict: DatasetDict
-) -> str:
-    """
+def dataset_dict_to_config_str(dataset_dict: DatasetDict) -> str:
+    """Generate config yaml section.
+
     Intended use: readme yaml header 'configs' tag.
     """
-
     result = "configs:\n"
     for config_name, dataset in dataset_dict.items():
         result += f"  - config_name: {config_name}\n"
@@ -312,10 +303,11 @@ def push_dataset_version_to_hub(
     timestamp_str: str,
     dataset_dict: DatasetDict,
     dataset_readme_content: str,
-    hf_token: str = None,
-) -> str:
-    """
-    Creates an ephemeral local folder structure
+    hf_token: str | None = None,
+) -> str | None:
+    """Publish ``retrain-pipelines`` dataset on the Hugging Face Hub.
+
+    Create an ephemeral local folder structure
     where multi-tables / multi-splits datasets
     are supported.
 
@@ -326,31 +318,28 @@ def push_dataset_version_to_hub(
     not anymore present is excluded from
     new remote dataset snapshot).
 
-    Params:
-        - repo_id (str):
-            Path to the HuggingFace dataset version
-            (is created if needed and if authorized).
-        - version_label (str):
-            value associated to the version
-            to be published on the HF hub.
-        - timestamp_str (str):
-            value associated to the version
-            to be published on the HF hub
-        - dataset_dict (DatasetDict):
-            The new version to be pushed.
-        - dataset_readme_content (str):
-            The full content (yaml header + body)
-            of the 'README.md' to be pushed
-            alongside the datafiles.
-        - hf_token (Optional, str):
-            "create on namespace" permission required.
+    Parameters
+    ----------
+    repo_id : str
+        Path to the HuggingFace dataset repository.
+        Created if it does not exist and the token is authorized.
+    version_label : str
+        Label associated with the version to publish on the HF Hub.
+    timestamp_str : str
+        Timestamp string associated with the version to publish on the HF Hub.
+    dataset_dict : DatasetDict
+        The new dataset version to push.
+    dataset_readme_content : str
+        Full content (YAML header and body) of the ``README.md``
+        to push alongside the data files.
+    hf_token : str, optional
+        HuggingFace token. Requires ``create on namespace`` permission.
 
-    Results:
-        - (str):
-            commit_hash on the HF hub
-            for the new dataset_version
+    Returns
+    -------
+    str
+        Commit hash on the HF Hub for the newly pushed dataset version.
     """
-
     tmp_dir = tempfile.mkdtemp()
     print(tmp_dir)
 
@@ -362,34 +351,33 @@ def push_dataset_version_to_hub(
         if isinstance(dataset, dict):
             # e.g. dataset with splits
             for split, split_dataset in dataset.items():
-                split_file_path = \
-                    os.path.join(table_dir, f"{split}.parquet")
+                split_file_path = os.path.join(table_dir, f"{split}.parquet")
                 split_dataset.to_parquet(split_file_path)
         else:
-            split_file_path = \
-                os.path.join(table_dir, "data.parquet")
+            split_file_path = os.path.join(table_dir, "data.parquet")
             dataset.to_parquet(split_file_path)
 
-    with open(os.path.join(tmp_dir, "README.md"),
-              "w") as f:
+    with open(os.path.join(tmp_dir, "README.md"), "w") as f:
         f.write(dataset_readme_content)
 
-    commit_message = \
-        f"v{version_label} - {timestamp_str} - " + \
-        f"retrain-pipelines v{__version__} - "+ \
-        "Upload multi-table dataset with README."
+    commit_message = (
+        f"v{version_label} - {timestamp_str} - "
+        + f"retrain-pipelines v{__version__} - "
+        + "Upload multi-table dataset with README."
+    )
     print(commit_message)
 
-    dataset_version_commit_hash = \
-        local_repo_folder_to_hub(
-            repo_id=repo_id,
-            local_folder=tmp_dir,
-            commit_message=commit_message,
-            repo_type="dataset",
-            hf_token=hf_token
-        )
+    dataset_version_commit_hash = local_repo_folder_to_hub(
+        repo_id=repo_id,
+        local_folder=tmp_dir,
+        commit_message=commit_message,
+        repo_type="dataset",
+        hf_token=hf_token,
+    )
 
     shutil.rmtree(tmp_dir, ignore_errors=True)
 
-    return dataset_version_commit_hash
+    if dataset_version_commit_hash is None:
+        raise RuntimeError("Failed to push dataset version to Hugging Face Hub.")
 
+    return dataset_version_commit_hash

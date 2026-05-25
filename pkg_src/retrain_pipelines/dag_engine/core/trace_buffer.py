@@ -1,16 +1,12 @@
-
-import os
-import queue
 import atexit
 import logging
+import os
+import queue
 import threading
-
-from typing import Optional
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime
 
 from ..db.dao import DAO
-
 
 logger = logging.getLogger(__name__)
 
@@ -18,19 +14,18 @@ logger = logging.getLogger(__name__)
 class TraceBuffer:
     """Thread-safe buffer for task traces with background writer."""
 
-    def __init__(
-        self, flush_interval: float = 0.5, batch_size: int = 2
-    ):
+    def __init__(self, flush_interval: float = 0.5, batch_size: int = 2):
+        """Instanciate.
+
+        Parameters
+        ----------
+        flush_interval : float
+            Seconds between flushes
+        batch_size : int
+            Max traces to batch in one write
         """
-        Params:
-            flush_interval (float):
-                Seconds between flushes
-            batch_size (int):
-                Max traces to batch in one write
-        """
-        self._queue = queue.Queue()
-        self._dao_factory = \
-            lambda: DAO(os.environ["RP_METADATASTORE_URL"])
+        self._queue: queue.Queue[dict[str, object]] = queue.Queue()
+        self._dao_factory = lambda: DAO(os.environ["RP_METADATASTORE_URL"])
         self._flush_interval = flush_interval
         self._batch_size = batch_size
         self._stop_event = threading.Event()
@@ -47,18 +42,16 @@ class TraceBuffer:
             self._stop_event.clear()
             self._started = True
             self._writer_thread = threading.Thread(
-                target=self._writer_loop,
-                daemon=True,
-                name="TraceWriter"
+                target=self._writer_loop, daemon=True, name="TraceWriter"
             )
             self._writer_thread.start()
             atexit.register(self.stop)
 
-    def add_trace(self, task_id: int, content: str,
-                  timestamp: datetime, microsec: int,
-                  is_err: bool = False):
-        """Add a trace entry to the buffer (non-blocking).
-        
+    def add_trace(
+        self, task_id: int, content: str, timestamp: datetime, microsec: int, is_err: bool = False
+    ):
+        r"""Add a trace entry to the buffer (non-blocking).
+
         Each entry represents one complete line (with \n preserved).
         """
         # logger.error(f"TraceBuffer.add_trace({task_id}, {content})")
@@ -67,7 +60,7 @@ class TraceBuffer:
             "content": content,
             "timestamp": timestamp,
             "microsec": microsec,
-            "is_err": is_err
+            "is_err": is_err,
         }
         self._queue.put(trace_dict)
 
@@ -91,8 +84,7 @@ class TraceBuffer:
                         self._flush_batch(batch)
 
             except Exception as e:
-                logger.error(f"Error in trace writer loop: {e}",
-                             exc_info=True)
+                logger.error(f"Error in trace writer loop: {e}", exc_info=True)
 
     def _flush_batch(self, batch):
         """Write a batch of traces to the database."""
@@ -140,7 +132,7 @@ class TraceBuffer:
             self._started = False
 
 
-_trace_buffer: Optional[TraceBuffer] = None
+_trace_buffer: TraceBuffer | None = None
 _buffer_lock = threading.Lock()
 
 
@@ -153,4 +145,3 @@ def get_trace_buffer() -> TraceBuffer:
             _trace_buffer = TraceBuffer()
         _trace_buffer.start()
         return _trace_buffer
-

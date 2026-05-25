@@ -1,29 +1,24 @@
-
-import os
-import sys
 import logging
-
-from contextlib import contextmanager, \
-    redirect_stdout
+import os
+from contextlib import contextmanager, redirect_stdout
 from io import StringIO
-from IPython import get_ipython
 
 from alembic import command
 from alembic.config import Config
 
-from .rp_logging import RichLoggingController
-
 from ..utils import in_notebook
-
+from .rp_logging import RichLoggingController
 
 _alembic_upgraded = False
 
 
 @contextmanager
 def alembic_capture(alembic_cfg):
-    """Custom context manager:
+    """Decorate with custom context manager.
+
     Rich activate, alembic logger to StringIO,
-    stdout redirect, run upgrade."""
+    stdout redirect, run upgrade.
+    """
     logger_controller = RichLoggingController()
     logger_controller.activate()
 
@@ -41,6 +36,7 @@ def alembic_capture(alembic_cfg):
     try:
         if in_notebook():
             from IPython.utils.io import capture_output
+
             _set_alembic_logger_to_stringio(stdout_capture)
             with redirect_stdout(stdout_capture), capture_output(display=True):
                 command.upgrade(alembic_cfg, "head")
@@ -60,20 +56,14 @@ def run_alembic_upgrade_once():
 
     if not _alembic_upgraded:
         file_dir = os.path.dirname(os.path.abspath(__file__))
-        alembic_ini_path = os.path.join(
-            file_dir, "db", "alembic", "alembic.ini")
+        alembic_ini_path = os.path.join(file_dir, "db", "alembic", "alembic.ini")
         # @see https://stackoverflow.com/questions/78780118/
-        alembic_cfg = Config(alembic_ini_path,
-                             attributes={"configure_logger": False})
+        alembic_cfg = Config(alembic_ini_path, attributes={"configure_logger": False})
         db_url = os.environ["RP_METADATASTORE_URL"]
-        alembic_cfg.set_main_option(
-            "sqlalchemy.url",
-            db_url
-        )
+        alembic_cfg.set_main_option("sqlalchemy.url", db_url)
 
         # not logging anything if there's no upgrade
         # => capturing stream and displaying if elligible.
-        stdout_capture = StringIO()
         with alembic_capture(alembic_cfg) as stdout_capture:
             stdout_output = stdout_capture.getvalue()
 
@@ -88,12 +78,10 @@ def run_alembic_upgrade_once():
             else:
                 print(stdout_output)
 
-
         _alembic_upgraded = True
 
 
 if __name__ == "__main__":
-    from retrain_pipelines import config
+    from retrain_pipelines import config  # noqa: F401
 
     run_alembic_upgrade_once()
-

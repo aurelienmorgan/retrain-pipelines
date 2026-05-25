@@ -1,7 +1,6 @@
+from typing import Final
 
 import requests
-
-from typing import Final
 
 
 def server_has_model(
@@ -26,26 +25,26 @@ def server_has_model(
         - 503 → model exists BUT is still loading
         - 404 → model does NOT exist
 
-    Params:
-        - model_name (str):
-            name of the model as configured
-            in MLServer.
-        - port (int):
-            server HTTP port.
+    Parameters
+    ----------
+    model_name : str
+        name of the model as configured
+        in MLServer.
+    port : int
+        server HTTP port.
 
-    Results:
-        - bool
-            true if model exists
-            (ready or loading)
-            false if model is unknown
-            or unreachable.
+    Returns
+    -------
+    bool
+        true if model exists
+        (ready or loading)
+        false if model is unknown
+        or unreachable.
     """
-    url: Final[str] = \
-        f"http://localhost:{port}/v2/models/{model_name}/ready"
+    url: Final[str] = f"http://localhost:{port}/v2/models/{model_name}/ready"
 
     try:
         response: requests.Response = requests.get(url)
         return response.status_code in (200, 503)
     except requests.RequestException:
         return False
-
