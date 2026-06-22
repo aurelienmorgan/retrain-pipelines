@@ -83,9 +83,9 @@ def _webconsole_start(port: int, grpc_port: int):
 
     _logger_controller.activate()
 
-    # ###############
+    # ############## #
     # port singleton #
-    # ##
+    # ############## #
     # Check if the herein process already has any server running
     if _process_has_server:
         logger.error(
@@ -100,13 +100,13 @@ def _webconsole_start(port: int, grpc_port: int):
     # Check if server thread is still alive
     # (shouldn't happen with flag above, but safety check)
     if _server_thread and _server_thread.is_alive():
-        logger.warn("\N{WHITE HEAVY CHECK MARK} Server already running " + "in this process.")
+        logger.warning("\N{WHITE HEAVY CHECK MARK} Server already running " + "in this process.")
         return
 
     # Try to acquire lock
     # (checks OTHER processes on this specific port)
     if not acquire_server_lock(port):
-        logger.warn(
+        logger.warning(
             "\N{WHITE HEAVY CHECK MARK} Server already running "
             + f"on port {port} in another process."
         )
@@ -118,7 +118,7 @@ def _webconsole_start(port: int, grpc_port: int):
         ports_list = [port, grpc_port]
         for verify_port in ports_list:
             if _s.connect_ex(("127.0.0.1", verify_port)) == 0:
-                logger.warn(
+                logger.warning(
                     f"\N{CROSS MARK} Can't start a WebConsole instance on ports "
                     f"{ports_list}, port {verify_port} is not available."
                 )
@@ -127,15 +127,11 @@ def _webconsole_start(port: int, grpc_port: int):
     ##################
 
     logger.info("\N{ROCKET} Starting server...")
-    # ##   ##   ##   ##   ##   DEMO   -   DELETE   ##   ##   ##   ##   ## #
-    # logger.info("logs going to " +
-    # f"{os.environ.get('RP_WEB_SERVER_LOGS', 'N/A')}")
     logger.info("logs going to " + f"{os.environ.get('RP_WEB_SERVER_LOGS', 'N/A')}")
-    # ##   ##   ##   ##   ##   DEMO   -   DELETE   ##   ##   ##   ##   ## #
 
-    # ###########
+    # ########## #
     # app server #
-    # ##
+    # ########## #
     # declare error pages handler
     def make_handler(code):
         return lambda req, exc: error_page(code, req, exc)
@@ -149,9 +145,9 @@ def _webconsole_start(port: int, grpc_port: int):
     app = FastHTML(exception_handlers=exception_handlers, exts="ws")
     ##############
 
-    # ############
+    # ########### #
     # gRPC server #
-    # ##
+    # ########### #
     @app.on_event("startup")
     async def startup_event():
         global _grpc_thread, _grpc_server
@@ -178,9 +174,9 @@ def _webconsole_start(port: int, grpc_port: int):
 
     ###############
 
-    # ####################
+    # ################### #
     # routes registration #
-    # ##
+    # ################### #
     rt = app.route
     for view in [api, home, server, execution]:
         view.register(app, rt)
@@ -350,7 +346,7 @@ def webconsole_shutdown():
 # ----------------------------------------------------------------------------------------
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     # override port via command line: python main.py 5002 50052
     if len(sys.argv) > 1:
         try:

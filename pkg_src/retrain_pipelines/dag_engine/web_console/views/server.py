@@ -227,7 +227,7 @@ def register(app, rt, prefix=""):
                                 // Update title on input
                                 expand_textfield_input.addEventListener("input", updateTitle);
                             """),
-                            Script("""// converts boolean-logic string into regex patter
+                            Script(r"""// converts boolean-logic string into regex patter
                                 // e.g. `OR(AND(NOT("cool"), NOT ("man")), AND("really", "not"))`
                                 //      gives `^(?:(?!.*cool)(?!.*man)|(?=.*really)(?=.*not)).*$`
                                 // e.g. `AND(NOT("hello Kitty"), "cat")`

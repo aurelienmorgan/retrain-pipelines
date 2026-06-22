@@ -8,7 +8,7 @@ repos:
         types: [python]
         args:
           [
-            "pkg_src",
+            "pkg_src", "tests",
             "--fix",
             "--show-fixes",
             "--exclude", "pkg_src/build/",
@@ -26,7 +26,7 @@ repos:
         types: [python]
         args:
           [
-            "pkg_src",
+            "pkg_src", "tests",
             "--exclude", "pkg_src/build/",
             "--exclude", "*.ipynb",
             "--exclude", "pkg_src/retrain_pipelines/dag_engine/db/alembic/versions/",
@@ -49,4 +49,5 @@ repos:
         name: pytest unit
         language: system
         pass_filenames: false
-        entry: pytest tests/unit
+        always_run: true
+        entry: pytest tests/unit --cov=pkg_src/retrain_pipelines/dag_engine --cov-report=term-missing --cov-config=pkg_src/pyproject.toml

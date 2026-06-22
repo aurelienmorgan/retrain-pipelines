@@ -1025,7 +1025,7 @@ def taskgroup(func=None, *, ui_css=None):
 def _get_dag_params(dag_func: Callable):
     """Execute the function so params get instanciated."""
     # Get source and parse it
-    source = inspect.getsource(dag_func)
+    source = textwrap.dedent(inspect.getsource(dag_func))
     tree = ast.parse(source)
 
     # Extract just the function body lines
@@ -1320,6 +1320,10 @@ class DagParam(BaseModel):
 
     def to_serializable_dict(self) -> dict[str, Any]:
         """Return a JSON-serializable dict representation of this DagParam."""
+        # print(
+        #       f"####    ####    ####    {self}  -  {type(self.default)}" +
+        #       f"####    {DagParam._serialize(self.default)}"
+        # )
         return {"description": self.description, "default": DagParam._serialize(self.default)}
 
     @staticmethod
@@ -1334,7 +1338,7 @@ class DagParam(BaseModel):
         if isinstance(obj, BaseModel):
             # convert model to plain dict first,
             # then serialize recursively
-            return DagParam._serialize(obj.dict())
+            return DagParam._serialize(obj.model_dump(mode="python"))
         if isinstance(obj, dict):
             return {k: DagParam._serialize(v) for k, v in obj.items()}
         if isinstance(obj, (list, tuple, set)):

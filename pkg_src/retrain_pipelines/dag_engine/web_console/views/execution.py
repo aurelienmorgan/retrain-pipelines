@@ -552,6 +552,7 @@ def register(app, rt, prefix=""):
                         execNumEl.innerText = executionNumberJson.number;
                         const executionsCount = document.getElementById("executions-count");
                         executionsCount.innerText = executionNumberJson.count;
+console.log(executionNumberJson);
                         const ongoing = executionNumberJson.count - executionNumberJson.completed;
                         executionsCount.title =
                             `${{ongoing}} ongoing\n` +
@@ -793,7 +794,7 @@ def register(app, rt, prefix=""):
                     }}
                     registerExecEventsSrc();
                 """),
-                Script(f"""// re-register SSE source on window history.back()
+                Script(rf"""// re-register SSE source on window history.back()
                     window.addEventListener('pageshow', function(event) {{
                         if (event.persisted) {{ // page reloaded from bfcache
                             // inject up-to-date Gantt chart
@@ -823,7 +824,7 @@ def register(app, rt, prefix=""):
                         }}
                     }});
                 """),
-                Script(f"""// handling & recovering from server-loss
+                Script(rf"""// handling & recovering from server-loss
                     const statusCircle = document.getElementById('status-circle');
                     let previousClasses =
                         Array.from(statusCircle.classList); // remember initial classes

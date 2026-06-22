@@ -42,7 +42,7 @@ def register(app, rt, prefix=""):
         try:
             _ = Execution(data)
         except (KeyError, ValueError, TypeError) as e:
-            logging.getLogger().warn(e)
+            logging.getLogger().warning(e)
             return Response(status_code=422, content=f"Invalid input: {str(e)}")
 
         # dispatch 'new Execution' event
@@ -96,7 +96,7 @@ def register(app, rt, prefix=""):
         try:
             _ = ExecutionExt(**data)
         except (KeyError, ValueError, TypeError) as e:
-            logging.getLogger().warn(e)
+            logging.getLogger().warning(e)
             return Response(status_code=422, content=f"Invalid input: {str(e)}")
 
         # dispatch 'Execution ended' event

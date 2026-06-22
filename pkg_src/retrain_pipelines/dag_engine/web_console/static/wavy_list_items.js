@@ -217,7 +217,7 @@ const applyWaveEffect = (entry, entries, i) => {
 
     const cleanup = () => {
         entries.forEach(e => {
-            // Reset only transform, margin, zIndex — keep padding & background & overlay untouched
+            // Reset only transform, margin, zIndex ; keep padding & background & overlay untouched
             e.style.transform = '';
             e.style.marginTop = '';
             e.style.marginBottom = e._originalMarginBottom;

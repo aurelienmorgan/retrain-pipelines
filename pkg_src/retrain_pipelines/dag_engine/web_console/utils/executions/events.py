@@ -42,7 +42,7 @@ def notify_server_shutdown():
             except RuntimeError:
                 pass
     else:
-        # No live loop — just wipe the lists directly as a safety net.
+        # No live loop ; just wipe the lists directly as a safety net.
         pass
     new_exec_subscribers.clear()
     exec_end_subscribers.clear()
@@ -89,7 +89,7 @@ async def multiplexed_event_generator(client_info: ClientInfo):
                 key = next(k for k, v in get_tasks.items() if v == finished)
                 result = finished.result()
 
-                # Server shutdown signal — exit cleanly so finally runs.
+                # Server shutdown signal ; exit cleanly so finally runs.
                 if result is _SHUTDOWN:
                     for task in get_tasks.values():
                         task.cancel()

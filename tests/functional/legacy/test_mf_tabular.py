@@ -22,9 +22,9 @@ def test_mf_lightgbm_regress_mlserver():
 
     # assumes the "requirements.txt" from the subdir
     # of the herein "sample pipeline"
-    # are installed in an env named "metaflow_lightgbm"
+    # are installed in an env named "mf_lightgbm_3_10"
     # (would it be through conda or venv)
-    env = get_venv(virtual_env_name="metaflow_lightgbm")
+    env = get_venv(virtual_env_name="mf_lightgbm_3_10")
 
     pipeline_hp_grid = {
         "boosting_type": ["gbdt"],
@@ -36,7 +36,9 @@ def test_mf_lightgbm_regress_mlserver():
 
     command = [
         os.path.join(
-            os.path.dirname(os.path.dirname(__file__)),
+            os.path.dirname(
+                os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+            ),
             "sample_pipelines",
             "LightGBM_hp_cv_WandB",
             "legacy",
@@ -55,7 +57,7 @@ def test_mf_lightgbm_regress_mlserver():
         "offline",
     ]
 
-    success = retrain_pipelines_legacy(command=" ".join(command), env=env)
+    success = retrain_pipelines_legacy(command_str=" ".join(command), env=env)
 
     shutil.rmtree(temp_dir)
 
@@ -70,9 +72,9 @@ def test_mf_tabnet_classif_torchserve():
 
     # assumes the "requirements.txt" from the subdir
     # of the herein "sample pipeline"
-    # are installed in an env named "metaflow_pytorch_1_venv"
+    # are installed in an env named "metaflow_pytorch_2_venv"
     # (would it be through conda or venv)
-    env = get_venv(virtual_env_name="metaflow_pytorch_1_venv")
+    env = get_venv(virtual_env_name="metaflow_pytorch_2_venv")
 
     pipeline_hp_grid = {
         "trainer": {
@@ -102,7 +104,9 @@ def test_mf_tabnet_classif_torchserve():
 
     command = [
         os.path.join(
-            os.path.dirname(os.path.dirname(__file__)),
+            os.path.dirname(
+                os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+            ),
             "sample_pipelines",
             "TabNet_hp_cv_WandB",
             "legacy",
@@ -121,7 +125,7 @@ def test_mf_tabnet_classif_torchserve():
         "offline",
     ]
 
-    success = retrain_pipelines_legacy(command=" ".join(command), env=env)
+    success = retrain_pipelines_legacy(command_str=" ".join(command), env=env)
 
     shutil.rmtree(temp_dir)
 

@@ -1,11 +1,12 @@
+"""
+Note : Top-level env for pytest has
+       dependency with 'huggingface_hub' !
+"""
+
 import os
 
 from huggingface_hub import HfApi, repo_exists
 
-"""
-Top-leavel env for pytest has
-dependency with 'huggingface_hub' !
-"""
 from retrain_pipelines.utils.hf_utils import create_repo_if_not_exists
 from retrain_pipelines.utils.pytest_utils import get_venv
 from retrain_pipelines.utils import as_env_var
@@ -106,7 +107,9 @@ def test_mf_unsloth_func_call_litserve():
 
     command = [
         os.path.join(
-            os.path.dirname(os.path.dirname(__file__)),
+            os.path.dirname(
+                os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+            ),
             "sample_pipelines",
             "Unsloth_Qwen_FuncCall",
             "legacy",
@@ -125,7 +128,7 @@ def test_mf_unsloth_func_call_litserve():
         pytest_model_repo_id,
     ]
 
-    success = retrain_pipelines_legacy(command=" ".join(command), env=env)
+    success = retrain_pipelines_legacy(command_str=" ".join(command), env=env)
 
     if pytest_dataset_repo_id:
         delete_repo_safe_if_exists(

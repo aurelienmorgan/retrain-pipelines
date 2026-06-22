@@ -14,13 +14,13 @@ from rich.text import Text
 #   [IPKernelApp] WARNING | WARNING: attempted to send message from fork
 # because IPython's ZMQ socket can only be used from the main process.
 #
-# Fix: children publish their rich.text.Text object to a multiprocessing
+# children publish their rich.text.Text object to a multiprocessing
 # Queue. The main process relay thread drains the queue and calls
-# console.print() itself — the only process allowed to touch ZMQ.
+# console.print() itself ; the only process allowed to touch ZMQ.
 #
 # On Linux (fork default) children inherit _main_pid and _notebook_relay
 # automatically. On macOS/Windows (spawn default) wire the queue via the
-# pool initializer — see _build_pool_initializer() below.
+# pool initializer ; see ``_build_pool_initializer()`` below.
 
 
 _main_pid: int | None = None

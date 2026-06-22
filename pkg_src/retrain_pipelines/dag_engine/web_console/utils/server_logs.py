@@ -9,7 +9,7 @@ from http import HTTPStatus
 import regex
 import tzlocal
 from fasthtml.common import Div, Span, WebSocket
-from pydantic import BaseModel, validator
+from pydantic import BaseModel, field_validator
 from uvicorn.logging import AccessFormatter
 
 from ....utils import rgb_to_rgba, strip_ansi_escape_codes
@@ -104,7 +104,8 @@ class AccessLogEntry(BaseModel):
     process: int | None = None
     processName: str | None = None
 
-    @validator("client_addr", pre=True)
+    @field_validator("client_addr", mode="before")
+    @classmethod
     def extract_ip(cls, v):
         # Handles IPv4 and IPv6, with or without port
         # IPv6 addresses may be in [::1]:12345 format

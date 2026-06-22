@@ -7,7 +7,7 @@ import time
 
 # --- WebConsole served via the CLI utility ----------------------------------------------
 """
-CLI daemon design — rationale and trade-offs
+CLI daemon design ; rationale and trade-offs
 =============================================
 
 Goal
@@ -21,7 +21,7 @@ naturally from any interactive terminal:
   - ``webconsole_shutdown`` only affects the instance owned by the calling terminal
 
 
-Daemon strategy — why single-fork with parent-death monitor, not double-fork
+Daemon strategy ; why single-fork with parent-death monitor, not double-fork
 -----------------------------------------------------------------------------
 The classic Unix daemon pattern uses a double-fork + ``os.setsid()`` to create a
 new session with no controlling terminal. ``os.setsid()`` is precisely what
@@ -53,7 +53,7 @@ Several approaches were tried for keying the pid file to the terminal:
 
   - ``os.getpgrp()`` (process group): each command invocation spawns in its own
     process group. Two successive ``webconsole_start`` calls from the same tab
-    produce different pgrp values → different pid files → singleton guard never
+    produce different pgrp values => different pid files => singleton guard never
     fires. Does not work.
 
   - ``os.getppid()`` (parent PID, i.e. the shell): stable within a tab and distinct
@@ -73,7 +73,7 @@ Several approaches were tried for keying the pid file to the terminal:
     only if all three are redirected (e.g. fully non-interactive invocation).
 
 
-Port availability — why no port-scoped pid file
+Port availability ; why no port-scoped pid file
 ------------------------------------------------
 An earlier revision maintained a second pid file keyed on the port to prevent two
 terminals from starting on the same port. This is unnecessary: ``acquire_server_lock``
@@ -106,7 +106,7 @@ def _daemonize(port):
     """Fork into background and monitor the shell for terminal closure.
 
     The shell PID is captured before forking. After the fork, the parent
-    (entry-point script) exits immediately — so inside the child,
+    (entry-point script) exits immediately ; so inside the child,
     os.getppid() would return 1 (init), not the shell. Capturing it
     beforehand gives the child a stable reference to the shell process.
 
@@ -133,7 +133,7 @@ def _daemonize(port):
     atexit.register(lambda: os.unlink(pid_file) if os.path.exists(pid_file) else None)
 
     # Monitor parent death: when the shell exits (terminal closed),
-    # shell_pid disappears — kill(shell_pid, 0) raises ProcessLookupError.
+    # shell_pid disappears ; kill(shell_pid, 0) raises ProcessLookupError.
     def _watch_parent():
         while True:
             time.sleep(2)

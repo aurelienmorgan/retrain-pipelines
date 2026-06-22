@@ -33,8 +33,8 @@ def _ngrok_start(port: int) -> str | None:
     Notes
     -----
     Token resolution order (both Colab and Kaggle):
-      1. ``NGROK_AUTHTOKEN`` already in the environment  →  use it as-is.
-      2. Platform secrets store (Colab / Kaggle)  →  set and use it.
+      1. ``NGROK_AUTHTOKEN`` already in the environment  =>  use it as-is.
+      2. Platform secrets store (Colab / Kaggle)  =>  set and use it.
       3. Prompt the user; if left empty, attempt connection anyway so
          ngrok's own error message is shown (``PyngrokNgrokError``).
     """
@@ -44,7 +44,7 @@ def _ngrok_start(port: int) -> str | None:
     except ImportError:
         logger.warning(
             "[white on #9a2bab]"
-            " [#c39c1a on black]pyngrok[/] is not installed — "
+            " [#c39c1a on black]pyngrok[/] is not installed - "
             "tunnel creation is skipped and the WebConsole "
             "will [bold]not[/] be reachable from your browser. "
             "Run [#c39c1a on black]pip install pyngrok[/] "
@@ -297,7 +297,7 @@ def _webconsole_start_notebook(port: int, grpc_port: int) -> None:
     """)
     )
 
-    # ── NOW: deactivate rich logging, gate file handler to server thread only ──
+    # --- deactivate rich logging, gate file handler to server thread only ---
     _main._logger_controller.deactivate()
 
     if live_log_path:

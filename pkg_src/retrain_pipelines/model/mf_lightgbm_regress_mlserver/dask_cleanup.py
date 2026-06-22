@@ -26,7 +26,7 @@ def nuke_dask_cpp():
     #    running against the old module objects.  Nuking sys.modules while
     #    those threads are alive produces two conflicting _BackendData class
     #    identities, which breaks normalize_token on the second execute.
-    #    Closing here — while the modules are still importable — lets the
+    #    Closing here (while the modules are still importable) lets the
     #    threads reach a clean exit before we remove anything.
     try:
         import distributed
@@ -95,7 +95,7 @@ def nuke_dask_cpp():
     #    uses the same fresh distributed that the Client was created with.
     #    We also evict any third-party module whose name CONTAINS "lightgbm"
     #    (e.g. wandb.integration.lightgbm) so it re-imports fresh and picks
-    #    up the new Booster class — step 9 alone cannot fix class-level
+    #    up the new Booster class ; step 9 alone cannot fix class-level
     #    references captured at module load time in those third-party modules.
     _old_lgb_modules = {}
     for mod_name in list(sys.modules):
@@ -111,7 +111,7 @@ def nuke_dask_cpp():
     #    the guard it would delete nuke_dask_cpp from globals() on the first
     #    call, making subsequent calls raise NameError.
     #    We retrieve the function's own name from the current frame's code
-    #    object — no hard-coding required.
+    #    object ; no hard-coding required.
     import inspect as _inspect
 
     _self_name = _inspect.currentframe().f_code.co_name
@@ -153,9 +153,10 @@ def nuke_dask_cpp():
     #    parent, causing TokenizationError on dd.from_pandas().
     #    dask.distributed MUST be imported here to establish the single
     #    canonical distributed module object in sys.modules BEFORE lightgbm
-    #    is re-imported in step 8 below.  If lightgbm were imported first it
+    #    is re-imported in step 8 below.
+    #    If lightgbm were imported first it
     #    would pull in distributed on its own, and then the dask.distributed
-    #    import here would be a no-op — which is fine — but the reverse order
+    #    import here would be a no-op (which is fine) but the reverse order
     #    guarantees the canonical distributed is the fully-initialised one
     #    from the dask ecosystem, not a side-effect of lightgbm's import path.
     try:
@@ -168,16 +169,18 @@ def nuke_dask_cpp():
 
     # 8) Re-import LightGBM AFTER dask/distributed are fully in place.
     #    lightgbm.dask does `from distributed import default_client` at import
-    #    time.  By importing lightgbm here — after step 7 has populated
-    #    sys.modules['distributed'] with the canonical fresh object — we
+    #    time.  By importing lightgbm here (after step 7 has populated
+    #    sys.modules['distributed'] with the canonical fresh object) we
     #    guarantee that lightgbm.dask.default_client is bound to the same
     #    distributed.client module that dask.distributed.Client will register
-    #    with.  If lightgbm were imported before step 7 (as was the case when
+    #    with.
+    #    If lightgbm were imported before step 7 (as was the case when
     #    this step was step 5), it would pull in its own fresh distributed
     #    first, and step 7's `import dask.distributed` would be a no-op
-    #    pointing at that same object — seemingly fine, but the ordering
+    #    pointing at that same object ; seemingly fine, but the ordering
     #    dependency means any future refactor could silently re-introduce the
-    #    split-brain.  Explicit ordering here makes the invariant robust.
+    #    split-brain.
+    #    Explicit ordering here makes the invariant robust.
     try:
         import lightgbm as lgb
 
@@ -210,13 +213,13 @@ def nuke_dask_cpp():
     #    After steps 7+8, sys.modules holds fresh replacements for all of
     #    these.  We build old→new mappings for both dask and lightgbm module
     #    objects and walk every live module's vars(), replacing any attr that
-    #    still points to an old object with its fresh counterpart.  Because
-    #    __globals__ is the actual module dict (not a copy), this transparently
-    #    fixes all live function objects — including cloudpickle-serialized
-    #    ones reconstructed in subprocesses — without needing to evict or
-    #    reload anything.
+    #    still points to an old object with its fresh counterpart.
+    #    Because __globals__ is the actual module dict (not a copy),
+    #    this transparently fixes all live function objects (including
+    #    cloudpickle-serialized ones reconstructed in subprocesses)
+    #    without needing to evict or reload anything.
     try:
-        # Build id(old) → fresh mapping for dask modules.
+        # Build id(old) => fresh mapping for dask modules.
         _old_to_new = {}
         for _mod_name, _old_mod in _old_dask_modules.items():
             _fresh = sys.modules.get(_mod_name)
@@ -263,7 +266,7 @@ def nuke_dask_cpp():
                 if _mod is None:
                     continue
                 # Skip the freshly-imported dask and lightgbm modules
-                # themselves — they already have the correct references.
+                # themselves ; they already have the correct references.
                 if (
                     _mod_name.startswith("dask")
                     or _mod_name.startswith("distributed")

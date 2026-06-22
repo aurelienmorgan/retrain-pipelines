@@ -89,5 +89,11 @@ def get_venv(virtual_env_name: str) -> dict[str, str]:
     new_path = os.pathsep.join([os.path.dirname(python_path)] + path_dirs)
     env["PATH"] = new_path
     ############################################
+    # set VIRTUAL_ENV so the target venv is properly recognized
+    # (equivalent to what 'source activate' does)
+    # env["VIRTUAL_ENV"] = os.path.dirname(os.path.dirname(python_path))
+    # env.pop("PYTHONPATH", None)
+    # env.pop("PYTHONHOME", None)
+    ############################################
 
     return env

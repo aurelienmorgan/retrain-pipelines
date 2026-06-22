@@ -92,7 +92,7 @@ def register(app, rt, prefix=""):
         try:
             task_ext = TaskExt(data)
         except (KeyError, ValueError, TypeError) as e:
-            logging.getLogger().warn(e)
+            logging.getLogger().warning(e)
             return Response(status_code=422, content=f"Invalid input: {str(e)}")
 
         # make payload serializable
@@ -194,7 +194,7 @@ def register(app, rt, prefix=""):
         try:
             task_ext = TaskExt(data)
         except (KeyError, ValueError, TypeError) as e:
-            logging.getLogger().warn(e)
+            logging.getLogger().warning(e)
             return Response(status_code=422, content=f"Invalid input: {str(e)}")
 
         # make payload serializable

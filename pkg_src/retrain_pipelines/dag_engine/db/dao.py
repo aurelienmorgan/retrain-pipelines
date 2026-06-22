@@ -337,7 +337,7 @@ class DAO(DAOBase):
         return self._update_entity(Task, entity_id=id, **kwargs)
 
     def get_executions(self, exec_name) -> list[Execution]:
-        return self._get_entities(Execution, exec_name=exec_name)
+        return self._get_entities(Execution, name=exec_name)
 
     def get_execution(self, id) -> Execution:
         return self._get_entity(Execution, id=id)
@@ -736,7 +736,9 @@ class AsyncDAO(DAOBase):
                 func.count(
                     func.nullif(Execution._start_timestamp > exec_subq.c.start_ts, True)
                 ).label("number"),
-                func.count(func.nullif(Execution._end_timestamp is None, True)).label("completed"),
+                func.count(func.nullif(Execution._end_timestamp.is_(None), True)).label(
+                    "completed"
+                ),
                 func.count(
                     func.nullif((Execution._end_timestamp.is_not(None)) & failed_exists, False)
                 ).label("failed"),

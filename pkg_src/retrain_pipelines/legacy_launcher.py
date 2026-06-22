@@ -68,7 +68,13 @@ def retrain_pipelines_legacy(command_str: str, env: os._Environ) -> bool:
     output_stream = sys.stdout.write
     master_fd, slave_fd = pty.openpty()
     process = subprocess.Popen(
-        command, stdout=slave_fd, stderr=slave_fd, shell=False, env=env, bufsize=1, text=True
+        command,  # ["bash", "-lc", "which python && " + " ".join(command)],
+        stdout=slave_fd,
+        stderr=slave_fd,
+        shell=False,
+        env=env,
+        bufsize=1,
+        text=True,
     )
 
     try:
@@ -105,4 +111,4 @@ def cli_utility():
 
     env = os.environ.copy()
     env["launched_from_cli"] = "True"
-    return retrain_pipelines_legacy(command=" ".join(args), env=env)
+    return retrain_pipelines_legacy(command_str=" ".join(args), env=env)

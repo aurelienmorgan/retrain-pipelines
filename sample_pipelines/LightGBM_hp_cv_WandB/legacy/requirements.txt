@@ -1,6 +1,9 @@
 
-wandb===0.21.1
 python-dotenv===1.0.1
+setuptools==65.5.0
+metaflow===2.10.0
+metaflow-card-html==1.0.2
+wandb===0.21.1
 lightgbm===3.3.5
 dask[complete]===2024.8.0
 numpy===1.26.4

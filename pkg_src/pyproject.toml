@@ -87,6 +87,8 @@ dev = [
     "sqlite-web",
     "pytest>=8.3.3",
     "pytest-env>=1.1.5",
+    "pytest-cov>=7.1.0",
+    "pytest-asyncio>=1.4.0",
     "ruff>=0.15.12",
     "mypy>=2.0.0",
     "pre-commit>=4.6.0"
@@ -117,7 +119,7 @@ include-package-data = true
 "*" = ["MANIFEST.in"]
 
 [tool.pytest.ini_options]
-addopts = "--maxfail=1 --disable-warnings -q"
+addopts = "--maxfail=1 --disable-warnings -q --cov=pkg_src --cov-report=term-missing"  # --cov-fail-under=80"
 testpaths = ["tests/unit"]
 
 [tool.ruff]
@@ -167,6 +169,21 @@ convention = "numpy"
 python_version = "3.10"
 strict = true
 mypy_path = ["pkg_src", "pkg_src/.mypy_stubs"]
+
+[tool.coverage.run]
+source = ["pkg_src/retrain_pipelines/dag_engine"]
+omit = [
+  "pkg_src/retrain_pipelines/dag_engine/db/alembic/versions/*",
+  "pkg_src/retrain_pipelines/dag_engine/db/grpc/*_pb2.py",
+  "pkg_src/retrain_pipelines/dag_engine/db/grpc/*_pb2_grpc.py",
+]
+
+[tool.coverage.report]
+omit = [
+  "pkg_src/retrain_pipelines/dag_engine/db/alembic/versions/*",
+  "pkg_src/retrain_pipelines/dag_engine/db/grpc/*_pb2.py",
+  "pkg_src/retrain_pipelines/dag_engine/db/grpc/*_pb2_grpc.py",
+]
 
 # alias / entrypoint for CLI utility
 [project.scripts]

@@ -4,7 +4,7 @@ import os
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from ...utils import in_notebook
 from ..db.dao import AsyncDAO
@@ -51,8 +51,7 @@ class Execution(BaseModel):
     )
     success: bool = Field(..., description="Whether execution completed successfully")
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     def completed(self) -> bool:
         """Check if execution has completed.

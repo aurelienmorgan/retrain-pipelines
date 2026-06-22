@@ -660,7 +660,7 @@ def register(app, rt, prefix=""):
                 # Convert to UTC (timezone used by the DAG engine)
                 before_datetime = before_datetime.astimezone(timezone.utc)
             except Exception as e:
-                logging.getLogger().warn(e)
+                logging.getLogger().warning(e)
                 before_datetime = None
         else:
             before_datetime = None

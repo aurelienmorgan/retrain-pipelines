@@ -56,7 +56,7 @@ def notify_server_shutdown():
             except RuntimeError:
                 pass
     else:
-        # No live loop — just wipe the lists directly as a safety net.
+        # No live loop ; just wipe the lists directly as a safety net.
         pass
     new_exec_subscribers.clear()
     exec_end_subscribers.clear()

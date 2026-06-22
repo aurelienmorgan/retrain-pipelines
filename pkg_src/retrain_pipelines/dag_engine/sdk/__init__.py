@@ -4,7 +4,7 @@ import logging
 import os
 from datetime import datetime, timedelta
 
-from pydantic import BaseModel, Field, PrivateAttr
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 from ...utils import in_notebook
 from ..db.dao import AsyncDAO
@@ -63,8 +63,7 @@ class ExecutionsIterator(BaseModel):
     _buffer: list[Execution] = PrivateAttr(default_factory=list)  # buffer for current page
     _index: int = PrivateAttr(default=0)  # current position in buffer
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     async def _previous(self) -> Execution | None:
         """Get the previous (older) execution in the sequence.
