@@ -3,18 +3,24 @@
 Note
 -----------
 - AsyncDAO and in_notebook are patched via their "bound names"
-  inside the module under test (retrain_pipelines.dag_engine.sdk.core).
+  inside the module being tested.
 """
 
 import asyncio
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
-
 import pytest
+
+from retrain_pipelines.dag_engine.sdk.core import (
+    _run_async,
+    Execution,
+    ExecutionParams,
+)
 
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
+
 
 _NOW = datetime(2024, 6, 1, 12, 0, 0)
 _LATER = datetime(2024, 6, 1, 13, 0, 0)
@@ -24,8 +30,6 @@ _MODULE = "retrain_pipelines.dag_engine.sdk.core"
 
 def _make_execution(**kwargs):
     """Return a minimal valid Execution instance."""
-    from retrain_pipelines.dag_engine.sdk.core import Execution
-
     defaults = dict(
         id=1,
         name="pipe",
@@ -62,7 +66,6 @@ class TestRunAsync:
     # Branch 1: no running event loop => asyncio.run()
     def test_no_running_loop(self):
         """_run_async uses asyncio.run() when there is no running loop."""
-        from retrain_pipelines.dag_engine.sdk.core import _run_async
 
         async def _coro():
             return 42
@@ -72,7 +75,6 @@ class TestRunAsync:
     # Branch 2: running loop + notebook => ThreadPoolExecutor path
     def test_running_loop_in_notebook(self):
         """Inside a running loop in a notebook, work is sent to a fresh thread."""
-        from retrain_pipelines.dag_engine.sdk.core import _run_async
 
         async def _coro():
             return "notebook_result"
@@ -98,7 +100,6 @@ class TestRunAsync:
     # the "coroutine was never awaited" RuntimeWarning.
     def test_running_loop_not_notebook(self):
         """Inside a running loop outside a notebook, loop.run_until_complete is called."""
-        from retrain_pipelines.dag_engine.sdk.core import _run_async
 
         async def _coro():
             return "loop_result"
@@ -132,6 +133,126 @@ class TestRunAsync:
 
 
 # ---------------------------------------------------------------------------
+# ExecutionParams
+# ---------------------------------------------------------------------------
+
+
+class TestExecutionParams:
+    """Cover ExecutionParams mapping, lazy resolution, and object-SHA-based comparison."""
+
+    def test_init_stores_raw(self):
+        raw = {"a": {"default": 1}}
+        params = ExecutionParams(raw)
+        assert params._raw is raw
+
+    def test_active_storable_override_vs_default(self):
+        raw = {"k": {"default": "def_val", "override": "ovr_val"}}
+        params = ExecutionParams(raw)
+        assert params._active_storable("k") == "ovr_val"
+        del raw["k"]["override"]
+        assert params._active_storable("k") == "def_val"
+
+    def test_getitem_resolves_storable(self):
+        raw = {"x": {"default": 99}}
+        params = ExecutionParams(raw)
+        with patch(f"{_MODULE}.resolve_storable", return_value="resolved") as mock_res:
+            assert params["x"] == "resolved"
+            mock_res.assert_called_once_with(99)
+
+    def test_contains_true(self):
+        assert "a" in ExecutionParams({"a": {}})
+
+    def test_contains_false(self):
+        assert "b" not in ExecutionParams({"a": {}})
+
+    def test_iter(self):
+        params = ExecutionParams({"a": {}, "b": {}})
+        assert list(params) == ["a", "b"]
+
+    def test_len(self):
+        assert len(ExecutionParams({"a": {}, "b": {}})) == 2
+
+    def test_repr(self):
+        params = ExecutionParams({"x": {}, "y": {}})
+        assert repr(params) == "ExecutionParams(params=['x', 'y'])"
+
+    def test_keys(self):
+        params = ExecutionParams({"k1": {}, "k2": {}})
+        assert list(params.keys()) == ["k1", "k2"]
+
+    def test_description_returns_string(self):
+        params = ExecutionParams({"p": {"description": "a dummy param", "default": 1}})
+        assert params.description("p") == "a dummy param"
+
+    def test_description_missing_key_raises(self):
+        params = ExecutionParams({"p": {"description": "x"}})
+        with pytest.raises(KeyError):
+            params.description("missing")
+
+    def test_default_native_value(self):
+        params = ExecutionParams({"p": {"description": "d", "default": 42}})
+        with patch(
+            f"{_MODULE}.resolve_storable",
+            side_effect=lambda x: x,
+        ):
+            assert params.default("p") == 42
+
+    def test_default_resolves_disk_ref(self):
+        disk_ref = {"__sha__": "abc", "__disk_ref__": "some/path.pkl"}
+        params = ExecutionParams({"p": {"description": "d", "default": disk_ref}})
+        with patch(
+            f"{_MODULE}.resolve_storable",
+            return_value="unpickled_value",
+        ) as mock_res:
+            result = params.default("p")
+        mock_res.assert_called_once_with(disk_ref)
+        assert result == "unpickled_value"
+
+    def test_default_no_default_key_returns_none(self):
+        params = ExecutionParams({"p": {"description": "d"}})
+        with patch(
+            f"{_MODULE}.resolve_storable",
+            side_effect=lambda x: x,
+        ):
+            assert params.default("p") is None
+
+    def test_default_ignores_override(self):
+        """default() always returns the default value, never the override."""
+        params = ExecutionParams(
+            {"p": {"description": "d", "default": "orig", "override": "overridden"}}
+        )
+        with patch(
+            f"{_MODULE}.resolve_storable",
+            side_effect=lambda x: x,
+        ):
+            assert params.default("p") == "orig"
+
+    def test_param_equals_native_match(self):
+        p1 = ExecutionParams({"m": {"default": 1}})
+        p2 = ExecutionParams({"m": {"default": 1}})
+        assert p1.param_equals("m", p2) is True
+
+    def test_param_equals_native_mismatch(self):
+        p1 = ExecutionParams({"m": {"default": 1}})
+        p2 = ExecutionParams({"m": {"default": 2}})
+        assert p1.param_equals("m", p2) is False
+
+    def test_param_equals_disk_ref_match(self):
+        disk_a = {"__sha__": "hash1", "__disk_ref__": True}
+        disk_b = {"__sha__": "hash1", "__disk_ref__": True}
+        p1 = ExecutionParams({"m": {"default": disk_a}})
+        p2 = ExecutionParams({"m": {"default": disk_b}})
+        assert p1.param_equals("m", p2) is True
+
+    def test_param_equals_disk_ref_mismatch(self):
+        disk_a = {"__sha__": "hash1", "__disk_ref__": True}
+        disk_b = {"__sha__": "hash2", "__disk_ref__": True}
+        p1 = ExecutionParams({"m": {"default": disk_a}})
+        p2 = ExecutionParams({"m": {"default": disk_b}})
+        assert p1.param_equals("m", p2) is False
+
+
+# ---------------------------------------------------------------------------
 # Execution model
 # ---------------------------------------------------------------------------
 
@@ -139,6 +260,7 @@ class TestRunAsync:
 class TestExecutionModel:
     def test_fields_set_correctly(self):
         exec_ = _make_execution(end_timestamp=_LATER)
+
         assert exec_.id == 1
         assert exec_.name == "pipe"
         assert exec_.start_timestamp == _NOW
@@ -311,8 +433,94 @@ class TestExecutionModel:
     # elements_iterator() ; raises NotImplementedError
     def test_elements_iterator_not_implemented(self):
         exec_ = _make_execution()
+
         with pytest.raises(NotImplementedError):
             exec_.elements_iterator()
+
+
+class TestExecutionGetById:
+    """Cover Execution.getById() classmethod & dao.engine.dispose()."""
+
+    def test_get_by_id_success(self):
+        mock_ext = MagicMock()
+        # Use configure_mock so as to set mocked-object "name" attribute (and not mock name)
+        mock_ext.configure_mock(
+            id=42,
+            name="pipe_v2",
+            start_timestamp=_NOW,
+            end_timestamp=_LATER,
+            success=True,
+        )
+        mock_dao = MagicMock()
+        mock_dao.get_execution_ext = AsyncMock(return_value=mock_ext)
+        # engine.dispose() is awaited in the finally block; must be AsyncMock.
+        mock_dao.engine = MagicMock()
+        mock_dao.engine.dispose = AsyncMock()
+        with (
+            patch(f"{_MODULE}.AsyncDAO", return_value=mock_dao),
+            patch.dict(
+                "os.environ",
+                {"RP_METADATASTORE_ASYNC_URL": "sqlite+aiosqlite:///:memory:"},
+            ),
+        ):
+            exec_ = Execution.getById(42)
+        assert exec_.id == 42
+        assert exec_.success is True
+        mock_dao.engine.dispose.assert_awaited_once()
+
+    def test_get_by_id_raises_keyerror(self):
+        mock_dao = MagicMock()
+        mock_dao.get_execution_ext = AsyncMock(return_value=None)
+        # engine.dispose() is awaited in the finally block; must be AsyncMock.
+        mock_dao.engine = MagicMock()
+        mock_dao.engine.dispose = AsyncMock()
+        with (
+            patch(f"{_MODULE}.AsyncDAO", return_value=mock_dao),
+            patch.dict(
+                "os.environ",
+                {"RP_METADATASTORE_ASYNC_URL": "sqlite+aiosqlite:///:memory:"},
+            ),
+        ):
+            with pytest.raises(KeyError, match="No execution found with id=99"):
+                Execution.getById(99)
+        mock_dao.engine.dispose.assert_awaited_once()
+
+
+class TestExecutionGetParams:
+    """Cover Execution.getParams()."""
+
+    def test_get_params_returns_instance(self):
+        mock_full = MagicMock()
+        mock_full.params = {"a": {"default": 1}}
+        mock_dao = MagicMock()
+        mock_dao.get_execution = AsyncMock(return_value=mock_full)
+        mock_dao.engine = MagicMock()
+        exec_ = _make_execution()
+        with (
+            patch(f"{_MODULE}.AsyncDAO", return_value=mock_dao),
+            patch.dict(
+                "os.environ",
+                {"RP_METADATASTORE_ASYNC_URL": "sqlite+aiosqlite:///:memory:"},
+            ),
+        ):
+            params = exec_.getParams()
+        assert isinstance(params, ExecutionParams)
+        assert len(params) == 1
+
+    def test_get_params_empty_dict(self):
+        mock_dao = MagicMock()
+        mock_dao.get_execution = AsyncMock(return_value=MagicMock(params=None))
+        mock_dao.engine = MagicMock()
+        exec_ = _make_execution()
+        with (
+            patch(f"{_MODULE}.AsyncDAO", return_value=mock_dao),
+            patch.dict(
+                "os.environ",
+                {"RP_METADATASTORE_ASYNC_URL": "sqlite+aiosqlite:///:memory:"},
+            ),
+        ):
+            params = exec_.getParams()
+        assert len(params) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -336,3 +544,7 @@ class TestTaskModel:
     def test_task_with_end_timestamp(self):
         task = _make_task(end_timestamp=_LATER)
         assert task.end_timestamp == _LATER
+
+    def test_task_failed_true_success_false(self):
+        task = _make_task(success=False)
+        assert task.success is False

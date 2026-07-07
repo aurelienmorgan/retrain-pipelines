@@ -26,6 +26,7 @@ from rich.markup import escape
 
 from ...utils import in_notebook
 from ...utils.rich_logging import framed_rich_log_str
+from ..context_store import link_params_defaults_to_exec, temp_dir_id, value_to_storable
 from ..db.dao import DAO
 from .trace_buffer import get_trace_buffer
 
@@ -788,14 +789,24 @@ class DAG(BaseModel):
         username = getpass.getuser()
 
         dao = DAO(os.environ["RP_METADATASTORE_URL"])
+        # exec_id is not known yet ; use a temp dir id for param default disk artifacts.
+        # Non-JSON-serializable defaults are cloudpickled under metadata/<tmp>/params/defaults/.
+        tmp = temp_dir_id()
+        serialized_params = {
+            name: param.to_serializable_dict(dir_id=tmp, param_name=name)
+            for name, param in self.params.items()
+        }
         exec_id = dao.add_execution(
             name=pipeline_name,
             docstring=self.docstring,
-            params={name: param.to_serializable_dict() for name, param in self.params.items()},
+            params=serialized_params,
             username=username,
             ui_css=self.ui_css.__dict__ if self.ui_css else None,
             start_timestamp=datetime.now(timezone.utc),
         )
+        # Symlink metadata/<exec_id>/params/defaults => metadata/<tmp>/params/defaults
+        # so canonical exec_id-based disk access resolves correctly.
+        link_params_defaults_to_exec(tmp, exec_id)
         tasktypes_list, taskgroups_list = self.to_elements_lists()
         for i, tasktype in enumerate(tasktypes_list):
             dao.add_tasktype(exec_id=exec_id, order=i, **tasktype)
@@ -808,7 +819,6 @@ class DAG(BaseModel):
             pipeline_name=pipeline_name,
             exec_id=exec_id,
             username=username,
-            params_definitions=self.params,
         )
 
     def to_elements_lists(
@@ -1318,13 +1328,25 @@ class DagParam(BaseModel):
     description: str
     default: Any = None
 
-    def to_serializable_dict(self) -> dict[str, Any]:
-        """Return a JSON-serializable dict representation of this DagParam."""
-        # print(
-        #       f"####    ####    ####    {self}  -  {type(self.default)}" +
-        #       f"####    {DagParam._serialize(self.default)}"
-        # )
-        return {"description": self.description, "default": DagParam._serialize(self.default)}
+    def to_serializable_dict(self, dir_id: int | str, param_name: str) -> dict[str, Any]:
+        """Return a JSON-serializable dict for DB storage.
+
+        Non-natively-serializable defaults are cloudpickled to disk;
+        the stored value is then a disk_ref sentinel dict.
+
+        Parameters
+        ----------
+        dir_id : int | str
+            Either a numeric exec_id or a temp_dir_id string.
+            A temp_dir_id is used during DAG.init() because exec_id
+            is not yet known at param serialization time.
+        param_name : str
+            Parameter name; used to derive the disk artifact filename.
+        """
+        return {
+            "description": self.description,
+            "default": value_to_storable(dir_id, "defaults", param_name, self.default),
+        }
 
     @staticmethod
     def _serialize(obj: Any) -> Any:

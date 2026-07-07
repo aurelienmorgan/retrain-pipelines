@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
 
+import retrain_pipelines.dag_engine.core.core as core_module
 from retrain_pipelines.dag_engine.core.core import (
     DAG,
     DagExecutionContext,
@@ -394,63 +395,93 @@ class TestDagParam:
         assert DagParam(description="d").default is None
 
     def test_serializable_dict_basic(self):
-        assert DagParam(description="d", default=42).to_serializable_dict() == {
-            "description": "d",
-            "default": 42,
-        }
+        with patch.object(
+            core_module, "value_to_storable", return_value=42
+        ) as mock_vts:
+            result = DagParam(description="d", default=42).to_serializable_dict(
+                dir_id="t", param_name="p"
+            )
+        mock_vts.assert_called_once_with("t", "defaults", "p", 42)
+        assert result == {"description": "d", "default": 42}
 
     def test_serialize_datetime(self):
         ts = datetime(2024, 6, 1, tzinfo=timezone.utc)
-        assert (
-            "2024-06-01"
-            in DagParam(description="d", default=ts).to_serializable_dict()["default"]
-        )
+        with patch.object(
+            core_module, "value_to_storable", return_value="2024-06-01T00:00:00+00:00"
+        ):
+            result = DagParam(description="d", default=ts).to_serializable_dict(
+                dir_id="t", param_name="p"
+            )
+        assert "2024-06-01" in result["default"]
 
     def test_serialize_date(self):
-        assert (
-            DagParam(description="d", default=date(2024, 6, 1)).to_serializable_dict()[
-                "default"
-            ]
-            == "2024-06-01"
-        )
+        with patch.object(core_module, "value_to_storable", return_value="2024-06-01"):
+            result = DagParam(
+                description="d", default=date(2024, 6, 1)
+            ).to_serializable_dict(dir_id="t", param_name="p")
+        assert result["default"] == "2024-06-01"
 
     def test_serialize_nested_dict(self):
-        assert DagParam(description="d", default={"a": [1, 2]}).to_serializable_dict()[
-            "default"
-        ] == {"a": [1, 2]}
+        with patch.object(core_module, "value_to_storable", return_value={"a": [1, 2]}):
+            result = DagParam(
+                description="d", default={"a": [1, 2]}
+            ).to_serializable_dict(dir_id="t", param_name="p")
+        assert result["default"] == {"a": [1, 2]}
 
     def test_serialize_list(self):
-        assert DagParam(
-            description="d", default=[1, "two", None]
-        ).to_serializable_dict()["default"] == [1, "two", None]
+        with patch.object(
+            core_module, "value_to_storable", return_value=[1, "two", None]
+        ):
+            result = DagParam(
+                description="d", default=[1, "two", None]
+            ).to_serializable_dict(dir_id="t", param_name="p")
+        assert result["default"] == [1, "two", None]
 
     def test_serialize_tuple(self):
-        result = DagParam(description="d", default=(1, 2)).to_serializable_dict()[
-            "default"
-        ]
-        assert result == [1, 2]
+        with patch.object(core_module, "value_to_storable", return_value=[1, 2]):
+            result = DagParam(description="d", default=(1, 2)).to_serializable_dict(
+                dir_id="t", param_name="p"
+            )
+        assert result["default"] == [1, 2]
 
     def test_serialize_set(self):
-        result = DagParam(description="d", default={99}).to_serializable_dict()[
-            "default"
-        ]
-        assert result == [99]
+        with patch.object(core_module, "value_to_storable", return_value=[99]):
+            result = DagParam(description="d", default={99}).to_serializable_dict(
+                dir_id="t", param_name="p"
+            )
+        assert result["default"] == [99]
 
     def test_serialize_none(self):
-        assert DagParam(description="d").to_serializable_dict()["default"] is None
+        with patch.object(core_module, "value_to_storable", return_value=None):
+            result = DagParam(description="d").to_serializable_dict(
+                dir_id="t", param_name="p"
+            )
+        assert result["default"] is None
 
     def test_serialize_bool_preserved(self):
-        assert (
-            DagParam(description="d", default=True).to_serializable_dict()["default"]
-            is True
-        )
+        with patch.object(core_module, "value_to_storable", return_value=True):
+            result = DagParam(description="d", default=True).to_serializable_dict(
+                dir_id="t", param_name="p"
+            )
+        assert result["default"] is True
 
-    def test_serialize_unknown_type_falls_back_to_str(self):
+    def test_serialize_unknown_type_cloudpickled_to_disk(self):
         class Custom:
             pass
 
-        d = DagParam(description="d", default=Custom()).to_serializable_dict()
-        assert isinstance(d["default"], str)
+        disk_ref_envelope = {
+            "__sha__": "abc",
+            "__disk_ref__": "t/params/defaults/p.pkl",
+        }
+        with patch.object(
+            core_module, "value_to_storable", return_value=disk_ref_envelope
+        ) as mock_vts:
+            d = DagParam(description="d", default=Custom()).to_serializable_dict(
+                dir_id="t", param_name="p"
+            )
+        mock_vts.assert_called_once()
+        assert "__disk_ref__" in d["default"]
+        assert "__sha__" in d["default"]
 
     def test_serialize_pydantic_model(self):
         from pydantic import BaseModel as BM
@@ -458,10 +489,11 @@ class TestDagParam:
         class M(BM):
             x: int = 1
 
-        result = DagParam(description="d", default=M()).to_serializable_dict()[
-            "default"
-        ]
-        assert result == {"x": 1}
+        with patch.object(core_module, "value_to_storable", return_value={"x": 1}):
+            result = DagParam(description="d", default=M()).to_serializable_dict(
+                dir_id="t", param_name="p"
+            )
+        assert result["default"] == {"x": 1}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1707,13 +1739,9 @@ class TestDagInit:
         token = _dag_execution_context_var.set(ec)
         try:
             with (
-                patch(
-                    "retrain_pipelines.dag_engine.core.core.DAO", return_value=dao_mock
-                ),
-                patch(
-                    "retrain_pipelines.dag_engine.core.core.in_notebook",
-                    return_value=True,
-                ),
+                patch.object(core_module, "DAO", return_value=dao_mock),
+                patch.object(core_module, "in_notebook", return_value=True),
+                patch.object(core_module, "link_params_defaults_to_exec"),
             ):
                 d_init.init()
             dao_mock.add_execution.assert_called_once()
@@ -1729,13 +1757,9 @@ class TestDagInit:
         token = _dag_execution_context_var.set(ec)
         try:
             with (
-                patch(
-                    "retrain_pipelines.dag_engine.core.core.DAO", return_value=dao_mock
-                ),
-                patch(
-                    "retrain_pipelines.dag_engine.core.core.in_notebook",
-                    return_value=False,
-                ),
+                patch.object(core_module, "DAO", return_value=dao_mock),
+                patch.object(core_module, "in_notebook", return_value=False),
+                patch.object(core_module, "link_params_defaults_to_exec"),
             ):
                 d_init.init()
             dao_mock.add_execution.assert_called_once()
@@ -1755,15 +1779,12 @@ class TestDagInit:
 
         try:
             with (
-                patch(
-                    "retrain_pipelines.dag_engine.core.core.DAO", return_value=dao_mock
-                ),
-                patch(
-                    "retrain_pipelines.dag_engine.core.core.in_notebook",
-                    return_value=False,
-                ),
-                patch(
-                    "retrain_pipelines.dag_engine.core.core.inspect.currentframe",
+                patch.object(core_module, "DAO", return_value=dao_mock),
+                patch.object(core_module, "in_notebook", return_value=False),
+                patch.object(core_module, "link_params_defaults_to_exec"),
+                patch.object(
+                    core_module.inspect,
+                    "currentframe",
                     return_value=MagicMock(
                         f_back=MagicMock(f_back=MagicMock(f_back=fake_frame))
                     ),
@@ -1783,13 +1804,9 @@ class TestDagInit:
         token = _dag_execution_context_var.set(ec)
         try:
             with (
-                patch(
-                    "retrain_pipelines.dag_engine.core.core.DAO", return_value=dao_mock
-                ),
-                patch(
-                    "retrain_pipelines.dag_engine.core.core.in_notebook",
-                    return_value=True,
-                ),
+                patch.object(core_module, "DAO", return_value=dao_mock),
+                patch.object(core_module, "in_notebook", return_value=True),
+                patch.object(core_module, "link_params_defaults_to_exec"),
             ):
                 d_init_tg.init()
             dao_mock.add_taskgroup.assert_called()
@@ -1810,13 +1827,9 @@ class TestDagInit:
 
         try:
             with (
-                patch(
-                    "retrain_pipelines.dag_engine.core.core.DAO", return_value=dao_mock
-                ),
-                patch(
-                    "retrain_pipelines.dag_engine.core.core.in_notebook",
-                    return_value=True,
-                ),
+                patch.object(core_module, "DAO", return_value=dao_mock),
+                patch.object(core_module, "in_notebook", return_value=True),
+                patch.object(core_module, "link_params_defaults_to_exec"),
                 patch.dict(sys.modules, {"__main__": fake_main}),
             ):
                 d_init.init()
@@ -1842,13 +1855,9 @@ class TestDagInit:
 
         try:
             with (
-                patch(
-                    "retrain_pipelines.dag_engine.core.core.DAO", return_value=dao_mock
-                ),
-                patch(
-                    "retrain_pipelines.dag_engine.core.core.in_notebook",
-                    return_value=True,
-                ),
+                patch.object(core_module, "DAO", return_value=dao_mock),
+                patch.object(core_module, "in_notebook", return_value=True),
+                patch.object(core_module, "link_params_defaults_to_exec"),
                 patch.dict(
                     sys.modules,
                     {"__main__": fake_main, "my_owner_pipeline": fake_owner_mod},
@@ -1874,16 +1883,11 @@ class TestDagInit:
 
         try:
             with (
-                patch(
-                    "retrain_pipelines.dag_engine.core.core.DAO", return_value=dao_mock
-                ),
-                patch(
-                    "retrain_pipelines.dag_engine.core.core.in_notebook",
-                    return_value=True,
-                ),
-                patch(
-                    "retrain_pipelines.dag_engine.core.core.os.getcwd",
-                    return_value="/some/path/my_cwd_pipeline",
+                patch.object(core_module, "DAO", return_value=dao_mock),
+                patch.object(core_module, "in_notebook", return_value=True),
+                patch.object(core_module, "link_params_defaults_to_exec"),
+                patch.object(
+                    core_module.os, "getcwd", return_value="/some/path/my_cwd_pipeline"
                 ),
                 patch.dict(sys.modules, {"__main__": fake_main}),
             ):

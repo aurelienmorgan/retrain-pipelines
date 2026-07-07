@@ -49,5 +49,4 @@ repos:
         name: pytest unit
         language: system
         pass_filenames: false
-        always_run: true
         entry: pytest tests/unit --cov=pkg_src/retrain_pipelines/dag_engine --cov-report=term-missing --cov-config=pkg_src/pyproject.toml

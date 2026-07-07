@@ -365,6 +365,37 @@ class AsyncDAO(DAOBase):
     async def get_execution(self, id: int) -> Execution:
         return await self._get_entity(Execution, id=id)
 
+    async def get_execution_ext(self, id: int) -> ExecutionExt | None:
+        """Return a single ExecutionExt by id, including computed success status.
+
+        Parameters
+        ----------
+        id : int
+            Execution id.
+
+        Returns
+        -------
+        ExecutionExt, optional
+            None if not found.
+        """
+        failed_subquery = (
+            select(func.max(case((Task.failed.is_(True), 1), else_=0)))
+            .where(Task.exec_id == Execution.id)
+            .scalar_subquery()
+        )
+        statement = select(Execution, failed_subquery.label("has_failed_task")).where(
+            Execution.id == id
+        )
+        async with self._get_session() as session:
+            result = await session.execute(statement)
+            row = result.first()
+            if row is None:
+                return None
+            execution, has_failed = row
+            execution_ext = ExecutionExt(**execution.__dict__)
+            execution_ext.success = not bool(has_failed)
+            return execution_ext
+
     async def get_executions_count(
         self, pipeline_name: str, execs_status: str | None = None
     ) -> int:

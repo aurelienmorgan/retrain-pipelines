@@ -89,9 +89,9 @@ def infer_validation(
     results = []
 
     for i in tqdm(range(0, len(validation_data), batch_size), file=sys.stdout):
-        print("", end="\n", file=sys.stdout, flush=True)
-        # print(f{i} / {len(validation_data)/batch_size}",
-        # end="\n", file=sys.stdout, flush=True)
+        """ print("", end="\n", file=sys.stdout, flush=True)
+        print(f{i} / {len(validation_data)/batch_size}",
+              end="\n", file=sys.stdout, flush=True) """
         batch = validation_data[i : i + batch_size]
         queries = batch[queries_attr_name]
         formatted_inputs = [prompt_template.format(query, "") for query in queries]

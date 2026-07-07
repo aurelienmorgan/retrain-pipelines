@@ -1060,11 +1060,13 @@ class TestExecute:
             patch(f"{_RT}._install_interrupt_handler"),
             patch(f"{_RT}.GrpcClient"),
             patch(f"{_RT}.DAG") as MockDAG,
+            patch(f"{_RT}.DAO") as MockRtDAO,
             patch(f"{_RT}.get_trace_buffer", return_value=trace_buf),
             patch(f"{_RT}._task_registry", registry),
             patch(f"{_RT}.RichLoggingController") as MockRLC,
         ):
             MockDAG.mark_complete = MagicMock()
+            MockRtDAO.return_value.get_execution.return_value.params = {}
             rlc_inst = MockRLC.return_value  # noqa: F841
             return execute(dag, params)
 

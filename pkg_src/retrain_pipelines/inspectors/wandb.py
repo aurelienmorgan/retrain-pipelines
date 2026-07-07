@@ -5,7 +5,8 @@ import wandb
 from ..frameworks import local_metaflow as metaflow
 from ..frameworks.local_metaflow.client.core import MetaflowObject  # type: ignore[import-not-found]
 from ..frameworks.local_metaflow.exception import MetaflowNotFound  # type: ignore[import-not-found]
-from .utils import _get_mf_run, _is_windows_path, _is_wsl, _open_explorer, _windows_to_wsl_path
+from ..utils.wsl_utils import is_windows_path, is_wsl, windows_to_wsl_path
+from .utils import _get_mf_run, _open_explorer
 
 os.environ["REQUESTS_CA_BUNDLE"] = "/etc/ssl/certs/ca-certificates.crt"
 
@@ -194,8 +195,8 @@ def explore_source_code(root: str = ".", mf_flow_name: str | None = None, mf_run
     # local target directory #
     ##########################
     # handle possible "WSL" case
-    if _is_wsl() and _is_windows_path(root):
-        root = _windows_to_wsl_path(root)
+    if is_wsl() and is_windows_path(root):
+        root = windows_to_wsl_path(root)
     root = os.path.join(root, f"{mf_flow_name}_{train_model_task.data.wandb_filter_run_id}")
     print(os.path.realpath(root))
     if not os.path.exists(root):

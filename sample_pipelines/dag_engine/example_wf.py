@@ -90,6 +90,19 @@ def end(payload: TaskPayload):
 
     assert payload == [420, 432]
 
+    ################################
+    # Access DAG execution-context #
+    #      (parameters, etc.)      #
+    ################################
+    from datetime import datetime, timezone
+
+    ctx.added_entry = (
+        datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        + " UTC - execution-context, task dynamically-added entry"
+    )
+    print(f"ctx addon: {ctx.added_entry}")
+    ################################
+
     return None
 
 
@@ -123,6 +136,7 @@ if __name__ == "__main__":
 
     # Execute with parameter overrides
     import random
+    from retrain_pipelines.dag_engine.sdk import Execution
 
     final_result, context_dump = execute(
         retrain_pipeline,
@@ -135,3 +149,8 @@ if __name__ == "__main__":
         + f"{context_dump['pipeline_name']} - final result : {final_result}"
     )
     print(f"DAG SVG written to {svg_fullname}")
+
+    # serialized execution
+    exec_params = Execution.get(id=context_dump["exec_id"]).getParams()
+    assert exec_params["dummy_param_1"] != exec_params.default("dummy_param_1") # overridden
+    assert exec_params["dummy_param_2"] == exec_params.default("dummy_param_2") # not overridden

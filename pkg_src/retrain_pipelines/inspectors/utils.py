@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 from ..frameworks import local_metaflow as metaflow
 from ..frameworks.local_metaflow import metaflow_config as _mf_config  # type: ignore[attr-defined]
 from ..frameworks.local_metaflow.exception import MetaflowNotFound  # type: ignore[import-not-found]
+from ..utils.wsl_utils import is_wsl, windows_to_wsl_path, wsl_to_windows_path
 
 logger = logging.getLogger()
 
@@ -224,74 +225,6 @@ def _local_pipeline_card_path(mf_flow_name: str | None = None, mf_run_id: int = 
     ) + [custom_card_fullname]
 
 
-def _is_wsl():
-    if os.path.exists("/proc/version"):
-        with open("/proc/version") as f:
-            version_info = f.read().lower()
-            if "microsoft" in version_info:
-                return True
-    if os.path.exists("/etc/os-release"):
-        with open("/etc/os-release") as f:
-            os_info = f.read().lower()
-            if "WSL" in os_info or "Microsoft" in os_info:
-                return True
-    return False
-
-
-def _windows_to_wsl_path(windows_path):
-    """Convert Windows path to WSL path.
-
-    Wslpath command.
-    (even does so if the directory does not exist).
-    """
-    wsl_path = subprocess.check_output(["wslpath", windows_path]).decode().strip()
-    return wsl_path
-
-
-def _wsl_to_windows_path(wsl_path):
-    """
-    Convert a WSL path to a Windows-style path.
-
-    Args:
-        wsl_path (str): The WSL path to convert.
-
-    Returns
-    -------
-        str: The converted Windows-style path.
-    """
-    if not wsl_path.startswith("/mnt/"):
-        raise ValueError("The provided path does not appear to " + "be a WSL mount path.")
-
-    # Remove the '/mnt/' prefix and replace '/' with '\\'
-    windows_path = wsl_path[5:]  # Remove '/mnt/'
-    windows_path = windows_path.replace("/", "\\")
-
-    # Convert the drive letter to uppercase
-    drive_letter = windows_path[0].upper()
-    windows_path = f"{drive_letter}:{windows_path[1:]}"
-
-    return windows_path
-
-
-def _is_windows_path(path_dir):
-    if _is_wsl():
-        try:
-            # Try to convert the path to a Windows path
-            result = subprocess.run(
-                ["wslpath", "-u", path_dir], capture_output=True, text=True, check=True
-            )
-            windows_path = result.stdout.strip()
-            # Check if the conversion resulted in a change
-            return windows_path != path_dir
-        except subprocess.CalledProcessError:
-            # likely not a valid Windows path
-            return False
-    else:
-        # If not in WSL, we can't reliably determine the path type
-        # assume it's Linux if on Linux OS
-        return platform.system().lower() not in ["linux", "darwin"]
-
-
 def _is_desktop_environment() -> bool:
     """Wheter or not the host (Linux) OS has GUI."""
     # Check common environment variables related to DE presence
@@ -318,7 +251,7 @@ def _open_explorer(path: str):
             # Check if running in WSL
             if "microsoft" in platform.uname().release.lower():
                 # WSL: Open using Windows Explorer
-                subprocess.run(["explorer.exe", _wsl_to_windows_path(path)])
+                subprocess.run(["explorer.exe", wsl_to_windows_path(path)])
             elif _is_desktop_environment():
                 # Native Linux with DE: Open with xdg-open
                 subprocess.run(["xdg-open", path])
@@ -355,7 +288,7 @@ def _webbrowser_open(file_fullnames: list) -> bool:
 
     if system == "Linux":
         # WSL
-        if _is_wsl():
+        if is_wsl():
             import ntpath
 
             # pipeline_card
@@ -363,11 +296,11 @@ def _webbrowser_open(file_fullnames: list) -> bool:
                 subprocess.check_output("cmd.exe /c echo %TEMP%", shell=True).decode().strip()
             )
             tmp_file_path = ntpath.join(temp_dir, os.path.basename(file_fullnames[-1]))
-            shutil.copy2(file_fullnames[-1], _windows_to_wsl_path(tmp_file_path))
+            shutil.copy2(file_fullnames[-1], windows_to_wsl_path(tmp_file_path))
             # potential "latest prior_blessed" pipeline_card
             if len(file_fullnames) > 1:
                 _tmp_file_path = ntpath.join(temp_dir, "_" + os.path.basename(file_fullnames[0]))
-                shutil.copy2(file_fullnames[0], _windows_to_wsl_path(_tmp_file_path))
+                shutil.copy2(file_fullnames[0], windows_to_wsl_path(_tmp_file_path))
             # actual webbrowser open
             _ = webbrowser.open(f"file:///{tmp_file_path}", new=2)
             return True

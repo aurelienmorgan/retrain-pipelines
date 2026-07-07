@@ -11,6 +11,7 @@ from concurrent.futures import as_completed
 from datetime import datetime, timezone
 from typing import Any
 
+from .context_store import value_to_storable
 from .core import (
     DAG,
     DagExecutionContext,
@@ -744,6 +745,21 @@ def _execute(dag: DAG, params: dict[str, Any] | None = None) -> tuple[TaskPayloa
         dag.init()
         exec_id = context._params.get("exec_id")
         assert exec_id is not None
+
+        # Serialize execution-time overrides and inject each as an "override" key
+        # inside its param's dict in the executions.params JSON column.
+        if params:
+            _dao = DAO(os.environ["RP_METADATASTORE_URL"])
+            _execution = _dao.get_execution(exec_id)
+            _current_params = dict(_execution.params or {})
+            for pname, pval in params.items():
+                if pname in _current_params:
+                    _current_params[pname] = {
+                        **_current_params[pname],
+                        "override": value_to_storable(exec_id, "overrides", pname, pval),
+                    }
+            _dao.update_execution(id=exec_id, params=_current_params)
+            _dao.dispose()
 
         logger.info(f"Execution ID: {exec_id}")
         logger.debug(f"Root tasks: {[t.name for t in dag.roots]}")

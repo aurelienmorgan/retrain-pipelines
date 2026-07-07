@@ -236,7 +236,7 @@ def register(app, rt, prefix=""):
                                 //      gives `^(?:(?=.*Mario)|(?=.*Luigi)).*$`
                                 function parseToRegex(input) {
                                     function escapeRegex(str) {
-                                        return str.replace(/[.*+?^${}()|[\]\\\]/g, '\\\$&');
+                                        return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
                                     }
 
                                     function stripSpacesOutsideQuotes(str) {

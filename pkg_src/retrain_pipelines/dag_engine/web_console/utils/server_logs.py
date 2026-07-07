@@ -13,8 +13,12 @@ from pydantic import BaseModel, field_validator
 from uvicorn.logging import AccessFormatter
 
 from ....utils import rgb_to_rgba, strip_ansi_escape_codes
+from ....utils.wsl_utils import is_wsl, is_wsl_mount_path
 
 server_tz = tzlocal.get_localzone()
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 
 # ---- Standard daily journalisation ----
@@ -304,19 +308,56 @@ class AccessLogEntry(BaseModel):
         )
 
 
+def reverse_lines(f, blocksize=8192):
+    """
+    Yield lines from a file-like object in reverse order as a generator.
+
+    Mimics the behavior of str.splitlines() by not yielding an empty line
+    if the file ends with a newline character.
+    """
+    f.seek(0, os.SEEK_END)
+    filesize = f.tell()
+    if filesize == 0:
+        return
+
+    remainder = b""
+    offset = filesize
+    is_first_chunk = True
+
+    while offset > 0:
+        read_size = min(blocksize, offset)
+        offset -= read_size
+        f.seek(offset)
+        chunk = f.read(read_size)
+
+        chunk += remainder
+        lines = chunk.split(b"\n")
+
+        # Mimic splitlines(): if the file ends with a newline,
+        # the last split element is empty and should be ignored.
+        if is_first_chunk and chunk.endswith(b"\n"):
+            lines.pop()
+        is_first_chunk = False
+
+        if offset > 0:
+            # The first line in the chunk is incomplete, save it for the next iteration
+            remainder = lines[0]
+            for line in reversed(lines[1:]):
+                yield line
+        else:
+            # We've reached the beginning of the file
+            for line in reversed(lines):
+                yield line
+            remainder = b""
+
+
 def _read_last_n_lines(filename: str, n: int, regex_filter: str | None) -> list[bytes]:
     matches: list[bytes] = []
     filtering_pattern: regex.Pattern[str] | None = (
         regex.compile(regex_filter) if regex_filter else None
     )
 
-    try:
-        with open("/proc/version") as f:
-            is_wsl = "microsoft" in f.read().lower()
-    except Exception:
-        is_wsl = False
-
-    if is_wsl and filename.startswith("/mnt/"):
+    if is_wsl() and is_wsl_mount_path(os.path.dirname(filename)):
         import subprocess
 
         win_path = regex.sub(r"^/mnt/([a-z])/", r"\1:\\", filename).replace("/", "\\")
@@ -336,8 +377,10 @@ def _read_last_n_lines(filename: str, n: int, regex_filter: str | None) -> list[
             )
             if result.returncode != 0:
                 break
+
             str_lines = result.stdout.strip().split("\n")
             str_lines = [line for line in str_lines if line.strip()]
+
             if regex_filter:
                 filtered = [
                     line
@@ -348,43 +391,31 @@ def _read_last_n_lines(filename: str, n: int, regex_filter: str | None) -> list[
                     return [line.encode("utf-8") for line in reversed(filtered[:n])]
             else:
                 return [line.encode("utf-8") for line in str_lines[-n:]]
+
             if len(str_lines) < line_count:
-                return [line.encode("utf-8") for line in reversed(filtered)]
-                # Not enough matches, read more lines next time
-            else:
-                return [line.encode("utf-8") for line in str_lines[-n:]]
-            if len(str_lines) < line_count:
-                # Reached start of file
-                return [line.encode("utf-8") for line in reversed(filtered)]
+                # Reached start of file, not enough lines available
+                if regex_filter:
+                    return [line.encode("utf-8") for line in reversed(filtered)]
+                else:
+                    return [line.encode("utf-8") for line in str_lines]
+
             total_lines += batch
 
     fd = os.open(filename, os.O_RDONLY)
     try:
         with os.fdopen(fd, "rb") as f:
-            f.seek(0, os.SEEK_END)
-            filesize = f.tell()
-            blocksize = 4096
-            buffer = b""
-            while filesize > 0 and len(matches) < n:
-                read_size = min(blocksize, filesize)
-                filesize -= read_size
-                f.seek(filesize)
-                buffer = f.read(read_size) + buffer
-                lines = buffer.splitlines()
-                # Only scan new lines added in this block
-                for line in reversed(lines):
-                    if regex_filter:
-                        if filtering_pattern and filtering_pattern.match(
-                            line.decode("utf-8", "replace")
-                        ):
-                            matches.append(line)
-                            if len(matches) == n:
-                                return list(reversed(matches))
-                    else:
+            for line in reverse_lines(f):
+                if regex_filter:
+                    if filtering_pattern and filtering_pattern.match(
+                        line.decode("utf-8", "replace")
+                    ):
                         matches.append(line)
                         if len(matches) == n:
                             return list(reversed(matches))
-                buffer = b"\n".join(lines)
+                else:
+                    matches.append(line)
+                    if len(matches) == n:
+                        return list(reversed(matches))
             return list(reversed(matches))
     finally:
         if fd >= 0:
@@ -406,6 +437,7 @@ def read_last_access_logs(
     # Find all log files
     log_files = glob.glob(f"{log_dir}/{base_filename}*")
     log_files.sort(key=os.path.getmtime, reverse=True)
+    logger.debug(f"log_files : {log_files}")
 
     lines: list[bytes] = []
     lines_needed = n
@@ -425,7 +457,7 @@ def read_last_access_logs(
                 entry = AccessLogEntry.from_access_log(log_line)
                 log_entries.append(str(entry.to_fasthtml_div()))
         except Exception as ex:
-            print(ex)
+            print(f"log_file={log_file}: {type(ex).__name__}: {ex}")
             continue
 
     return log_entries

@@ -87,10 +87,14 @@ def Run(*args, **kwargs):
     return run
 
 
-@wraps(metaflow.Task)  # type: ignore[no-redef]
-def Task(*args, **kwargs):
-    task = metaflow.Task(*args, **kwargs)
-    if not os.getenv("retrain_pipeline_type", None):
-        run = task.parent.parent
-        _set_retrain_pipeline_type_env(list(run.steps())[-1].task)
-    return task
+class _TaskMeta(type(metaflow.Task)):  # type: ignore[misc] # Unsupported dynamic base class "type"
+    def __call__(cls, *args, **kwargs):
+        task_obj = metaflow.Task(*args, **kwargs)
+        if not os.getenv("retrain_pipeline_type", None):
+            run = task_obj.parent.parent
+            _set_retrain_pipeline_type_env(list(run.steps())[-1].task)
+        return task_obj
+
+
+class Task(metaclass=_TaskMeta):  # type: ignore[no-redef]
+    pass

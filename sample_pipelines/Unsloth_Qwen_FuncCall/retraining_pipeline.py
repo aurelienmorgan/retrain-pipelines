@@ -62,7 +62,7 @@ from retrain_pipelines.dag_engine.core import (
 
 from retrain_pipelines.dag_engine.rp_logging import rp_redirect_stdout
 
-from retrain_pipelines.dag_engine.sdk import ExecutionsIterator
+from retrain_pipelines.dag_engine.sdk import Execution, ExecutionsIterator
 
 from retrain_pipelines.utils import create_requirements
 
@@ -1855,7 +1855,7 @@ def pipeline_to_hub(_) -> None:
     custom_source_files = [os.path.abspath(__file__)]
     if (
         ctx.pipeline_card_artifacts_path
-        != ctx.params_definitions["pipeline_card_artifacts_path"].default
+        != Execution.get(int(ctx.exec_id)).getParams().default("pipeline_card_artifacts_path")
     ):
         candidate_source_files = [
             "pipeline_card.py",
