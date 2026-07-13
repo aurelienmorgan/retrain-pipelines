@@ -36,11 +36,11 @@ def start():
 
     from datetime import datetime, timezone
 
-    ctx.added_entry = (
+    ctx.added_entry__start = (
         datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         + " UTC - execution-context, task dynamically-added entry"
     )
-    print(f"ctx addon: {ctx.added_entry}")
+    print(f"ctx addon: {ctx.added_entry__start}")
     ################################
 
     #################################
@@ -76,6 +76,18 @@ def merge(payload: TaskPayload):
     # Since the herein task only has 1 direct parent =>
     assert payload["parallel"] == payload.get("parallel") == payload
 
+    ################################
+    # Update DAG execution-context #
+    ################################
+    from datetime import datetime, timezone
+
+    ctx.added_entry__merge = (
+        datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        + " UTC - execution-context, task dynamically-added entry"
+    )
+    print(f"ctx addon: {ctx.added_entry__merge}")
+    ################################
+
     # Do whatever you want for further custom processing
     # on the aggregated result here, e.g.:
     result = list(map(lambda x: x * 2, payload))
@@ -96,11 +108,16 @@ def end(payload: TaskPayload):
     ################################
     from datetime import datetime, timezone
 
-    ctx.added_entry = (
+    ctx.added_entry__start = ( # updating a context entry
+        datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        + " UTC - execution-context, task dynamically-added & updated entry"
+    )
+    ctx.added_entry__merge = None  # removing a context entry
+    ctx.added_entry__end = (
         datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         + " UTC - execution-context, task dynamically-added entry"
     )
-    print(f"ctx addon: {ctx.added_entry}")
+    print(f"ctx: {ctx.__dict__}")
     ################################
 
     return None
@@ -151,6 +168,11 @@ if __name__ == "__main__":
     print(f"DAG SVG written to {svg_fullname}")
 
     # serialized execution
-    exec_params = Execution.get(id=context_dump["exec_id"]).getParams()
+    exec_params = Execution.get_by_id(id=context_dump["exec_id"]).get_params()
     assert exec_params["dummy_param_1"] != exec_params.default("dummy_param_1") # overridden
     assert exec_params["dummy_param_2"] == exec_params.default("dummy_param_2") # not overridden
+
+    end_exit_context = Execution.get_by_id(id=context_dump["exec_id"]) \
+        .get_tasks_with_name("end")[0].get_exit_context()
+    for context_entry in end_exit_context:
+        print(f"  - {context_entry}  -  {end_exit_context[context_entry]}")

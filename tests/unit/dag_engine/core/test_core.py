@@ -340,15 +340,6 @@ class TestDagExecutionContext:
         ctx2._params["a"].append(3)
         assert ctx._params["a"] == [1, 2]
 
-    def test_to_serializable_dict_datetime(self):
-        ctx = DagExecutionContext({"ts": datetime(2024, 1, 1, tzinfo=timezone.utc)})
-        assert ctx.to_serializable_dict()["ts"] == "2024-01-01T00:00:00+00:00"
-
-    def test_to_serializable_dict_primitives(self):
-        ctx = DagExecutionContext({"n": 5, "s": "hello", "f": 3.14, "b": True})
-        d = ctx.to_serializable_dict()
-        assert d == {"n": 5, "s": "hello", "f": 3.14, "b": True}
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  UiCss

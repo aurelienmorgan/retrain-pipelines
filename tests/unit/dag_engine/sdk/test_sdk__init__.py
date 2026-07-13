@@ -30,6 +30,7 @@ def _make_exec_ext(
     return SimpleNamespace(
         id=id,
         name=name,
+        metadata_root="/tmp/meta",
         start_timestamp=start,
         end_timestamp=end,
         success=success,

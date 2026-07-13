@@ -16,7 +16,17 @@ from sqlalchemy.orm import aliased, object_session, scoped_session, sessionmaker
 
 from ..grpc_client import GrpcClient
 from .grpc import task_trace_pb2
-from .model import Base, Execution, ExecutionExt, Task, TaskExt, TaskGroup, TaskTrace, TaskType
+from .model import (
+    Base,
+    Execution,
+    ExecutionExt,
+    Task,
+    TaskContextAttr,
+    TaskExt,
+    TaskGroup,
+    TaskTrace,
+    TaskType,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -353,6 +363,18 @@ class DAO(DAOBase):
 
     def batch_add_task_traces(self, **kwargs):
         return self._batch_add_entities(TaskTrace, **kwargs)
+
+    def add_task_context_attrs(self, rows: list[dict]) -> None:
+        """Bulk-insert task_context_attrs rows for a single task exit.
+
+        Parameters
+        ----------
+        rows : list[dict]
+            Each dict must contain: task_id, attr_name, sha, disk_ref, inline_val.
+            One row per surviving or deleted context attribute.
+        """
+        if rows:
+            self._batch_add_entities(TaskContextAttr, items=rows)
 
 
 class AsyncDAO(DAOBase):
@@ -890,6 +912,56 @@ class AsyncDAO(DAOBase):
                 })
 
             return out_list
+
+    async def get_task_context_attrs(self, task_id: int) -> list[TaskContextAttr]:
+        """Return all task_context_attrs rows for the given task_id.
+
+        A single query fully reconstructs the task's exit context in O(1).
+
+        Parameters
+        ----------
+        task_id : int
+            The Task.id to fetch context attrs for.
+
+        Returns
+        -------
+        list[TaskContextAttr]
+            All rows for this task (surviving and deleted attrs).
+            Empty list if none found.
+        """
+        statement = select(TaskContextAttr).where(TaskContextAttr.task_id == task_id)
+        async with self._get_session() as session:
+            result = await session.execute(statement)
+            return list(result.scalars().all())
+
+    async def get_task_ext(self, task_id: int) -> TaskExt | None:
+        """Return a TaskExt (Task + TaskType.name) by task id.
+
+        Parameters
+        ----------
+        task_id : int
+            The Task.id to fetch.
+
+        Returns
+        -------
+        TaskExt, optional
+            None if not found.
+        """
+        stmt = (
+            select(TaskType.name, Task)
+            .join(
+                TaskType,
+                and_(Task.exec_id == TaskType.exec_id, Task.tasktype_uuid == TaskType.uuid),
+            )
+            .where(Task.id == task_id)
+        )
+        async with self._get_session() as session:
+            result = await session.execute(stmt)
+            row = result.first()
+            if row is None:
+                return None
+            name, task_orm = row
+            return TaskExt(**{**task_orm.__dict__, "name": name})
 
 
 # ////////////////////////////////////////////////////////////////////////////

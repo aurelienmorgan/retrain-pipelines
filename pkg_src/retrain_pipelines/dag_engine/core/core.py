@@ -15,7 +15,7 @@ import traceback
 from collections import deque
 from collections.abc import Callable
 from contextlib import contextmanager
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from typing import Any, Optional, Union
 from uuid import UUID, uuid4
 
@@ -26,8 +26,20 @@ from rich.markup import escape
 
 from ...utils import in_notebook
 from ...utils.rich_logging import framed_rich_log_str
-from ..context_store import link_params_defaults_to_exec, temp_dir_id, value_to_storable
 from ..db.dao import DAO
+from ..stores.commons import resolve_storable
+from ..stores.context_store import (
+    _CONTEXT_EXCLUDE_ATTRS,
+    compute_context_diff,
+    snapshot_context_shas,
+)
+from ..stores.params_store import (
+    attr_ref_from_param_storable,
+    link_params_defaults_to_exec,
+    metadata_root,
+    temp_dir_id,
+    value_to_storable,
+)
 from .trace_buffer import get_trace_buffer
 
 logger = logging.getLogger(__name__)
@@ -380,8 +392,7 @@ class TaskType(BaseModel):
                 rank = kwargs.pop("rank", None)
             else:
                 rank = kwargs["rank"]
-            # Get task_id from merge_func
-            # if it exists
+            # Get task_id from merge_func if it exists
             if "task_id" not in arg_names:
                 task_id = kwargs.pop("task_id", None)
             else:
@@ -435,6 +446,14 @@ class TaskType(BaseModel):
                 )
             )
 
+            # Snapshot entry context before the user func runs.
+            _context = _dag_execution_context_var.get()
+            entry_shas = (
+                snapshot_context_shas(_context, _CONTEXT_EXCLUDE_ATTRS)
+                if _context is not None
+                else {}
+            )
+
             task_failed = False
             try:
                 with TaskType._capture_and_stream_trace(task_id):
@@ -458,6 +477,21 @@ class TaskType(BaseModel):
                 raise TaskFuncException(f"task `{self.name}` failed") from ex
             finally:
                 end_timestamp = datetime.now(timezone.utc)
+                # Serialize exit-context diff on success only.
+                # Guarded so that a serialization error does not mask
+                # an otherwise-successful "task failed" recording.
+                if not task_failed and _context is not None:
+                    try:
+                        rows = compute_context_diff(
+                            exec_id, task_id, _context, entry_shas, _CONTEXT_EXCLUDE_ATTRS
+                        )
+                        if rows:
+                            dao.add_task_context_attrs(rows)
+                    except Exception:
+                        logger.exception(
+                            f"Failed to serialize exit context for task {task_id}; "
+                            "context attrs for this task will be unavailable."
+                        )
                 dao.update_task(id=task_id, end_timestamp=end_timestamp, failed=task_failed)
                 dao.dispose()
                 # Unregister task from registry
@@ -575,7 +609,7 @@ class TaskGroup(BaseModel):
     docstring: str | None = Field(default=None)
     ui_css: Optional["UiCss"] = Field(default=None)
 
-    elements: list[Union["TaskType", "TaskGroup"]] = Field(
+    elements: list[Union[TaskType, "TaskGroup"]] = Field(
         default_factory=list, description="List of consituent items: tasks and/or taskgroups"
     )
     uuid: UUID = Field(default_factory=uuid4, description="Unique ID for graph rendering")
@@ -583,8 +617,8 @@ class TaskGroup(BaseModel):
 
     # Private attributes (not validated or included in .dict())
     _log: logging.Logger = PrivateAttr(default_factory=logging.getLogger)
-    _parents: list["TaskType"] = PrivateAttr(default_factory=list)
-    _children: list["TaskType"] = PrivateAttr(default_factory=list)
+    _parents: list[TaskType] = PrivateAttr(default_factory=list)
+    _children: list[TaskType] = PrivateAttr(default_factory=list)
     # in case of a taskgroup itself part of a taskgroup
     _task_group: Optional["TaskGroup"] = PrivateAttr(default=None)
 
@@ -634,7 +668,7 @@ class TaskGroup(BaseModel):
         return self._task_group
 
     @property
-    def parents(self) -> list["TaskType"]:
+    def parents(self) -> list[TaskType]:
         return self._parents
 
     @property
@@ -720,7 +754,7 @@ class DAG(BaseModel):
         are populated at execution time.
     """
 
-    roots: list["TaskType"] = Field(...)
+    roots: list[TaskType] = Field(...)
     docstring: str | None = Field(default=None)
     ui_css: Optional["UiCss"] = Field(default=None)
 
@@ -803,6 +837,7 @@ class DAG(BaseModel):
             username=username,
             ui_css=self.ui_css.__dict__ if self.ui_css else None,
             start_timestamp=datetime.now(timezone.utc),
+            metadata_root=metadata_root(),
         )
         # Symlink metadata/<exec_id>/params/defaults => metadata/<tmp>/params/defaults
         # so canonical exec_id-based disk access resolves correctly.
@@ -954,7 +989,6 @@ class DAG(BaseModel):
         dao.update_execution(
             id=exec_id,
             end_timestamp=datetime.now(timezone.utc),
-            context_dump=context.to_serializable_dict(),  # Only serialize for DB
         )
         dao.dispose()
 
@@ -1025,10 +1059,10 @@ def taskgroup(func=None, *, ui_css=None):
         return tg
 
     if func is None:
-        # Called as @dag(...) with optional arguments
+        # Called as @taskgroup(...) with optional arguments
         return decorator
     else:
-        # Called as @dag without parentheses
+        # Called as @taskgroup without parentheses
         return decorator(func)
 
 
@@ -1348,26 +1382,6 @@ class DagParam(BaseModel):
             "default": value_to_storable(dir_id, "defaults", param_name, self.default),
         }
 
-    @staticmethod
-    def _serialize(obj: Any) -> Any:
-        """Convert obj into JSON-serializable primitives."""
-        if obj is None:
-            return None
-        if isinstance(obj, (str, int, float, bool)):
-            return obj
-        if isinstance(obj, (datetime, date)):
-            return obj.isoformat()
-        if isinstance(obj, BaseModel):
-            # convert model to plain dict first,
-            # then serialize recursively
-            return DagParam._serialize(obj.model_dump(mode="python"))
-        if isinstance(obj, dict):
-            return {k: DagParam._serialize(v) for k, v in obj.items()}
-        if isinstance(obj, (list, tuple, set)):
-            return [DagParam._serialize(v) for v in obj]
-        # Safe fallback
-        return str(obj)
-
 
 # only to be called in the runtime module.
 #   default=None is intentional: the SIGINT handler (_sigint_handler in runtime.py)
@@ -1384,6 +1398,12 @@ class DagExecutionContext:
     def __init__(self, params: dict[str, Any]):
         self._params = params
         self._updates: dict[str, Any] = {}  # Track updates made in this context
+
+        # _attr_refs tracks disk/inline storage metadata per attr:
+        #   {attr_name: {"sha": str, "disk_ref": str|None, "inline": Any}}
+        # Populated by _init_attr_refs_from_params() once exec_id is known,
+        # then updated in-place by compute_context_diff() at each task exit.
+        self._attr_refs: dict[str, dict] = {}
 
     def __getattr__(self, name: str) -> Any:
         if name.startswith("_"):
@@ -1407,19 +1427,59 @@ class DagExecutionContext:
         """Get all updates made in this context."""
         return self._updates.copy()
 
-    def merge_updates(self, updates: dict[str, Any]):
-        """Merge updates from child context (child wins on conflicts)."""
+    def get_attr_ref_updates(self) -> dict[str, dict]:
+        """Return a copy of all current _attr_refs for propagation to parent context.
+
+        Used by _execute_branch_with_context / _execute_taskgroup_with_context
+        so that disk_refs written inside a process/thread are visible to the caller.
+        """
+        return self._attr_refs.copy()
+
+    def merge_updates(self, updates: dict[str, Any], attr_refs: dict[str, dict] | None = None):
+        """Merge updates from child context (child wins on conflicts).
+
+        Parameters
+        ----------
+        updates : dict[str, Any]
+            _params / _updates changes from child execution.
+        attr_refs : dict[str, dict] | None
+            _attr_refs from child execution ; merged so that disk_refs
+            written in processes/threads are visible to the parent context.
+        """
         DagExecutionContext._deep_update(self._params, updates)
         DagExecutionContext._deep_update(self._updates, updates)
+        if attr_refs:
+            DagExecutionContext._deep_update(self._attr_refs, attr_refs)
 
     def copy(self):
         """Create a deep copy of this context for child tasks runs."""
         new_ctx = DagExecutionContext(copy.deepcopy(self._params))
+        new_ctx._attr_refs = copy.deepcopy(self._attr_refs)
         return new_ctx
 
-    def to_serializable_dict(self) -> dict[str, Any]:
-        """Convert to serializable format ONLY for database storage."""
-        return {k: DagParam._serialize(v) for k, v in self._params.items()}
+    def _init_attr_refs_from_params(self, params_json: dict) -> None:
+        """Populate _attr_refs from the executions.params JSON column.
+
+        Must be called once exec_id is known and params have been written to DB
+        (including any execution-time overrides). Establishes the baseline
+        disk_ref / inline / sha entries for all DAG params so that
+        snapshot_context_shas() and compute_context_diff() work correctly
+        at the first (DAG-head) task entry.
+
+        Parameters
+        ----------
+        params_json : dict
+            Raw executions.params JSON as stored in DB.
+            Structure: {param_name: {"description": ..., "default": <storable>,
+                                     "override": <storable>}}
+        """
+        for param_name, param_dict in params_json.items():
+            # Active value: override if present, else default.
+            storable = param_dict.get("override", param_dict.get("default"))
+            resolved_value = resolve_storable(storable)
+            self._attr_refs[param_name] = attr_ref_from_param_storable(storable, resolved_value)
+
+        logger.debug(f"execution context cold-start (DAG params) : {self._attr_refs}")
 
 
 class _ContextProxy:

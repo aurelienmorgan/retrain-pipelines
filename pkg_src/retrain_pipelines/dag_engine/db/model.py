@@ -13,6 +13,7 @@ equal on the frontend are equal on the backend too.
 """
 
 from datetime import date, datetime, timezone
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import (
@@ -44,6 +45,9 @@ class Execution(Base):
 
     name: Mapped[str] = mapped_column(String)
     docstring: Mapped[str | None] = mapped_column(String)
+
+    metadata_root: Mapped[str] = mapped_column(String, nullable=False)
+
     params: Mapped[dict | None] = mapped_column(JSON)
 
     username: Mapped[str] = mapped_column(String)
@@ -57,7 +61,6 @@ class Execution(Base):
         DateTime(timezone=True),
         nullable=True,
     )
-    context_dump: Mapped[dict | None] = mapped_column(JSON)
 
     tasks = relationship("Task", back_populates="execution", viewonly=True)
     tasktypes = relationship("TaskType", back_populates="execution")
@@ -337,6 +340,44 @@ class Task(Base):
         return f"{__class__.__name__}({self.id}-{self.tasktype_uuid})"
 
 
+class TaskContextAttr(Base):
+    """Per-attr record of a task's exit context snapshot.
+
+    One row per surviving context attr at task exit.
+    A single ``SELECT * FROM task_context_attrs WHERE task_id = ?``
+    fully reconstructs the exit context in O(1).
+
+    Exactly one of disk_ref or inline_val is set per row:
+      - disk_ref non-null  : cloudpickled artifact; path is relative to
+                             the execution's metadata_root column.
+      - inline_val non-null: JSON-safe value stored directly.
+    Python None is a valid inline_val (stored as SQL NULL via none_as_null=True).
+    disk_ref being non-null is the authoritative signal that the value is on disk.
+    """
+
+    __tablename__ = "task_context_attrs"
+
+    task_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("tasks.id"), primary_key=True, nullable=False
+    )
+    attr_name: Mapped[str] = mapped_column(String, primary_key=True, nullable=False)
+
+    sha: Mapped[str] = mapped_column(String, nullable=False)
+    # Cloudpickled artifact path, relative to the execution's metadata_root.
+    disk_ref: Mapped[str | None] = mapped_column(String, nullable=True)
+    # JSON-safe value stored directly. ``disk_ref``  being non-null (not this column)
+    # is the signal that the value lives on disk.
+    inline_val: Mapped[Any] = mapped_column(JSON(none_as_null=True), nullable=True)
+
+    def __init__(self, **kwargs):
+        kwargs.pop("_sa_instance_state", None)
+        super().__init__(**kwargs)
+
+    def __repr__(self):
+        storage = "disk" if self.disk_ref else "inline"
+        return f"TaskContextAttr(task={self.task_id}, attr={self.attr_name!r}, {storage})"
+
+
 class TaskTrace(Base):
     __tablename__ = "tasktraces"
 
@@ -446,11 +487,6 @@ class TaskGroup(Base):
 
     uuid: Mapped[UUID] = mapped_column(Uuid)
     exec_id: Mapped[int] = mapped_column(Integer, ForeignKey("executions.id"))
-    # execution = relationship(
-    # "Execution",
-    # back_populates="taskgroups",
-    # viewonly=True
-    # )
     order: Mapped[int] = mapped_column(Integer)  # topological order
     __table_args__ = (
         PrimaryKeyConstraint("exec_id", "uuid", name="taskgroup_pk"),

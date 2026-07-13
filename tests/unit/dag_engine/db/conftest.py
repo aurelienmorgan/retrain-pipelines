@@ -127,7 +127,12 @@ async def async_dao():
     from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
     from sqlalchemy.orm import sessionmaker
 
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:", future=True)
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        future=True,
+        # poolclass=StaticPool,
+        # connect_args={"check_same_thread": False},
+    )
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
@@ -164,16 +169,16 @@ async def seeded_async_dao(async_dao):
     async with async_dao.engine.begin() as conn:
         await conn.execute(
             text(
-                "INSERT INTO executions (name, username, start_timestamp, end_timestamp)"
-                " VALUES (:n, :u, :s, :e)"
+                "INSERT INTO executions (name, username, start_timestamp, end_timestamp, metadata_root)"
+                " VALUES (:n, :u, :s, :e, '/tmp/meta')"
             ),
             {"n": "cnt_pipe", "u": "alice", "s": _NOW.isoformat(), "e": _end},
         )
 
         await conn.execute(
             text(
-                "INSERT INTO executions (name, username, start_timestamp, end_timestamp)"
-                " VALUES (:n, :u, :s, :e)"
+                "INSERT INTO executions (name, username, start_timestamp, end_timestamp, metadata_root)"
+                " VALUES (:n, :u, :s, :e, '/tmp/meta')"
             ),
             {
                 "n": "cnt_pipe",
@@ -210,8 +215,8 @@ async def seeded_async_dao(async_dao):
 
         await conn.execute(
             text(
-                "INSERT INTO executions (name, username, start_timestamp)"
-                " VALUES (:n, :u, :s)"
+                "INSERT INTO executions (name, username, start_timestamp, metadata_root)"
+                " VALUES (:n, :u, :s, '/tmp/meta')"
             ),
             {
                 "n": "cnt_pipe",
@@ -268,8 +273,8 @@ async def taskgroup_seeded_async_dao(async_dao):
     async with async_dao.engine.begin() as conn:
         await conn.execute(
             text(
-                "INSERT INTO executions (name, username, start_timestamp)"
-                " VALUES (:n, :u, :s)"
+                "INSERT INTO executions (name, username, start_timestamp, metadata_root)"
+                " VALUES (:n, :u, :s, '/tmp/meta')"
             ),
             {"n": "tg_pipe", "u": "bob", "s": _NOW.isoformat()},
         )

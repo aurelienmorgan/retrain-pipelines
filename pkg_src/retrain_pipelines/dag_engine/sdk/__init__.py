@@ -99,6 +99,7 @@ class ExecutionsIterator(BaseModel):
                 Execution(
                     id=exec_ext.id,
                     name=exec_ext.name,
+                    metadata_root=exec_ext.metadata_root,
                     start_timestamp=exec_ext.start_timestamp,
                     end_timestamp=exec_ext.end_timestamp,
                     success=exec_ext.success,

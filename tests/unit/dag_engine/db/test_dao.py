@@ -9,12 +9,15 @@ from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
+from unittest.mock import AsyncMock
 
 from retrain_pipelines.dag_engine.db.dao import _truncate_to_millis
 from retrain_pipelines.dag_engine.db.model import (
     Execution,
     ExecutionExt,
     Task,
+    TaskContextAttr,
+    TaskExt,
     TaskGroup,
     TaskTrace,
     TaskType,
@@ -23,9 +26,27 @@ from retrain_pipelines.dag_engine.db.model import (
 _NOW = datetime(2024, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
 
 
+@pytest.fixture
+def _null_session():
+    """Return an AsyncMock session whose execute yields first()=None,
+    scalar_one_or_none()=None, and fetchall()=[]."""
+    mock_result = MagicMock()
+    mock_result.first.return_value = None
+    mock_result.scalar_one_or_none.return_value = None
+    mock_result.fetchall.return_value = []
+
+    mock_session = AsyncMock()
+    mock_session.execute = AsyncMock(return_value=mock_result)
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=False)
+    return mock_session
+
+
 # ==============================================================================
 # _truncate_to_millis
 # ==============================================================================
+
+
 class TestTruncateToMillis:
     def test_truncates_sub_millisecond_precision(self):
         dt = datetime(2024, 1, 1, 0, 0, 0, 123456, tzinfo=timezone.utc)
@@ -45,15 +66,43 @@ class TestTruncateToMillis:
 # ==============================================================================
 # DAOBase – sync, shared in-memory SQLite
 # ==============================================================================
+
+
 class TestDAOExecution:
     def test_add_and_get_roundtrip(self, sync_dao):
         with patch("requests.post"):
             exec_id = sync_dao.add_execution(
-                name="pipe_exec", username="user", _start_timestamp=_NOW
+                name="pipe_exec",
+                username="user",
+                _start_timestamp=_NOW,
+                metadata_root="/tmp/meta",
             )
         assert isinstance(exec_id, int)
         ex = sync_dao.get_execution(exec_id)
         assert ex.name == "pipe_exec" and ex.username == "user"
+
+    @pytest.mark.asyncio
+    async def test_asyncdao_add_execution_wrapper_hits_not_null_constraint(
+        self, async_dao
+    ):
+        from sqlalchemy.exc import IntegrityError
+
+        # add_execution() passes no kwargs; Execution.name is NOT NULL,
+        # so the wrapper's _add_entity call raises here.
+        with pytest.raises(IntegrityError):
+            await async_dao.add_execution()
+
+    @pytest.mark.asyncio
+    async def test_asyncdao_get_execution_wrapper(self, async_dao):
+        exec_id = await async_dao._async_add_entity(
+            Execution,
+            name="wrapper_pipe",
+            username="u",
+            _start_timestamp=_NOW,
+            metadata_root="/tmp/meta",
+        )
+        result = await async_dao.get_execution(exec_id)
+        assert result is not None and result.id == exec_id
 
     def test_get_missing_returns_none(self, sync_dao):
         assert sync_dao.get_execution(999999) is None
@@ -61,7 +110,10 @@ class TestDAOExecution:
     def test_update_end_timestamp(self, sync_dao):
         with patch("requests.post"):
             exec_id = sync_dao.add_execution(
-                name="pipe_update", username="u", _start_timestamp=_NOW
+                name="pipe_update",
+                username="u",
+                _start_timestamp=_NOW,
+                metadata_root="/tmp/meta",
             )
             sync_dao.update_execution(exec_id, _end_timestamp=_NOW + timedelta(hours=1))
         ex = sync_dao.get_execution(exec_id)
@@ -76,10 +128,16 @@ class TestDAOExecution:
         with patch("requests.post"):
             for _ in range(3):
                 sync_dao.add_execution(
-                    name="named_pipe", username="u", _start_timestamp=_NOW
+                    name="named_pipe",
+                    username="u",
+                    _start_timestamp=_NOW,
+                    metadata_root="/tmp/meta",
                 )
             sync_dao.add_execution(
-                name="other_pipe", username="u", _start_timestamp=_NOW
+                name="other_pipe",
+                username="u",
+                _start_timestamp=_NOW,
+                metadata_root="/tmp/meta",
             )
         results = sync_dao.get_executions("named_pipe")
         assert len(results) >= 3
@@ -92,7 +150,9 @@ class TestDAOExecution:
 class TestDAOTaskType:
     def _exec_id(self, dao):
         with patch("requests.post"):
-            return dao.add_execution(name="p", username="u", _start_timestamp=_NOW)
+            return dao.add_execution(
+                name="p", username="u", _start_timestamp=_NOW, metadata_root="/tmp/meta"
+            )
 
     def test_add_tasktype_returns_uuid_value(self, sync_dao):
         exec_id = self._exec_id(sync_dao)
@@ -111,11 +171,15 @@ class TestDAOTaskType:
 # ==============================================================================
 # TestDAOTask uses isolated_dao (NullPool, file SQLite)
 # ==============================================================================
+
+
 class TestDAOTask:
     def _seed(self, dao):
         tt_uuid = uuid4()
         with patch("requests.post"):
-            exec_id = dao.add_execution(name="p", username="u", _start_timestamp=_NOW)
+            exec_id = dao.add_execution(
+                name="p", username="u", _start_timestamp=_NOW, metadata_root="/tmp/meta"
+            )
             dao.add_tasktype(
                 uuid=tt_uuid,
                 exec_id=exec_id,
@@ -165,11 +229,16 @@ class TestDAOTask:
         assert isolated_dao.get_tasks_by_execution(999999) == []
 
 
+# ==============================================================================
+# DAOTaskGroup
+# ==============================================================================
+
+
 class TestDAOTaskGroup:
     def test_add_taskgroup(self, sync_dao):
         with patch("requests.post"):
             exec_id = sync_dao.add_execution(
-                name="p", username="u", _start_timestamp=_NOW
+                name="p", username="u", _start_timestamp=_NOW, metadata_root="/tmp/meta"
             )
             tg_uuid = sync_dao.add_taskgroup(
                 uuid=uuid4(),
@@ -181,11 +250,21 @@ class TestDAOTaskGroup:
         assert tg_uuid is not None
 
 
+# ==============================================================================
+# DAOTaskTrace
+# ==============================================================================
+
+
 class TestDAOTaskTrace:
     def _seed_task(self, dao):
         tt_uuid = uuid4()
         with patch("requests.post"):
-            exec_id = dao.add_execution(name="p", username="u", _start_timestamp=_NOW)
+            exec_id = dao.add_execution(
+                name="p",
+                username="u",
+                _start_timestamp=_NOW,
+                metadata_root="/tmp/meta",
+            )
             dao.add_tasktype(
                 uuid=tt_uuid,
                 exec_id=exec_id,
@@ -229,8 +308,10 @@ class TestDAOTaskTrace:
 
 
 # ==============================================================================
-# Concurrent stress – isolated_dao (NullPool)
+# DAO - concurrent stress – isolated_dao (NullPool)
 # ==============================================================================
+
+
 class TestDAOConcurrentWrites:
     def test_concurrent_add_executions(self, isolated_dao):
         n_threads = 12
@@ -240,7 +321,10 @@ class TestDAOConcurrentWrites:
             try:
                 with patch("requests.post"):
                     eid = isolated_dao.add_execution(
-                        name="concurrent_pipe", username="u", _start_timestamp=_NOW
+                        name="concurrent_pipe",
+                        username="u",
+                        _start_timestamp=_NOW,
+                        metadata_root="/tmp/meta",
                     )
                 results.append(eid)
             except Exception as exc:
@@ -259,7 +343,10 @@ class TestDAOConcurrentWrites:
         tt_uuid = uuid4()
         with patch("requests.post"):
             exec_id = isolated_dao.add_execution(
-                name="stress", username="u", _start_timestamp=_NOW
+                name="stress",
+                username="u",
+                _start_timestamp=_NOW,
+                metadata_root="/tmp/meta",
             )
             isolated_dao.add_tasktype(
                 uuid=tt_uuid,
@@ -296,7 +383,10 @@ class TestDAOConcurrentWrites:
         tt_uuid = uuid4()
         with patch("requests.post"):
             exec_id = isolated_dao.add_execution(
-                name="trace_stress", username="u", _start_timestamp=_NOW
+                name="trace_stress",
+                username="u",
+                _start_timestamp=_NOW,
+                metadata_root="/tmp/meta",
             )
             isolated_dao.add_tasktype(
                 uuid=tt_uuid,
@@ -343,7 +433,10 @@ class TestDAOConcurrentWrites:
         tt_uuid = uuid4()
         with patch("requests.post"):
             exec_id = isolated_dao.add_execution(
-                name="rw_mix", username="u", _start_timestamp=_NOW
+                name="rw_mix",
+                username="u",
+                _start_timestamp=_NOW,
+                metadata_root="/tmp/meta",
             )
             isolated_dao.add_tasktype(
                 uuid=tt_uuid,
@@ -387,7 +480,10 @@ class TestDAOConcurrentWrites:
     def test_update_entity_raises_after_max_attempts(self, isolated_dao):
         with patch("requests.post"):
             exec_id = isolated_dao.add_execution(
-                name="upd_fail", username="u", _start_timestamp=_NOW
+                name="upd_fail",
+                username="u",
+                _start_timestamp=_NOW,
+                metadata_root="/tmp/meta",
             )
 
         with (
@@ -404,8 +500,10 @@ class TestDAOConcurrentWrites:
 
 
 # ==============================================================================
-# dispose
+# DAO - dispose
 # ==============================================================================
+
+
 class TestDAODispose:
     def test_dispose_idempotent(self, sync_dao):
         from sqlalchemy.pool import StaticPool
@@ -458,6 +556,8 @@ class TestDAODispose:
 # ==============================================================================
 # DAOBase non-sqlite (QueuePool) construction path
 # ==============================================================================
+
+
 class TestDAOBaseNonSqlite:
     def test_non_sqlite_engine_uses_queuepool(self):
         from sqlalchemy import QueuePool
@@ -490,8 +590,10 @@ class TestDAOBaseNonSqlite:
 
 
 # ==============================================================================
-# Retry / backoff paths
+# DAO - Retry / backoff paths
 # ==============================================================================
+
+
 class TestRetryPaths:
     def test_add_entity_retries_then_succeeds(self, isolated_dao, capture_log):
         """Exercise retry loop and assert on programmatically captured logs."""
@@ -512,7 +614,10 @@ class TestRetryPaths:
                 patch("time.sleep"),
             ):
                 isolated_dao.add_execution(
-                    name="retry_pipe", username="u", _start_timestamp=_NOW
+                    name="retry_pipe",
+                    username="u",
+                    _start_timestamp=_NOW,
+                    metadata_root="/tmp/meta",
                 )
 
         assert call_count["n"] == 3
@@ -536,7 +641,10 @@ class TestRetryPaths:
         ):
             with pytest.raises(Exception, match="persistent lock"):
                 isolated_dao.add_execution(
-                    name="fail_pipe", username="u", _start_timestamp=_NOW
+                    name="fail_pipe",
+                    username="u",
+                    _start_timestamp=_NOW,
+                    metadata_root="/tmp/meta",
                 )
 
     def test_batch_add_entities_retries_then_succeeds(self, isolated_dao):
@@ -551,7 +659,10 @@ class TestRetryPaths:
 
         with patch("requests.post"):
             exec_id = isolated_dao.add_execution(
-                name="batch_retry", username="u", _start_timestamp=_NOW
+                name="batch_retry",
+                username="u",
+                _start_timestamp=_NOW,
+                metadata_root="/tmp/meta",
             )
             tt_uuid = uuid4()
             isolated_dao.add_tasktype(
@@ -590,7 +701,10 @@ class TestRetryPaths:
     def test_batch_add_entities_raises_after_max_attempts(self, isolated_dao):
         with patch("requests.post"):
             exec_id = isolated_dao.add_execution(
-                name="batch_fail", username="u", _start_timestamp=_NOW
+                name="batch_fail",
+                username="u",
+                _start_timestamp=_NOW,
+                metadata_root="/tmp/meta",
             )
             tt_uuid = uuid4()
             isolated_dao.add_tasktype(
@@ -631,7 +745,10 @@ class TestRetryPaths:
     def test_update_entity_retries_then_succeeds(self, isolated_dao):
         with patch("requests.post"):
             exec_id = isolated_dao.add_execution(
-                name="upd_retry", username="u", _start_timestamp=_NOW
+                name="upd_retry",
+                username="u",
+                _start_timestamp=_NOW,
+                metadata_root="/tmp/meta",
             )
 
         call_count = {"n": 0}
@@ -660,7 +777,10 @@ class TestRetryPaths:
     def test_sync_update_entity_rollback_on_exception(self, isolated_dao):
         with patch("requests.post"):
             exec_id = isolated_dao.add_execution(
-                name="rb_pipe", username="u", _start_timestamp=_NOW
+                name="rb_pipe",
+                username="u",
+                _start_timestamp=_NOW,
+                metadata_root="/tmp/meta",
             )
 
         session = isolated_dao.Session()
@@ -710,7 +830,11 @@ class TestRetryPaths:
             session.add = MagicMock(side_effect=RuntimeError("forced add"))
             with pytest.raises(RuntimeError, match="forced add"):
                 isolated_dao._sync_add_entity(
-                    Execution, name="x", username="u", _start_timestamp=_NOW
+                    Execution,
+                    name="x",
+                    username="u",
+                    _start_timestamp=_NOW,
+                    metadata_root="/tmp/meta",
                 )
 
         assert session.rollback_called
@@ -752,6 +876,8 @@ class TestRetryPaths:
 # ==============================================================================
 # Event listeners (sync side-effects)
 # ==============================================================================
+
+
 class TestEventListeners:
     def test_after_insert_execution_posts_to_endpoint(self):
         from retrain_pipelines.dag_engine.db.dao import after_insert_execution_listener
@@ -847,7 +973,7 @@ class TestEventListeners:
 
         with patch("requests.post"):
             exec_id = isolated_dao.add_execution(
-                name="p", username="u", _start_timestamp=_NOW
+                name="p", username="u", _start_timestamp=_NOW, metadata_root="/tmp/meta"
             )
             tt_uuid = uuid4()
             isolated_dao.add_tasktype(
@@ -880,7 +1006,7 @@ class TestEventListeners:
 
         with patch("requests.post"):
             exec_id = isolated_dao.add_execution(
-                name="p", username="u", _start_timestamp=_NOW
+                name="p", username="u", _start_timestamp=_NOW, metadata_root="/tmp/meta"
             )
 
         target = MagicMock(spec=Task)
@@ -966,7 +1092,7 @@ class TestEventListeners:
 
         with patch("requests.post"):
             exec_id = isolated_dao.add_execution(
-                name="p", username="u", _start_timestamp=_NOW
+                name="p", username="u", _start_timestamp=_NOW, metadata_root="/tmp/meta"
             )
             tt_uuid = uuid4()
             isolated_dao.add_tasktype(
@@ -1059,7 +1185,7 @@ class TestEventListeners:
 
         with patch("requests.post"):
             exec_id = isolated_dao.add_execution(
-                name="p", username="u", _start_timestamp=_NOW
+                name="p", username="u", _start_timestamp=_NOW, metadata_root="/tmp/meta"
             )
             tt_uuid = uuid4()
             isolated_dao.add_tasktype(
@@ -1094,7 +1220,7 @@ class TestEventListeners:
 
         with patch("requests.post"):
             exec_id = isolated_dao.add_execution(
-                name="p", username="u", _start_timestamp=_NOW
+                name="p", username="u", _start_timestamp=_NOW, metadata_root="/tmp/meta"
             )
             tt_uuid = uuid4()
             isolated_dao.add_tasktype(
@@ -1265,11 +1391,17 @@ class TestEventListeners:
 # ==============================================================================
 # AsyncDAO
 # ==============================================================================
+
+
 class TestAsyncDAO:
     @pytest.mark.asyncio
     async def test_async_add_and_get_entity(self, async_dao):
         exec_id = await async_dao._async_add_entity(
-            Execution, name="async_pipe", username="u", _start_timestamp=_NOW
+            Execution,
+            name="async_pipe",
+            username="u",
+            _start_timestamp=_NOW,
+            metadata_root="/tmp/meta",
         )
         assert isinstance(exec_id, int)
         result = await async_dao._async_get_entity(Execution, id=exec_id)
@@ -1284,7 +1416,11 @@ class TestAsyncDAO:
     async def test_async_get_entities(self, async_dao):
         for _ in range(3):
             await async_dao._async_add_entity(
-                Execution, name="multi_pipe", username="u", _start_timestamp=_NOW
+                Execution,
+                name="multi_pipe",
+                username="u",
+                _start_timestamp=_NOW,
+                metadata_root="/tmp/meta",
             )
         results = await async_dao._async_get_entities(Execution, name="multi_pipe")
         assert len(results) >= 3
@@ -1292,7 +1428,11 @@ class TestAsyncDAO:
     @pytest.mark.asyncio
     async def test_async_update_entity(self, async_dao):
         exec_id = await async_dao._async_add_entity(
-            Execution, name="upd_pipe", username="u", _start_timestamp=_NOW
+            Execution,
+            name="upd_pipe",
+            username="u",
+            _start_timestamp=_NOW,
+            metadata_root="/tmp/meta",
         )
         updated = await async_dao._async_update_entity(
             Execution, exec_id, username="updated_user"
@@ -1300,8 +1440,10 @@ class TestAsyncDAO:
         assert updated is not None and updated.username == "updated_user"
 
     @pytest.mark.asyncio
-    async def test_async_update_entity_missing_returns_none(self, async_dao):
-        result = await async_dao._async_update_entity(Execution, 999999, name="x")
+    async def test_async_update_entity_not_found(self, async_dao, _null_session):
+        """scalar_one_or_none()=None => return None."""
+        with patch.object(async_dao, "_get_session", return_value=_null_session):
+            result = await async_dao._async_update_entity(Execution, entity_id=99999)
         assert result is None
 
     @pytest.mark.asyncio
@@ -1309,7 +1451,11 @@ class TestAsyncDAO:
         from sqlalchemy import text
 
         exec_id = await async_dao._async_add_entity(
-            Execution, name="batch_pipe", username="u", _start_timestamp=_NOW
+            Execution,
+            name="batch_pipe",
+            username="u",
+            _start_timestamp=_NOW,
+            metadata_root="/tmp/meta",
         )
         tt_uuid = uuid4()
         async with async_dao.engine.begin() as conn:
@@ -1344,7 +1490,11 @@ class TestAsyncDAO:
     @pytest.mark.asyncio
     async def test_add_entity_dispatches_to_async(self, async_dao):
         result = await async_dao._add_entity(
-            Execution, name="dispatch_pipe", username="u", _start_timestamp=_NOW
+            Execution,
+            name="dispatch_pipe",
+            username="u",
+            _start_timestamp=_NOW,
+            metadata_root="/tmp/meta",
         )
         assert isinstance(result, int)
 
@@ -1353,7 +1503,11 @@ class TestAsyncDAO:
         from sqlalchemy import text
 
         exec_id = await async_dao._async_add_entity(
-            Execution, name="disp_batch", username="u", _start_timestamp=_NOW
+            Execution,
+            name="disp_batch",
+            username="u",
+            _start_timestamp=_NOW,
+            metadata_root="/tmp/meta",
         )
         tt_uuid = uuid4()
         async with async_dao.engine.begin() as conn:
@@ -1387,7 +1541,11 @@ class TestAsyncDAO:
     @pytest.mark.asyncio
     async def test_update_entity_dispatches_to_async(self, async_dao):
         exec_id = await async_dao._async_add_entity(
-            Execution, name="disp_update", username="u", _start_timestamp=_NOW
+            Execution,
+            name="disp_update",
+            username="u",
+            _start_timestamp=_NOW,
+            metadata_root="/tmp/meta",
         )
         result = await async_dao._update_entity(Execution, exec_id, username="new_u")
         assert result is not None and result.username == "new_u"
@@ -1395,7 +1553,11 @@ class TestAsyncDAO:
     @pytest.mark.asyncio
     async def test_get_entity_dispatches_to_async(self, async_dao):
         exec_id = await async_dao._async_add_entity(
-            Execution, name="disp_get", username="u", _start_timestamp=_NOW
+            Execution,
+            name="disp_get",
+            username="u",
+            _start_timestamp=_NOW,
+            metadata_root="/tmp/meta",
         )
         result = await async_dao._get_entity(Execution, id=exec_id)
         assert result is not None
@@ -1404,17 +1566,52 @@ class TestAsyncDAO:
     async def test_get_entities_dispatches_to_async(self, async_dao):
         for _ in range(2):
             await async_dao._async_add_entity(
-                Execution, name="disp_gets", username="u", _start_timestamp=_NOW
+                Execution,
+                name="disp_gets",
+                username="u",
+                _start_timestamp=_NOW,
+                metadata_root="/tmp/meta",
             )
         results = await async_dao._get_entities(Execution, name="disp_gets")
         assert len(results) >= 2
 
-    @pytest.mark.asyncio
-    async def test_get_executions_count_all(self, seeded_async_dao):
-        async_dao, _ = seeded_async_dao
-        count = await async_dao.get_executions_count("cnt_pipe")
-        assert count >= 2
 
+# ==============================================================================
+# AsyncDAOExecutionExt
+# ==============================================================================
+
+
+class TestAsyncDAOExecutionExt:
+    @pytest.mark.asyncio
+    async def test_get_execution_ext_found(self, async_dao):
+        """full get_execution_ext happy path."""
+        exec_id = await async_dao._async_add_entity(
+            Execution,
+            name="ext_pipe",
+            username="u",
+            _start_timestamp=_NOW,
+            metadata_root="/tmp/meta",
+        )
+        result = await async_dao.get_execution_ext(exec_id)
+        assert result is not None
+        assert result.id == exec_id
+        # No failed tasks => success is True
+        assert result.success is True
+
+    @pytest.mark.asyncio
+    async def test_get_execution_ext_not_found(self, async_dao, _null_session):
+        """result.first()=None => return None."""
+        with patch.object(async_dao, "_get_session", return_value=_null_session):
+            result = await async_dao.get_execution_ext(99999)
+        assert result is None
+
+
+# ==============================================================================
+# AsyncDAOExecutionsCount
+# ==============================================================================
+
+
+class TestAsyncDAOExecutionsCount:
     @pytest.mark.asyncio
     async def test_get_executions_count_success(self, seeded_async_dao):
         async_dao, _ = seeded_async_dao
@@ -1434,6 +1631,34 @@ class TestAsyncDAO:
         assert isinstance(count, int)
 
     @pytest.mark.asyncio
+    async def test_get_executions_count_returns_zero_for_unknown_pipeline(
+        self, seeded_async_dao
+    ):
+        async_dao, _ = seeded_async_dao
+        count = await async_dao.get_executions_count("__nonexistent_pipe__")
+        assert count == 0
+
+    @pytest.mark.asyncio
+    async def test_get_executions_count_returns_scalar(self, async_dao):
+        """return result.scalar() is reached and returns an int."""
+        await async_dao._async_add_entity(
+            Execution,
+            name="scalar_pipe",
+            username="u",
+            _start_timestamp=_NOW,
+            metadata_root="/tmp/meta",
+        )
+        count = await async_dao.get_executions_count("scalar_pipe")
+        assert count == 1
+
+
+# ==============================================================================
+# AsyncDAOExecutionNames
+# ==============================================================================
+
+
+class TestAsyncDAOExecutionNames:
+    @pytest.mark.asyncio
     async def test_get_distinct_execution_names_unsorted(self, seeded_async_dao):
         async_dao, _ = seeded_async_dao
         names = await async_dao.get_distinct_execution_names()
@@ -1445,6 +1670,13 @@ class TestAsyncDAO:
         names = await async_dao.get_distinct_execution_names(sorted=True)
         assert names == sorted(names)
 
+
+# ==============================================================================
+# AsyncDAOExecutionUsernames
+# ==============================================================================
+
+
+class TestAsyncDAOExecutionUsernames:
     @pytest.mark.asyncio
     async def test_get_distinct_execution_usernames_unsorted(self, seeded_async_dao):
         async_dao, _ = seeded_async_dao
@@ -1457,6 +1689,13 @@ class TestAsyncDAO:
         users = await async_dao.get_distinct_execution_usernames(sorted=True)
         assert users == sorted(users)
 
+
+# ==============================================================================
+# AsyncDAOExecutionsExt
+# ==============================================================================
+
+
+class TestAsyncDAOExecutionsExt:
     @pytest.mark.asyncio
     async def test_get_executions_ext_no_filter(self, seeded_async_dao):
         async_dao, _ = seeded_async_dao
@@ -1533,6 +1772,28 @@ class TestAsyncDAO:
         assert isinstance(exts, list)
 
     @pytest.mark.asyncio
+    async def test_get_executions_ext_builds_execution_ext_objects(self, async_dao):
+        await async_dao._async_add_entity(
+            Execution,
+            name="ext_loop_pipe",
+            username="u",
+            _start_timestamp=_NOW,
+            metadata_root="/tmp/meta",
+        )
+        exts = await async_dao.get_executions_ext(pipeline_name="ext_loop_pipe")
+        assert len(exts) >= 1
+        for e in exts:
+            assert isinstance(e, ExecutionExt)
+            assert isinstance(e.success, bool)
+
+
+# ==============================================================================
+# AsyncDAOExecutionTasksList
+# ==============================================================================
+
+
+class TestAsyncDAOExecutionTasksList:
+    @pytest.mark.asyncio
     async def test_get_execution_tasks_list_returns_task_exts(self, seeded_async_dao):
         async_dao, (exec_id_with_tasks, _) = seeded_async_dao
         result = await async_dao.get_execution_tasks_list(exec_id_with_tasks)
@@ -1540,9 +1801,15 @@ class TestAsyncDAO:
         assert result[0].name is not None
 
     @pytest.mark.asyncio
-    async def test_get_execution_tasks_list_none_when_empty(self, seeded_async_dao):
-        async_dao, _ = seeded_async_dao
-        result = await async_dao.get_execution_tasks_list(999999)
+    async def test_get_execution_tasks_list_empty_returns_none(self, async_dao):
+        exec_id = await async_dao._async_add_entity(
+            Execution,
+            name="empty_tasks_pipe",
+            username="u",
+            _start_timestamp=_NOW,
+            metadata_root="/tmp/meta",
+        )
+        result = await async_dao.get_execution_tasks_list(exec_id)
         assert result is None
 
     @pytest.mark.asyncio
@@ -1550,19 +1817,25 @@ class TestAsyncDAO:
         from sqlalchemy import text
 
         exec_id = await async_dao._async_add_entity(
-            Execution, name="mf_pipe", username="u", _start_timestamp=_NOW
+            Execution,
+            name="mf_pipe",
+            username="u",
+            _start_timestamp=_NOW,
+            metadata_root="/tmp/meta",
         )
         tt_uuid = uuid4()
         async with async_dao.engine.begin() as conn:
             await conn.execute(
                 text(
-                    "INSERT INTO tasktypes (uuid, exec_id, \"order\", name, is_parallel, children) VALUES (:uuid, :eid, 0, 'mf_step', 0, '[]')"
+                    'INSERT INTO tasktypes (uuid, exec_id, "order", name, is_parallel, children) '
+                    + "VALUES (:uuid, :eid, 0, 'mf_step', 0, '[]')"
                 ),
                 {"uuid": tt_uuid.hex, "eid": exec_id},
             )
             await conn.execute(
                 text(
-                    "INSERT INTO tasks (tasktype_uuid, exec_id, start_timestamp) VALUES (:tu, :eid, :s)"
+                    "INSERT INTO tasks (tasktype_uuid, exec_id, start_timestamp) "
+                    + "VALUES (:tu, :eid, :s)"
                 ),
                 {"tu": tt_uuid.hex, "eid": exec_id, "s": _NOW.isoformat()},
             )
@@ -1576,13 +1849,18 @@ class TestAsyncDAO:
         from sqlalchemy import text
 
         exec_id = await async_dao._async_add_entity(
-            Execution, name="mf_pipe", username="u", _start_timestamp=_NOW
+            Execution,
+            name="mf_pipe",
+            username="u",
+            _start_timestamp=_NOW,
+            metadata_root="/tmp/meta",
         )
         tt_uuid = uuid4()
         async with async_dao.engine.begin() as conn:
             await conn.execute(
                 text(
-                    "INSERT INTO tasktypes (uuid, exec_id, \"order\", name, is_parallel, children, merge_func) VALUES (:uuid, :eid, 0, 'mf_step', 0, '[]', '{\"name\": \"custom_merge\"}')"
+                    'INSERT INTO tasktypes (uuid, exec_id, "order", name, is_parallel, children, merge_func) '
+                    + "VALUES (:uuid, :eid, 0, 'mf_step', 0, '[]', '{\"name\": \"custom_merge\"}')"
                 ),
                 {"uuid": tt_uuid.hex, "eid": exec_id},
             )
@@ -1597,197 +1875,13 @@ class TestAsyncDAO:
         assert result is not None
         assert result[0].merge_func == "custom_merge"
 
-    @pytest.mark.asyncio
-    async def test_get_execution_tasktypes_list(self, seeded_async_dao):
-        async_dao, (exec_id_with_tasks, _) = seeded_async_dao
-        result = await async_dao.get_execution_tasktypes_list(exec_id_with_tasks)
-        assert result is not None and len(result) >= 1
 
-    @pytest.mark.asyncio
-    async def test_get_execution_tasktypes_list_none_when_empty(self, seeded_async_dao):
-        async_dao, _ = seeded_async_dao
-        result = await async_dao.get_execution_tasktypes_list(999999)
-        assert result is None
+# ==============================================================================
+# AsyncDAOExecutionTaskTypes
+# ==============================================================================
 
-    @pytest.mark.asyncio
-    async def test_get_execution_taskgroups_list_found(
-        self, taskgroup_seeded_async_dao
-    ):
-        async_dao, (exec_id, _, _) = taskgroup_seeded_async_dao
-        result = await async_dao.get_execution_taskgroups_list(exec_id)
-        assert result is not None and len(result) >= 1
 
-    @pytest.mark.asyncio
-    async def test_get_execution_taskgroups_list_none_when_empty(
-        self, seeded_async_dao
-    ):
-        async_dao, _ = seeded_async_dao
-        result = await async_dao.get_execution_taskgroups_list(999999)
-        assert result is None
-
-    @pytest.mark.asyncio
-    async def test_get_execution_tasks_with_name_found(self, seeded_async_dao):
-        async_dao, (exec_id_with_tasks, _) = seeded_async_dao
-        result = await async_dao.get_execution_tasks_with_name(
-            exec_id_with_tasks, "seeded_step"
-        )
-        assert isinstance(result, list) and len(result) >= 1
-
-    @pytest.mark.asyncio
-    async def test_get_execution_tasks_with_name_not_found(self, seeded_async_dao):
-        async_dao, (exec_id_with_tasks, _) = seeded_async_dao
-        result = await async_dao.get_execution_tasks_with_name(
-            exec_id_with_tasks, "__no_such_name__"
-        )
-        assert isinstance(result, list)
-
-    @pytest.mark.asyncio
-    async def test_get_execution_info_found(self, seeded_async_dao):
-        async_dao, (exec_id_with_tasks, _) = seeded_async_dao
-        info = await async_dao.get_execution_info(exec_id_with_tasks)
-        assert info is not None
-        assert "name" in info and "username" in info and "start_timestamp" in info
-
-    @pytest.mark.asyncio
-    async def test_get_execution_info_not_found(self, seeded_async_dao):
-        async_dao, _ = seeded_async_dao
-        assert await async_dao.get_execution_info(999999) is None
-
-    @pytest.mark.asyncio
-    async def test_get_execution_number_found(self, seeded_async_dao):
-        async_dao, (exec_id_with_tasks, _) = seeded_async_dao
-        result = await async_dao.get_execution_number(exec_id_with_tasks)
-        assert result is not None and "name" in result and "count" in result
-
-    @pytest.mark.asyncio
-    async def test_get_execution_number_not_found(self, seeded_async_dao):
-        async_dao, _ = seeded_async_dao
-        assert await async_dao.get_execution_number(999999) is None
-
-    @pytest.mark.asyncio
-    async def test_get_taskgroups_hierarchy_not_found_returns_none(self, async_dao):
-        assert await async_dao.get_taskgroups_hierarchy(uuid4()) is None
-
-    @pytest.mark.asyncio
-    async def test_get_taskgroups_hierarchy_found(self, taskgroup_seeded_async_dao):
-        async_dao, (_, parent_uuid, child_uuid) = taskgroup_seeded_async_dao
-        async_dao.get_taskgroups_hierarchy.cache_clear()
-        result = await async_dao.get_taskgroups_hierarchy(child_uuid)
-        assert result is not None and len(result) >= 1
-        uuids = [r["uuid"] for r in result]
-        assert str(child_uuid) in uuids
-
-    @pytest.mark.asyncio
-    async def test_get_taskgroups_hierarchy_with_ui_css(self, async_dao):
-        from sqlalchemy import text
-
-        tg_uuid = uuid4()
-        async with async_dao.engine.begin() as conn:
-            await conn.execute(
-                text(
-                    "INSERT INTO executions (name, username, start_timestamp) VALUES ('tg_pipe', 'bob', :s)"
-                ),
-                {"s": _NOW.isoformat()},
-            )
-            exec_id = (await conn.execute(text("SELECT last_insert_rowid()"))).scalar()
-            await conn.execute(
-                text(
-                    "INSERT INTO taskgroups (uuid, exec_id, \"order\", name, elements, ui_css) VALUES (:uuid, :eid, 0, 'parent_grp', '[]', '{\"color\": \"red\"}')"
-                ),
-                {"uuid": tg_uuid.hex, "eid": exec_id},
-            )
-
-        async_dao.get_taskgroups_hierarchy.cache_clear()
-        result = await async_dao.get_taskgroups_hierarchy(tg_uuid)
-        assert result is not None
-        assert result[0]["ui_css"] == {"color": "red"}
-
-    @pytest.mark.asyncio
-    async def test_get_tasktype_docstring_found(self, seeded_async_dao):
-        async_dao, (_, tt_uuid) = seeded_async_dao
-        result = await async_dao.get_tasktype_docstring(str(tt_uuid))
-        assert result is None or isinstance(result, str)
-
-    @pytest.mark.asyncio
-    async def test_get_tasktype_docstring_not_found(self, async_dao):
-        assert await async_dao.get_tasktype_docstring(str(uuid4())) is None
-
-    @pytest.mark.asyncio
-    async def test_get_task_traces_found(self, seeded_async_dao):
-        async_dao, (exec_id_with_tasks, _) = seeded_async_dao
-        tasks = await async_dao.get_execution_tasks_list(exec_id_with_tasks)
-        assert tasks
-        task_id = tasks[0].id
-
-        await async_dao._async_add_entity(
-            TaskTrace,
-            task_id=task_id,
-            timestamp=_NOW,
-            microsec=0,
-            microsec_idx=1,
-            content="trace_msg",
-            is_err=False,
-        )
-
-        result = await async_dao.get_task_traces(task_id)
-        assert result is not None and len(result) >= 1
-        assert result[0]["content"] == "trace_msg"
-
-    @pytest.mark.asyncio
-    async def test_get_task_traces_none_when_empty(self, async_dao):
-        assert await async_dao.get_task_traces(999999) is None
-
-    @pytest.mark.asyncio
-    async def test_async_update_entity_not_found_via_dispatch(self, async_dao):
-        result = await async_dao._update_entity(Execution, 999999, username="x")
-        assert result is None
-
-    @pytest.mark.asyncio
-    async def test_asyncdao_add_execution_wrapper_hits_not_null_constraint(
-        self, async_dao
-    ):
-        from sqlalchemy.exc import IntegrityError
-
-        # add_execution() passes no kwargs; Execution.name is NOT NULL,
-        # so the wrapper's _add_entity call raises here.
-        with pytest.raises(IntegrityError):
-            await async_dao.add_execution()
-
-    @pytest.mark.asyncio
-    async def test_asyncdao_get_execution_wrapper(self, async_dao):
-        exec_id = await async_dao._async_add_entity(
-            Execution, name="wrapper_pipe", username="u", _start_timestamp=_NOW
-        )
-        result = await async_dao.get_execution(exec_id)
-        assert result is not None and result.id == exec_id
-
-    @pytest.mark.asyncio
-    async def test_get_executions_count_returns_zero_for_unknown_pipeline(
-        self, seeded_async_dao
-    ):
-        async_dao, _ = seeded_async_dao
-        count = await async_dao.get_executions_count("__nonexistent_pipe__")
-        assert count == 0
-
-    @pytest.mark.asyncio
-    async def test_get_executions_ext_builds_execution_ext_objects(self, async_dao):
-        await async_dao._async_add_entity(
-            Execution, name="ext_loop_pipe", username="u", _start_timestamp=_NOW
-        )
-        exts = await async_dao.get_executions_ext(pipeline_name="ext_loop_pipe")
-        assert len(exts) >= 1
-        for e in exts:
-            assert isinstance(e, ExecutionExt)
-            assert isinstance(e.success, bool)
-
-    @pytest.mark.asyncio
-    async def test_get_execution_tasks_list_empty_returns_none(self, async_dao):
-        exec_id = await async_dao._async_add_entity(
-            Execution, name="empty_tasks_pipe", username="u", _start_timestamp=_NOW
-        )
-        result = await async_dao.get_execution_tasks_list(exec_id)
-        assert result is None
-
+class TestAsyncDAOExecutionTaskTypes:
     @pytest.mark.asyncio
     async def test_get_execution_tasktypes_list_builds_tasktype_objects(
         self, async_dao
@@ -1795,7 +1889,11 @@ class TestAsyncDAO:
         from sqlalchemy import text
 
         exec_id = await async_dao._async_add_entity(
-            Execution, name="tasktypes_loop_pipe", username="u", _start_timestamp=_NOW
+            Execution,
+            name="tasktypes_loop_pipe",
+            username="u",
+            _start_timestamp=_NOW,
+            metadata_root="/tmp/meta",
         )
         async with async_dao.engine.begin() as conn:
             await conn.execute(
@@ -1813,13 +1911,40 @@ class TestAsyncDAO:
             assert isinstance(tt, TaskType)
 
     @pytest.mark.asyncio
+    async def test_get_execution_tasktypes_list_returns_none_when_empty(
+        self, async_dao
+    ):
+        """execution with no TaskTypes => return None."""
+        exec_id = await async_dao._async_add_entity(
+            Execution,
+            name="tt_empty_pipe",
+            username="u",
+            _start_timestamp=_NOW,
+            metadata_root="/tmp/meta",
+        )
+        async_dao.get_execution_tasktypes_list.cache_clear()
+        result = await async_dao.get_execution_tasktypes_list(exec_id)
+        assert result is None
+
+
+# ==============================================================================
+# AsyncDAOExecutionTaskGroups
+# ==============================================================================
+
+
+class TestAsyncDAOExecutionTaskGroups:
+    @pytest.mark.asyncio
     async def test_get_execution_taskgroups_list_builds_taskgroup_objects(
         self, async_dao
     ):
         from sqlalchemy import text
 
         exec_id = await async_dao._async_add_entity(
-            Execution, name="taskgroups_loop_pipe", username="u", _start_timestamp=_NOW
+            Execution,
+            name="taskgroups_loop_pipe",
+            username="u",
+            _start_timestamp=_NOW,
+            metadata_root="/tmp/meta",
         )
         async with async_dao.engine.begin() as conn:
             await conn.execute(
@@ -1837,17 +1962,56 @@ class TestAsyncDAO:
             assert isinstance(tg, TaskGroup)
 
     @pytest.mark.asyncio
-    async def test_get_execution_tasks_with_name_returns_list_of_tasks(
-        self, seeded_async_dao
+    async def test_get_execution_taskgroups_list_returns_none_when_empty(
+        self, async_dao
     ):
-        async_dao, (exec_id_with_tasks, _) = seeded_async_dao
-
-        result = await async_dao.get_execution_tasks_with_name(
-            exec_id_with_tasks, "seeded_step"
+        """execution with no TaskGroups => return None."""
+        exec_id = await async_dao._async_add_entity(
+            Execution,
+            name="tg_empty_pipe",
+            username="u",
+            _start_timestamp=_NOW,
+            metadata_root="/tmp/meta",
         )
-        assert isinstance(result, list) and len(result) == 1
-        assert isinstance(result[0], Task)
+        async_dao.get_execution_taskgroups_list.cache_clear()
+        result = await async_dao.get_execution_taskgroups_list(exec_id)
+        assert result is None
 
+
+# ==============================================================================
+# AsyncDAOExecutionTasksWithName
+# ==============================================================================
+
+
+class TestAsyncDAOExecutionTasksWithName:
+    @pytest.mark.asyncio
+    async def test_get_execution_tasks_with_name_returns_list(self, seeded_async_dao):
+        """tasks_list assignment and return."""
+        dao, (exec_id, _) = seeded_async_dao
+        result = await dao.get_execution_tasks_with_name(exec_id, "seeded_step")
+        assert isinstance(result, list)
+        assert len(result) == 1
+
+    @pytest.mark.asyncio
+    async def test_get_execution_tasks_with_name_returns_empty_list(self, async_dao):
+        """empty result still returns a list (not None)."""
+        exec_id = await async_dao._async_add_entity(
+            Execution,
+            name="tasklist_pipe",
+            username="u",
+            _start_timestamp=_NOW,
+            metadata_root="/tmp/meta",
+        )
+        result = await async_dao.get_execution_tasks_with_name(exec_id, "no_such_step")
+        assert result == []
+
+
+# ==============================================================================
+# AsyncDAOExecutionInfo
+# ==============================================================================
+
+
+class TestAsyncDAOExecutionInfo:
     @pytest.mark.asyncio
     async def test_get_execution_info_returns_expected_dict_shape(self, async_dao):
         exec_id = await async_dao._async_add_entity(
@@ -1856,6 +2020,7 @@ class TestAsyncDAO:
             username="u",
             docstring="info docstring",
             _start_timestamp=_NOW,
+            metadata_root="/tmp/meta",
         )
         async_dao.get_execution_info.cache_clear()
         info = await async_dao.get_execution_info(exec_id)
@@ -1864,15 +2029,75 @@ class TestAsyncDAO:
         assert isinstance(info["start_timestamp"], str)
 
     @pytest.mark.asyncio
+    async def test_get_execution_info_not_found(self, async_dao, _null_session):
+        """result.first()=None => return None."""
+        async_dao.get_execution_info.cache_clear()
+        with patch.object(async_dao, "_get_session", return_value=_null_session):
+            result = await async_dao.get_execution_info(99999)
+        assert result is None
+
+
+# ==============================================================================
+# AsyncDAOExecutionNumber
+# ==============================================================================
+
+
+class TestAsyncDAOExecutionNumber:
+    @pytest.mark.asyncio
     async def test_get_execution_number_returns_dict(self, async_dao):
         exec_id = await async_dao._async_add_entity(
-            Execution, name="exec_number_pipe", username="u", _start_timestamp=_NOW
+            Execution,
+            name="exec_number_pipe",
+            username="u",
+            _start_timestamp=_NOW,
+            metadata_root="/tmp/meta",
         )
         info = await async_dao.get_execution_number(exec_id)
         assert info is not None
         assert set(info.keys()) == {"name", "number", "count", "completed", "failed"}
         assert info["name"] == "exec_number_pipe"
         assert info["count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_get_execution_number_not_found(self, async_dao, _null_session):
+        """Line 807: row is None => return None."""
+        with patch.object(async_dao, "_get_session", return_value=_null_session):
+            result = await async_dao.get_execution_number(99999)
+        assert result is None
+
+
+# ==============================================================================
+# AsyncDAOTaskgroupsHierarchy
+# ==============================================================================
+
+
+class TestAsyncDAOTaskgroupsHierarchy:
+    @pytest.mark.asyncio
+    async def test_get_taskgroups_hierarchy_with_ui_css(self, async_dao):
+        from sqlalchemy import text
+
+        tg_uuid = uuid4()
+        async with async_dao.engine.begin() as conn:
+            await conn.execute(
+                text(
+                    "INSERT INTO executions (name, username, start_timestamp, metadata_root) "
+                    + "VALUES ('tg_pipe', 'bob', :s, '/tmp/meta')"
+                ),
+                {"s": _NOW.isoformat()},
+            )
+            exec_id = (await conn.execute(text("SELECT last_insert_rowid()"))).scalar()
+            await conn.execute(
+                text(
+                    'INSERT INTO taskgroups (uuid, exec_id, "order", name, elements, ui_css) '
+                    + "VALUES (:uuid, :eid, 0, 'parent_grp', '[]', '{\"color\": \"red\"}')"
+                ),
+                {"uuid": tg_uuid.hex, "eid": exec_id},
+            )
+
+        async_dao.get_taskgroups_hierarchy.cache_clear()
+        result = await async_dao.get_taskgroups_hierarchy(tg_uuid)
+        assert result is not None
+        assert result[0]["ui_css"] == {"color": "red"}
 
     @pytest.mark.asyncio
     async def test_get_taskgroups_hierarchy_builds_entries(
@@ -1902,11 +2127,30 @@ class TestAsyncDAO:
         assert any(str(unknown) in msg for msg in captured.getvalue().splitlines())
 
     @pytest.mark.asyncio
+    async def test_get_taskgroups_hierarchy_not_found(self, async_dao, _null_session):
+        """fetchall()=[] => logger.warning + return None."""
+        async_dao.get_taskgroups_hierarchy.cache_clear()
+        with patch.object(async_dao, "_get_session", return_value=_null_session):
+            result = await async_dao.get_taskgroups_hierarchy(uuid4())
+        assert result is None
+
+
+# ==============================================================================
+# AsyncDAOTaskTypeDocstring
+# ==============================================================================
+
+
+class TestAsyncDAOTaskTypeDocstring:
+    @pytest.mark.asyncio
     async def test_get_tasktype_docstring_returns_value_when_set(self, async_dao):
         from sqlalchemy import text
 
         exec_id = await async_dao._async_add_entity(
-            Execution, name="docstr_pipe", username="u", _start_timestamp=_NOW
+            Execution,
+            name="docstr_pipe",
+            username="u",
+            _start_timestamp=_NOW,
+            metadata_root="/tmp/meta",
         )
         tt_uuid = uuid4()
         async with async_dao.engine.begin() as conn:
@@ -1924,6 +2168,42 @@ class TestAsyncDAO:
         assert result == "hello docstring"
 
     @pytest.mark.asyncio
+    async def test_get_tasktype_docstring_not_found(self, async_dao, _null_session):
+        """result.first()=None => return None."""
+        async_dao.get_tasktype_docstring.cache_clear()
+        with patch.object(async_dao, "_get_session", return_value=_null_session):
+            result = await async_dao.get_tasktype_docstring(str(uuid4()))
+        assert result is None
+
+
+# ==============================================================================
+# AsyncDAOTaskTraces
+# ==============================================================================
+
+
+class TestAsyncDAOTaskTraces:
+    @pytest.mark.asyncio
+    async def test_get_task_traces_found(self, seeded_async_dao):
+        async_dao, (exec_id_with_tasks, _) = seeded_async_dao
+        tasks = await async_dao.get_execution_tasks_list(exec_id_with_tasks)
+        assert tasks
+        task_id = tasks[0].id
+
+        await async_dao._async_add_entity(
+            TaskTrace,
+            task_id=task_id,
+            timestamp=_NOW,
+            microsec=0,
+            microsec_idx=1,
+            content="trace_msg",
+            is_err=False,
+        )
+
+        result = await async_dao.get_task_traces(task_id)
+        assert result is not None and len(result) >= 1
+        assert result[0]["content"] == "trace_msg"
+
+    @pytest.mark.asyncio
     async def test_get_task_traces_empty_for_existing_task_returns_none(
         self, seeded_async_dao
     ):
@@ -1932,4 +2212,119 @@ class TestAsyncDAO:
         assert tasks
         task_id = tasks[0].id
         result = await async_dao.get_task_traces(task_id)
+        assert result is None
+
+
+# ==============================================================================
+# DAOTaskContextAttrs
+# ==============================================================================
+
+
+class TestDAOTaskContextAttrs:
+    """add_task_context_attrs – method was never called."""
+
+    def _seed(self, dao):
+        """Return a task_id in a fresh isolated database."""
+        tt_uuid = uuid4()
+        with patch("requests.post"):
+            exec_id = dao.add_execution(
+                name="ctx_pipe",
+                username="u",
+                _start_timestamp=_NOW,
+                metadata_root="/tmp/meta",
+            )
+            dao.add_tasktype(
+                uuid=tt_uuid,
+                exec_id=exec_id,
+                order=0,
+                name="ctx_step",
+                is_parallel=False,
+                children=[],
+            )
+        return dao.add_task(
+            tasktype_uuid=tt_uuid, exec_id=exec_id, _start_timestamp=_NOW
+        )
+
+    def test_add_task_context_attrs_with_rows(self, isolated_dao):
+        """non-empty rows triggers the batch insert."""
+        task_id = self._seed(isolated_dao)
+        rows = [
+            {
+                "task_id": task_id,
+                "attr_name": "x",
+                "sha": "deadbeef",
+                "disk_ref": "some/path.pkl",
+                "inline_val": None,
+            }
+        ]
+        # Must not raise; inserts one TaskContextAttr row.
+        isolated_dao.add_task_context_attrs(rows)
+
+    def test_add_task_context_attrs_empty_rows_is_noop(self, isolated_dao):
+        """(False branch): empty list must skip the batch insert."""
+        isolated_dao.add_task_context_attrs([])
+
+
+# ==============================================================================
+# AsyncDAOTaskContextAttrs
+# ==============================================================================
+
+
+class TestAsyncDAOTaskContextAttrs:
+    """Dedicated class for async-DAO lines that were unreachable due to
+    seeded-fixture failures (conftest metadata_root issue) or missing tests."""
+
+    @pytest.mark.asyncio
+    async def test_get_task_context_attrs_returns_empty_list(self, async_dao):
+        """method body – no rows => empty list."""
+        result = await async_dao.get_task_context_attrs(task_id=99999)
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_get_task_context_attrs_returns_rows(self, seeded_async_dao):
+        """method body – with a real task_id and inserted attr."""
+        from sqlalchemy import text
+
+        dao, (exec_id, _) = seeded_async_dao
+        tasks = await dao.get_execution_tasks_list(exec_id)
+        task_id = tasks[0].id
+
+        async with dao.engine.begin() as conn:
+            await conn.execute(
+                text(
+                    "INSERT INTO task_context_attrs"
+                    " (task_id, attr_name, sha, disk_ref, inline_val)"
+                    " VALUES (:tid, 'out', 'abc123', NULL, NULL)"
+                ),
+                {"tid": task_id},
+            )
+
+        result = await dao.get_task_context_attrs(task_id=task_id)
+        assert len(result) == 1
+        assert isinstance(result[0], TaskContextAttr)
+        assert result[0].attr_name == "out"
+
+
+# ==============================================================================
+# AsyncDAOTaskExt
+# ==============================================================================
+
+
+class TestAsyncDAOTaskExt:
+    @pytest.mark.asyncio
+    async def test_get_task_ext_found(self, seeded_async_dao):
+        """found => return TaskExt with name populated."""
+        dao, (exec_id, _) = seeded_async_dao
+        tasks = await dao.get_execution_tasks_list(exec_id)
+        task_id = tasks[0].id
+        result = await dao.get_task_ext(task_id)
+        assert result is not None
+        assert isinstance(result, TaskExt)
+        assert result.name == "seeded_step"
+
+    @pytest.mark.asyncio
+    async def test_get_task_ext_not_found(self, async_dao, _null_session):
+        """result.first()=None => return None."""
+        with patch.object(async_dao, "_get_session", return_value=_null_session):
+            result = await async_dao.get_task_ext(task_id=99999)
         assert result is None

@@ -93,6 +93,10 @@ dev = [
     "mypy>=2.0.0",
     "pre-commit>=4.6.0"
 ]
+pgsql = [
+    "psycopg2-binary>=2.9.12",
+    "asyncpg>=0.31.0"
+]
 
 [tool.setuptools_scm]
 root = ".."

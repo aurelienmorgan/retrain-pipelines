@@ -1855,7 +1855,7 @@ def pipeline_to_hub(_) -> None:
     custom_source_files = [os.path.abspath(__file__)]
     if (
         ctx.pipeline_card_artifacts_path
-        != Execution.get(int(ctx.exec_id)).getParams().default("pipeline_card_artifacts_path")
+        != Execution.get_by_id(int(ctx.exec_id)).get_params().default("pipeline_card_artifacts_path")
     ):
         candidate_source_files = [
             "pipeline_card.py",

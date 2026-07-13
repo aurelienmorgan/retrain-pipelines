@@ -11,7 +11,6 @@ from concurrent.futures import as_completed
 from datetime import datetime, timezone
 from typing import Any
 
-from .context_store import value_to_storable
 from .core import (
     DAG,
     DagExecutionContext,
@@ -29,6 +28,7 @@ from .db.dao import DAO
 from .grpc_client import GrpcClient
 from .hybrid_pool_executor import HybridPoolExecutor as RetrainPipelinesExecutor
 from .rp_logging import RichLoggingController
+from .stores.params_store import value_to_storable
 
 logger = logging.getLogger(__name__)
 
@@ -760,6 +760,16 @@ def _execute(dag: DAG, params: dict[str, Any] | None = None) -> tuple[TaskPayloa
                     }
             _dao.update_execution(id=exec_id, params=_current_params)
             _dao.dispose()
+            # Recall that we purposely do not include runtime-injected
+            # context attributes (i.e. exec_id, pipeline_name, username)
+            # to what's DB-tracked and serialized as context
+            # (since those are recorded elsewhere in the DB).
+            # @see ``DAG.init``.
+            # Those context attributes being inside ``context``
+            # but not inside ``_current_params``, no need
+            # to explicitely filter them out here
+            # @see ``retrain_pipelines.dag_engines.stores.context_store._CONTEXT_EXCLUDE_ATTRS``.
+            context._init_attr_refs_from_params(_current_params)
 
         logger.info(f"Execution ID: {exec_id}")
         logger.debug(f"Root tasks: {[t.name for t in dag.roots]}")

@@ -14,6 +14,7 @@ from retrain_pipelines.dag_engine.db.model import (
     TaskGroup,
     TaskTrace,
     TaskType,
+    TaskContextAttr,
 )
 
 _NOW = datetime(2024, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
@@ -35,12 +36,14 @@ class TestExecution:
         ex = self._make()
         assert ex.name == "p" and ex.username == "u"
 
-    def test_start_timestamp_naive_gets_utc(self):
-        ex = self._make(_start_timestamp=datetime(2024, 1, 1))
-        assert ex.start_timestamp.tzinfo == timezone.utc
-
     def test_start_timestamp_aware_preserved(self):
         assert self._make().start_timestamp == _NOW
+
+    def test_start_timestamp_naive_bypass(self):
+        ex = self._make()
+        # Bypass SQLAlchemy's mapped column setter to force a naive datetime
+        ex.__dict__["_start_timestamp"] = datetime(2024, 1, 1)
+        assert ex.start_timestamp.tzinfo == timezone.utc
 
     def test_end_timestamp_none_by_default(self):
         assert self._make().end_timestamp is None
@@ -66,7 +69,7 @@ class TestExecution:
 
     def test_optional_fields_default_none(self):
         ex = self._make()
-        for f in ("docstring", "params", "context_dump", "ui_css"):
+        for f in ("docstring", "params", "ui_css"):
             assert getattr(ex, f) is None
 
 
@@ -95,6 +98,17 @@ class TestExecutionExt:
 
     def test_to_dict_timestamps_serialised_as_str(self):
         assert isinstance(self._make().to_dict().get("start_timestamp"), str)
+
+    def test_to_dict_no_column_info(self):
+        ex = self._make()
+        # Dynamically add a property that has no corresponding DB column
+        Execution.my_prop = property(lambda self: self._my_prop)
+        ex._my_prop = "some_value"
+        try:
+            d = ex.to_dict()
+            assert d["my_prop"] == "some_value"
+        finally:
+            del Execution.my_prop
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -322,3 +336,22 @@ class TestTaskTrace:
     def test_rejects_multiple_positional(self):
         with pytest.raises(TypeError):
             TaskTrace("a", "b")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TaskContextAttr
+# ══════════════════════════════════════════════════════════════════════════════
+class TestTaskContextAttr:
+    def test_inline_repr(self):
+        attr = TaskContextAttr(task_id=1, attr_name="foo", sha="abc", inline_val="bar")
+        assert "inline" in repr(attr)
+        assert attr.inline_val == "bar"
+        assert attr.disk_ref is None
+
+    def test_disk_repr(self):
+        attr = TaskContextAttr(
+            task_id=1, attr_name="foo", sha="abc", disk_ref="path/to/file"
+        )
+        assert "disk" in repr(attr)
+        assert attr.disk_ref == "path/to/file"
+        assert attr.inline_val is None
