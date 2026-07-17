@@ -1,7 +1,7 @@
 """
 Disk serialization utilities for DAG execution parameters.
 
-Artifacts layout under $RP_ASSETS_CACHE/metadata/ (a.k.a. _metadata_root()):
+Artifacts layout under {Config.get_assets_cache_root()}/metadata/ (a.k.a. _metadata_root()):
   <temp_dir_id>/params/defaults/<param_name>.pkl  - cloudpickled DagParam default values
                                                     written before exec_id is known;
                                                     temp_dir_id is a timestamp+uuid string.
@@ -50,7 +50,7 @@ def temp_dir_id() -> str:
 
 
 def _params_subdir_path(dir_id: int | str, subdir: str) -> str:
-    """Absolute path to $RP_ASSETS_CACHE/metadata/<dir_id>/params/<subdir>/."""
+    """Absolute path to {Config.get_assets_cache_root()}/metadata/<dir_id>/params/<subdir>/."""
     return os.path.join(metadata_root(), str(dir_id), "params", subdir)
 
 

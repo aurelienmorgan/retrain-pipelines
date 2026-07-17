@@ -84,7 +84,7 @@ def sync_dao():
     isolation for any ``isolated_dao`` created in the same session.
     """
     with patch("sqlalchemy.pool.NullPool", StaticPool), patch("requests.post"):
-        dao = DAO(db_url=os.environ["RP_METADATASTORE_URL"])
+        dao = DAO(db_url=os.environ["RP_METADATASTORE_URL"])  # sqlite in-mem
     yield dao
     dao.dispose()
 
@@ -128,7 +128,7 @@ async def async_dao():
     from sqlalchemy.orm import sessionmaker
 
     engine = create_async_engine(
-        "sqlite+aiosqlite:///:memory:",
+        os.environ["RP_METADATASTORE_ASYNC_URL"],  # sqlite in-mem
         future=True,
         # poolclass=StaticPool,
         # connect_args={"check_same_thread": False},
@@ -136,7 +136,7 @@ async def async_dao():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
-    dao = AsyncDAO(db_url="sqlite+aiosqlite:///:memory:")
+    dao = AsyncDAO(db_url=os.environ["RP_METADATASTORE_ASYNC_URL"])  # sqlite in-mem
     await dao.engine.dispose()
     dao.engine = engine
     dao.session_factory = sessionmaker(

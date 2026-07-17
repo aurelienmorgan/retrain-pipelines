@@ -7,6 +7,7 @@ from alembic import command
 from alembic.config import Config
 
 from ..utils import in_notebook
+from .config import Config as RPConfig
 from .rp_logging import RichLoggingController
 
 _alembic_upgraded = False
@@ -59,7 +60,7 @@ def run_alembic_upgrade_once():
         alembic_ini_path = os.path.join(file_dir, "db", "alembic", "alembic.ini")
         # @see https://stackoverflow.com/questions/78780118/
         alembic_cfg = Config(alembic_ini_path, attributes={"configure_logger": False})
-        db_url = os.environ["RP_METADATASTORE_URL"]
+        db_url = RPConfig.get_metadatastore_url()
         alembic_cfg.set_main_option("sqlalchemy.url", db_url)
 
         # not logging anything if there's no upgrade
@@ -82,6 +83,4 @@ def run_alembic_upgrade_once():
 
 
 if __name__ == "__main__":
-    from retrain_pipelines import config  # noqa: F401
-
     run_alembic_upgrade_once()

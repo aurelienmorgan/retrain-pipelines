@@ -1,7 +1,7 @@
 """
 Disk serialization utilities for DAG task execution context.
 
-Artifacts layout under $RP_ASSETS_CACHE/metadata/ (a.k.a. metadata_root()):
+Artifacts layout under {Config.get_assets_cache_root()}/metadata/ (a.k.a. metadata_root()):
   <exec_id>/<task_id>/<attr_name>.pkl  - cloudpickled context attribute values written at
                                          task func exit for attrs whose value is not
                                          JSON-serializable; JSON-safe attrs are stored
@@ -10,7 +10,7 @@ Artifacts layout under $RP_ASSETS_CACHE/metadata/ (a.k.a. metadata_root()):
 Only attrs whose value differs from the task-entry snapshot are written to new disk
 artifacts ; unchanged attrs carry forward the existing disk_ref / inline_val from
 _attr_refs unchanged ; no new file, same path as previous task's row.
-Attrs with None values are not stored.
+Attrs with None values are ignored (equivalent to deleted entries).
 """
 
 import os

@@ -1,12 +1,12 @@
 import asyncio
 import concurrent.futures
 import logging
-import os
 from datetime import datetime, timedelta
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 from ...utils import in_notebook
+from ..config import Config
 from ..db.dao import AsyncDAO
 from .core import Execution
 
@@ -82,7 +82,7 @@ class ExecutionsIterator(BaseModel):
         (at page boundaries).
         """
         if not self._buffer or self._index >= len(self._buffer):
-            dao = AsyncDAO(db_url=os.environ["RP_METADATASTORE_ASYNC_URL"])
+            dao = AsyncDAO(db_url=Config.get_metadatastore_async_url())
             execs = await dao.get_executions_ext(
                 pipeline_name=self.exec_name,
                 execs_status="success" if self.success_only else None,
@@ -152,7 +152,7 @@ class ExecutionsIterator(BaseModel):
         int
             total number of matching executions.
         """
-        dao = AsyncDAO(db_url=os.environ["RP_METADATASTORE_ASYNC_URL"])
+        dao = AsyncDAO(db_url=Config.get_metadatastore_async_url())
         logger.debug(f"{self}  - length")
         return _run_async(
             dao.get_executions_count(

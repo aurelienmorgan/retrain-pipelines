@@ -14,6 +14,7 @@ from uvicorn.logging import AccessFormatter
 
 from ....utils import rgb_to_rgba, strip_ansi_escape_codes
 from ....utils.wsl_utils import is_wsl, is_wsl_mount_path
+from ...config import Config
 
 server_tz = tzlocal.get_localzone()
 
@@ -47,7 +48,7 @@ def get_log_config():
         "handlers": {
             "file_default": {
                 "class": "logging.handlers.TimedRotatingFileHandler",
-                "filename": os.path.join(os.environ["RP_WEB_SERVER_LOGS"], "server.log"),
+                "filename": os.path.join(Config.get_web_server_logs_root(), "server.log"),
                 "when": "midnight",
                 "backupCount": 7,
                 "formatter": "default",
@@ -55,7 +56,7 @@ def get_log_config():
             },
             "file_access": {
                 "class": "logging.handlers.TimedRotatingFileHandler",
-                "filename": os.path.join(os.environ["RP_WEB_SERVER_LOGS"], "access.log"),
+                "filename": os.path.join(Config.get_web_server_logs_root(), "access.log"),
                 "when": "midnight",
                 "backupCount": 7,
                 "formatter": "access",

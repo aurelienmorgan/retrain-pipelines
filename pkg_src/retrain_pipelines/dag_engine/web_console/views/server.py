@@ -1,8 +1,8 @@
 import json
-import os
 
 from fasthtml.common import H3, Div, Input, Option, Response, Script, Select, Span
 
+from ...config import Config
 from ..utils.cookies import get_ui_state
 from ..utils.server_logs import read_last_access_logs
 from .page_template import page_layout
@@ -25,7 +25,7 @@ def register(app, rt, prefix=""):
         regex_filter = form.get("regex_filter", None)
 
         log_entries = read_last_access_logs(
-            os.environ["RP_WEB_SERVER_LOGS"], "access.log", n=count, regex_filter=regex_filter
+            Config.get_web_server_logs_root(), "access.log", n=count, regex_filter=regex_filter
         )
         return log_entries
 

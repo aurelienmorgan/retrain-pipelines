@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import os
 import socket
 import sys
 import threading
@@ -15,6 +14,7 @@ from starlette.routing import WebSocketRoute
 
 from ...utils import in_notebook
 from ...utils.rich_logging import framed_rich_log_str
+from ..config import Config
 from ..rp_logging import RichLoggingController
 from . import api
 from .grpc_server import serve_grpc
@@ -127,7 +127,7 @@ def _webconsole_start(port: int, grpc_port: int):
     ##################
 
     logger.info("\N{ROCKET} Starting server...")
-    logger.info("logs going to " + f"{os.environ.get('RP_WEB_SERVER_LOGS', 'N/A')}")
+    logger.info("logs going to " + f"{Config.get_web_server_logs_root()}")
 
     # ########## #
     # app server #
@@ -321,10 +321,10 @@ def webconsole_start(port=None, grpc_port=None):
     for teminal logs readability.
     """
     if port is None:
-        port = int(os.environ["RP_WEB_SERVER_PORT"])
+        port = Config.get_web_server_port()
 
     if grpc_port is None:
-        grpc_port = int(os.environ["RP_GRPC_SERVER_PORT"])
+        grpc_port = Config.get_grpc_server_port()
 
     if in_notebook():
         from .main_notebook import _webconsole_start_notebook

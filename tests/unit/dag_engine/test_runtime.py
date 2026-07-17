@@ -381,7 +381,7 @@ class TestSigintHandler:
         mock_upd.assert_called_once_with([1], 77)
 
     def test_db_update_exception_absorbed(self, suppress_logger):
-        # exception from _update_interrupted_tasks_in_db is caught
+        # exception from _update_interrupted_tasks_in_db is caught and logged
         _task_registry.register_task(2, 888)
         with (
             suppress_logger(_RT),
@@ -391,9 +391,12 @@ class TestSigintHandler:
             patch(
                 f"{_RT}._update_interrupted_tasks_in_db", side_effect=Exception("fail")
             ),
+            patch(f"{_RT}.logger") as mock_log,
         ):
             mock_ctxvar.get.return_value = _make_context()
             _sigint_handler(None, None)  # must not raise
+            # Ensure the except block was reached
+            mock_log.error.assert_called_once()
 
     def test_no_exec_id_skips_db_update(self, suppress_logger):
         _task_registry.register_task(3, 777)
@@ -442,6 +445,8 @@ class TestTopologicalSort:
         assert _topological_sort([a]) == [a, b, c]
 
     def test_diamond_graph(self):
+        # This graph exercises the duplicate-task skip branch:
+        # D is reachable via both B and C, so it will be encountered twice.
         a, b, c, d = [_mock_task(n) for n in "ABCD"]
         a.children = [b, c]
         b.children = [d]
@@ -518,6 +523,7 @@ class TestFindSubdagEnd:
         assert _find_subdag_end(order, 0) == 2
 
     def test_finds_first_merge_task(self):
+        # This test covers the branch where parallel_depth becomes 0.
         order = [
             _mock_task("A", is_parallel=True),
             _mock_task("B"),
@@ -885,7 +891,7 @@ class TestExecuteBranch:
         assert r == "merged_out"
 
     def test_nested_parallel_with_list_input(self):
-        # elmt.is_parallel and i > 0 => nested parallelism
+        # elmt.is_parallel and i > 0 => nested parallelism with list input
         root = _mock_task("root")
         root.is_parallel = False
         nested_par = _mock_task("nested", is_parallel=True)
@@ -910,7 +916,7 @@ class TestExecuteBranch:
         mock_par.assert_called_once()
 
     def test_nested_parallel_with_scalar_input_falls_back_to_branch(self):
-        # parent_value is scalar => _execute_branch (recursive)
+        # parent_value is scalar => recursive _execute_branch call
         root = _mock_task("root")
         root.is_parallel = False
         nested_par = _mock_task("nested", is_parallel=True)
@@ -918,26 +924,23 @@ class TestExecuteBranch:
         nested_merge.parents = [nested_par]
         nested_par.parents = [root]
 
-        with (
-            patch(f"{_RT}._execute_task", return_value="scalar"),
-            patch(f"{_RT}._execute_branch", wraps=_execute_branch),
-        ):
-            # prevent infinite recursion by limiting _execute_task in second call
-            call_count = [0]
+        # Mock _execute_task to return a scalar for all tasks.
+        # The recursive call will execute nested_par and nested_merge as tasks.
+        with patch(f"{_RT}._execute_task", return_value="scalar") as mock_task:
+            # We do not mock _execute_branch; we let the real function run,
+            # which will make the recursive call. We can verify the recursive
+            # call happened by checking that _execute_task was called for
+            # the nested tasks (in addition to the root).
+            _ = _execute_branch(
+                [root, nested_par, nested_merge],
+                TaskPayload({"p": "v"}),
+                exec_id=1,
+                rank=[0],
+            )
 
-            def controlled(t, pr, exec_id, rank=None):
-                call_count[0] += 1
-                if call_count[0] == 1:
-                    return "scalar"
-                return "nested_out"
-
-            with patch(f"{_RT}._execute_task", side_effect=controlled):
-                _ = _execute_branch(
-                    [root, nested_par, nested_merge],
-                    TaskPayload({"p": "v"}),
-                    exec_id=1,
-                    rank=[0],
-                )
+            # The tasks executed: root, then in the recursive call: nested_par, nested_merge
+            # So _execute_task should be called 3 times.
+            assert mock_task.call_count == 3
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1054,7 +1057,6 @@ class TestExecute:
         """Run execute() with all external I/O mocked."""
         trace_buf = MagicMock()
         registry = MagicMock()
-        registry.get_running_tasks.return_value = {}
 
         with (
             patch(f"{_RT}._install_interrupt_handler"),
@@ -1083,14 +1085,33 @@ class TestExecute:
 
         dag.params = {"exec_id": DagParam(description="id", default=1)}
 
+        # Patch _task_registry.get_running_tasks to simulate a lingering task
+        # so that the final while loop in _execute runs at least once.
+        # The loop body calls get_running_tasks twice per iteration
+        # (once for condition, once for logging), so we need three values:
+        # non-empty for condition check, non-empty for log, empty for exit.
+        registry_mock = MagicMock()
+        registry_mock.get_running_tasks.side_effect = [{1: 123}, {1: 123}, {}]
+
         with (
             patch(f"{_RT}._execute_task", return_value="result"),
             patch(f"{_RT}._topological_sort", return_value=[t]),
             patch(f"{_RT}._collect_parent_results", return_value=TaskPayload({})),
+            patch(f"{_RT}._task_registry", registry_mock),
+            patch(f"{_RT}.DAG") as MockDAG,
+            patch(f"{_RT}.DAO") as MockRtDAO,
+            patch(f"{_RT}.get_trace_buffer"),
+            patch(f"{_RT}.GrpcClient"),
+            patch(f"{_RT}.RichLoggingController"),
+            patch(f"{_RT}._install_interrupt_handler"),
         ):
-            result, ctx_dump = self._minimal_exec(dag)
+            MockDAG.mark_complete = MagicMock()
+            MockRtDAO.return_value.get_execution.return_value.params = {}
+            result, ctx_dump = execute(dag)
 
         assert result == "result"
+        # Ensure mark_complete was called, covering the line after the while loop.
+        MockDAG.mark_complete.assert_called_once()
 
     def test_params_defaults_resolved(self):
         from retrain_pipelines.dag_engine.core.core import DagParam

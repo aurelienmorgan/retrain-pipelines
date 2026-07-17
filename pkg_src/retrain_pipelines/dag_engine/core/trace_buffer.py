@@ -1,11 +1,11 @@
 import atexit
 import logging
-import os
 import queue
 import threading
 from collections import defaultdict
 from datetime import datetime
 
+from ..config import Config
 from ..db.dao import DAO
 
 logger = logging.getLogger(__name__)
@@ -25,7 +25,7 @@ class TraceBuffer:
             Max traces to batch in one write
         """
         self._queue: queue.Queue[dict[str, object]] = queue.Queue()
-        self._dao_factory = lambda: DAO(os.environ["RP_METADATASTORE_URL"])
+        self._dao_factory = lambda: DAO(Config.get_metadatastore_url())
         self._flush_interval = flush_interval
         self._batch_size = batch_size
         self._stop_event = threading.Event()

@@ -1,6 +1,5 @@
 import json
 import logging
-import os
 import random
 import time
 from datetime import date, datetime
@@ -14,6 +13,7 @@ from sqlalchemy import QueuePool, Uuid, and_, case, create_engine, desc, event, 
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import aliased, object_session, scoped_session, sessionmaker
 
+from ..config import Config
 from ..grpc_client import GrpcClient
 from .grpc import task_trace_pb2
 from .model import (
@@ -967,7 +967,7 @@ class AsyncDAO(DAOBase):
 # ////////////////////////////////////////////////////////////////////////////
 
 
-new_execution_api_endpoint = f"{os.environ['RP_WEB_SERVER_URL']}/api/v1/new_execution_event"
+new_execution_api_endpoint = f"{Config.get_web_server_url()}/api/v1/new_execution_event"
 
 
 @event.listens_for(Execution, "after_insert")
@@ -990,12 +990,12 @@ def after_insert_execution_listener(mapper, connection, target):
     try:
         requests.post(new_execution_api_endpoint, json=data_snapshot)
     except requests.exceptions.ConnectionError:
-        logger.info("WebConsole apparently not running " + f"({os.environ['RP_WEB_SERVER_URL']})")
+        logger.info("WebConsole apparently not running " + f"({Config.get_web_server_url()})")
     except Exception as ex:
         logger.warning(ex)
 
 
-execution_ended_api_endpoint = f"{os.environ['RP_WEB_SERVER_URL']}/api/v1/execution_end_event"
+execution_ended_api_endpoint = f"{Config.get_web_server_url()}/api/v1/execution_end_event"
 
 
 @event.listens_for(Execution._end_timestamp, "set", retval=False)
@@ -1026,9 +1026,7 @@ def after_end_timestamp_change(target, newValue, oldvalue, initiator):
         try:
             requests.post(execution_ended_api_endpoint, json=data_snapshot)
         except requests.exceptions.ConnectionError:
-            logger.info(
-                "WebConsole apparently not running " + f"({os.environ['RP_WEB_SERVER_URL']})"
-            )
+            logger.info("WebConsole apparently not running " + f"({Config.get_web_server_url()})")
         except Exception as ex:
             logger.warning(ex)
 
@@ -1036,7 +1034,7 @@ def after_end_timestamp_change(target, newValue, oldvalue, initiator):
 # ////////////////////////////////////////////////////////////////////////////
 
 
-new_task_api_endpoint = f"{os.environ['RP_WEB_SERVER_URL']}/api/v1/new_task_event"
+new_task_api_endpoint = f"{Config.get_web_server_url()}/api/v1/new_task_event"
 
 
 @event.listens_for(Task, "after_insert")
@@ -1111,14 +1109,14 @@ def after_insert_task_listener(mapper, connection, target):
     except requests.exceptions.ConnectionError:
         # logger.info(
         # "WebConsole apparently not running " +
-        # f"({os.environ['RP_WEB_SERVER_URL']})"
+        # f"({Config.get_web_server_url()})"
         # )
         pass
     except Exception as ex:
         logger.warning(ex)
 
 
-task_ended_api_endpoint = f"{os.environ['RP_WEB_SERVER_URL']}/api/v1/task_end_event"
+task_ended_api_endpoint = f"{Config.get_web_server_url()}/api/v1/task_end_event"
 
 
 @event.listens_for(Task, "after_update")
@@ -1179,7 +1177,7 @@ def after_task_update(mapper, connection, target):
         except requests.exceptions.ConnectionError:
             # logger.info(
             # "WebConsole apparently not running " +
-            # f"({os.environ['RP_WEB_SERVER_URL']})"
+            # f"({Config.get_web_server_url()})"
             # )
             pass
         except Exception as ex:
@@ -1227,6 +1225,6 @@ def after_insert_task_trace_listener(mapper, connection, target):
     else:
         # logger.info(
         # "WebConsole apparently not running " +
-        # f"({os.environ['RP_WEB_SERVER_URL']})"
+        # f"({Config.get_web_server_url()})"
         # )
         pass

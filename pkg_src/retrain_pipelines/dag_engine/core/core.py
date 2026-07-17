@@ -26,6 +26,7 @@ from rich.markup import escape
 
 from ...utils import in_notebook
 from ...utils.rich_logging import framed_rich_log_str
+from ..config import Config
 from ..db.dao import DAO
 from ..stores.commons import resolve_storable
 from ..stores.context_store import (
@@ -323,7 +324,7 @@ class TaskType(BaseModel):
             rank = kwargs.pop("rank", None)
             exec_id = kwargs.pop("exec_id", None)
 
-            dao = DAO(os.environ["RP_METADATASTORE_URL"])
+            dao = DAO(Config.get_metadatastore_url())
             task_id = dao.add_task(
                 exec_id=exec_id,
                 tasktype_uuid=self.tasktype_uuid,
@@ -398,7 +399,7 @@ class TaskType(BaseModel):
             else:
                 task_id = kwargs["task_id"]
 
-            dao = DAO(os.environ["RP_METADATASTORE_URL"])
+            dao = DAO(Config.get_metadatastore_url())
             if task_id is None:
                 # Only create task_id if merge_func didn't create it
                 task_id = dao.add_task(
@@ -822,7 +823,7 @@ class DAG(BaseModel):
 
         username = getpass.getuser()
 
-        dao = DAO(os.environ["RP_METADATASTORE_URL"])
+        dao = DAO(Config.get_metadatastore_url())
         # exec_id is not known yet ; use a temp dir id for param default disk artifacts.
         # Non-JSON-serializable defaults are cloudpickled under metadata/<tmp>/params/defaults/.
         tmp = temp_dir_id()
@@ -982,7 +983,7 @@ class DAG(BaseModel):
         Shall be called programmatically by the DAG execution routine
         when the entire DAG execution finishes.
         """
-        dao = DAO(os.environ["RP_METADATASTORE_URL"])
+        dao = DAO(Config.get_metadatastore_url())
         context = _dag_execution_context_var.get()
         assert context is not None
 

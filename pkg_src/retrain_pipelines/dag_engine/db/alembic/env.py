@@ -3,21 +3,22 @@ import os
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-# Import model
-# (incidently sets RP_METADATASTORE_URL at lib import time)
 os.environ["ALEMBIC_REV_AUTOGEN"] = "True"
+from retrain_pipelines.dag_engine.config import Config as RPConfig
+
+# Import model
 from retrain_pipelines.dag_engine.db import model
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
-config = context.config
+alembic_cfg = context.config
 
-config.set_main_option("sqlalchemy.url", os.environ["RP_METADATASTORE_URL"])
+alembic_cfg.set_main_option("sqlalchemy.url", RPConfig.get_metadatastore_url())
 
-# Interpret the config file for Python logging.
+# Interpret the alembic_cfg file for Python logging.
 # This line sets up loggers basically.
-# if config.config_file_name is not None:
-#     fileConfig(config.config_file_name, disable_existing_loggers=False)
+# if alembic_cfg.config_file_name is not None:
+#     fileConfig(alembic_cfg.config_file_name, disable_existing_loggers=False)
 
 # add your model's MetaData object here
 # for 'autogenerate' support
@@ -25,9 +26,9 @@ config.set_main_option("sqlalchemy.url", os.environ["RP_METADATASTORE_URL"])
 # target_metadata = mymodel.Base.metadata
 target_metadata = model.Base.metadata
 
-# other values from the config, defined by the needs of env.py,
+# other values from the alembic_cfg, defined by the needs of env.py,
 # can be acquired:
-# my_important_option = config.get_main_option("my_important_option")
+# my_important_option = alembic_cfg.get_main_option("my_important_option")
 # ... etc.
 
 
@@ -43,7 +44,7 @@ def run_migrations_offline() -> None:
     script output.
 
     """
-    url = config.get_main_option("sqlalchemy.url")
+    url = alembic_cfg.get_main_option("sqlalchemy.url")
     context.configure(
         url=url,
         target_metadata=target_metadata,
@@ -63,7 +64,7 @@ def run_migrations_online() -> None:
 
     """
     connectable = engine_from_config(
-        config.get_section(config.config_ini_section, {}),
+        alembic_cfg.get_section(alembic_cfg.config_ini_section, {}),
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )

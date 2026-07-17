@@ -9,6 +9,8 @@ from functools import lru_cache
 
 from IPython.display import HTML, clear_output, display
 
+from ..config import Config
+
 logger = logging.getLogger()
 
 
@@ -185,7 +187,7 @@ def _webconsole_start_notebook(port: int, grpc_port: int) -> None:
     execs_reset_for_restart()
     exec_reset_for_restart()
 
-    log_dir = os.environ.get("RP_WEB_SERVER_LOGS", "")
+    log_dir = Config.get_web_server_logs_root()
     access_log_path = os.path.join(log_dir, "access.log") if log_dir else None
     error_log_path = os.path.join(log_dir, "error.log") if log_dir else None
     live_log_path = os.path.join(log_dir, "live_console.log") if log_dir else None

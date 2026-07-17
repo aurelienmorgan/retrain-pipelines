@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from jinja2 import Environment, FileSystemLoader
 
 from ..utils import get_text_pixel_width, in_notebook
+from .config import Config
 from .core import DAG
 from .db.dao import AsyncDAO
 
@@ -61,7 +62,7 @@ def dag_svg(dag: DAG | None = None, execution_id: int | None = None) -> str:
     elif execution_id:
 
         async def _fetch_execution_elements(exec_id: int):
-            dao = AsyncDAO(db_url=os.environ["RP_METADATASTORE_ASYNC_URL"])
+            dao = AsyncDAO(db_url=Config.get_metadatastore_async_url())
             return await asyncio.gather(
                 dao.get_execution_tasktypes_list(exec_id),
                 dao.get_execution_taskgroups_list(exec_id),

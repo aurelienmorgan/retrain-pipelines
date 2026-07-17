@@ -29,6 +29,7 @@ from fasthtml.common import (
 from jinja2 import Environment, FileSystemLoader
 
 from ....utils import get_text_pixel_width
+from ...config import Config
 from ...db.dao import AsyncDAO
 from ...db.model import TaskExt, TaskGroup
 from ..utils import ClientInfo
@@ -58,7 +59,7 @@ async def get_execution_dag_elements_lists(
     List[TaskTypes]
     List[TaskGroups]
     """
-    dao = AsyncDAO(db_url=os.environ["RP_METADATASTORE_ASYNC_URL"])
+    dao = AsyncDAO(db_url=Config.get_metadatastore_async_url())
 
     execution_tasktypes_list, execution_taskgroups_list = await asyncio.gather(
         dao.get_execution_tasktypes_list(execution_id),
@@ -111,7 +112,7 @@ async def get_execution_elements_lists(
     List[TaskExt]
     List[TaskGroup]
     """
-    dao = AsyncDAO(db_url=os.environ["RP_METADATASTORE_ASYNC_URL"])
+    dao = AsyncDAO(db_url=Config.get_metadatastore_async_url())
 
     execution_tasks_list, execution_taskgroups_list = await asyncio.gather(
         dao.get_execution_tasks_list(execution_id), dao.get_execution_taskgroups_list(execution_id)
@@ -175,7 +176,7 @@ def register(app, rt, prefix=""):
         except (TypeError, ValueError):
             return Response(f"Invalid execution ID {execution_id}", 500)
 
-        dao = AsyncDAO(db_url=os.environ["RP_METADATASTORE_ASYNC_URL"])
+        dao = AsyncDAO(db_url=Config.get_metadatastore_async_url())
         execution_info = await dao.get_execution_info(execution_id)
 
         return JSONResponse(execution_info)
@@ -199,7 +200,7 @@ def register(app, rt, prefix=""):
         except (TypeError, ValueError):
             return Response(f"Invalid tasktype UUID {tasktype_uuid}", 500)
 
-        dao = AsyncDAO(db_url=os.environ["RP_METADATASTORE_ASYNC_URL"])
+        dao = AsyncDAO(db_url=Config.get_metadatastore_async_url())
         tasktype_docstring = await dao.get_tasktype_docstring(tasktype_uuid)
 
         return JSONResponse(tasktype_docstring)
@@ -212,14 +213,18 @@ def register(app, rt, prefix=""):
         except (TypeError, ValueError):
             raise HTTPException(status_code=500, detail=f"exec_id '{exec_id}'") from None
 
-        dao = AsyncDAO(db_url=os.environ["RP_METADATASTORE_ASYNC_URL"])
+        dao = AsyncDAO(db_url=Config.get_metadatastore_async_url())
         try:
             execution_name = (await dao.get_execution(execution_id)).name
         except AttributeError:
             raise HTTPException(status_code=500, detail=f"exec_id '{exec_id}' not valid.") from None
 
+        # TODO - make it a retrieved fullpath
+        # from a db-attr or a context-attr to be created
+        # (execution-time path is possibly not the same as
+        # current of WebConsole browsing).
         filename = os.path.join(
-            os.environ["RP_ARTIFACTS_STORE"],
+            Config.get_artifacts_store_root(),
             execution_name,
             str(execution_id),
             "pipeline_card.html",
@@ -249,7 +254,7 @@ def register(app, rt, prefix=""):
         except (TypeError, ValueError):
             return Response(f"Invalid task ID {task_id}", 500)
 
-        dao = AsyncDAO(db_url=os.environ["RP_METADATASTORE_ASYNC_URL"])
+        dao = AsyncDAO(db_url=Config.get_metadatastore_async_url())
         task_traces = await dao.get_task_traces(task_id)
         if task_traces:
             for task_trace in task_traces:

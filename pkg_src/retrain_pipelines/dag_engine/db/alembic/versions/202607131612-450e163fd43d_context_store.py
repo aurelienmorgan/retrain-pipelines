@@ -12,7 +12,12 @@ from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import sqlite
 
-DEFAULT_METADATA_ROOT = os.path.join(os.environ["RP_ASSETS_CACHE"], "metadata")
+# imports have to be absolute ;
+# Alembic loads env.py and each version file via util.load_python_file
+from retrain_pipelines.dag_engine.config import Config
+
+
+DEFAULT_METADATA_ROOT = os.path.join(Config.get_assets_cache_root(), "metadata")
 
 # revision identifiers, used by Alembic.
 revision: str = '450e163fd43d'

@@ -32,6 +32,8 @@ from datasets.config import HF_DATASETS_CACHE
 from transformers import AutoTokenizer
 
 from retrain_pipelines import __version__
+from retrain_pipelines.config import Config
+
 from retrain_pipelines.dataset.hf_utils import (
     get_lazy_df,
     get_column_info,
@@ -1811,7 +1813,7 @@ def pipeline_card(_, task_id: int) -> None:
     html = get_html(params)
 
     filename = os.path.join(
-        os.environ["RP_ARTIFACTS_STORE"],
+        Config.get_artifacts_store_root(),
         ctx.pipeline_name,
         str(ctx.exec_id),
         "pipeline_card.html",

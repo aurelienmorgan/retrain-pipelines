@@ -5,10 +5,12 @@ from urllib.parse import urlparse
 import grpc
 from grpc_health.v1 import health_pb2, health_pb2_grpc
 
+from .config import Config
 from .db.grpc import task_trace_pb2, task_trace_pb2_grpc
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
+
 
 GRPC_CHANNEL_OPTIONS = [
     ("grpc.keepalive_time_ms", 60_000),  # ping every 60s
@@ -66,11 +68,11 @@ class GrpcClient:
                 # clean channel and stub
                 cls.shutdown()
 
-        server_url = os.environ["RP_WEB_SERVER_URL"]
+        server_url = Config.get_web_server_url()
         parsed = urlparse(server_url)
         host = parsed.hostname or "localhost"
         is_secure = parsed.scheme == "https"
-        grpc_address = f"{host}:{os.environ['RP_GRPC_SERVER_PORT']}"
+        grpc_address = f"{host}:{Config.get_grpc_server_port()}"
 
         if is_secure:
             credentials = grpc.ssl_channel_credentials()

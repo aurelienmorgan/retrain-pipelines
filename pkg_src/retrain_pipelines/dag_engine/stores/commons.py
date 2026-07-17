@@ -8,11 +8,13 @@ from typing import Any
 import cloudpickle
 from pydantic import BaseModel
 
+from ..config import Config
+
 DISK_REF_KEY = "__disk_ref__"
 
 
 def metadata_root() -> str:
-    return os.path.join(os.environ["RP_ASSETS_CACHE"], "metadata")
+    return os.path.join(Config.get_assets_cache_root(), "metadata")
 
 
 def load_from_disk(rel_path: str) -> Any:

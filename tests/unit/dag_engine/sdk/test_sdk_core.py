@@ -6,6 +6,8 @@ Note
   inside the module being tested.
 """
 
+import asyncio
+
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
@@ -155,11 +157,11 @@ class TestExecutionParams:
         params = ExecutionParams(
             {"p": {"description": "d", "default": disk_ref}}, "/tmp/meta"
         )
-        with patch.object(
-            ExecutionParams, "_resolve", return_value="unpickled_value"
-        ) as mock_resolve:
+        with patch(
+            f"{_MODULE}.load_from_disk", return_value="unpickled_value"
+        ) as mock_load:
             result = params.default("p")
-        mock_resolve.assert_called_once_with(disk_ref)
+        mock_load.assert_called_once_with("/tmp/meta/some/path.pkl")
         assert result == "unpickled_value"
 
     def test_default_no_default_key_returns_none(self):
@@ -198,6 +200,42 @@ class TestExecutionParams:
         p2 = ExecutionParams({"m": {"default": disk_b}}, "/tmp/meta")
         assert p1.param_equals("m", p2) is False
 
+    def test_diff(self):
+        # Include a disk‑ref param to exercise the branch inside _sha()
+        disk_ref = {"__disk_ref__": "path", "__sha__": "abc123"}
+        p1 = ExecutionParams(
+            {
+                "only1": {"default": 1},
+                "same": {"default": 2},
+                "mod": {"default": 3},
+                "disk": {"default": disk_ref},
+            },
+            "/tmp",
+        )
+        p2 = ExecutionParams(
+            {
+                "same": {"default": 2},
+                "mod": {"default": 4},
+                "only2": {"default": 5},
+                "disk": {"default": disk_ref},
+            },
+            "/tmp",
+        )
+        diff = p1.diff(p2)
+
+        assert diff.only_in_self == ["only1"]
+        assert diff.modified == ["mod"]
+        assert diff.only_in_other == ["only2"]
+
+    def test_diff_identical(self):
+        params = {"foo": {"default": 1}}
+        lhs = ExecutionParams(params, "/tmp")
+        rhs = ExecutionParams(params, "/tmp")
+        diff = lhs.diff(rhs)
+        assert diff.only_in_self == []
+        assert diff.modified == []
+        assert diff.only_in_other == []
+
 
 # ---------------------------------------------------------------------------
 # Execution model
@@ -222,69 +260,6 @@ class TestExecutionModel:
     def test_completed_false_when_end_timestamp_none(self):
         exec_ = _make_execution(end_timestamp=None)
         assert exec_.completed() is False
-
-    # get_attr() ; attribute present in context_dump
-    def test_get_attr_found(self):
-        exec_ = _make_execution()
-
-        full_exec_mock = MagicMock()
-        full_exec_mock.context_dump = {"model_version_blessed": "v3"}
-
-        async_dao_instance = MagicMock()
-        async_dao_instance.get_execution = AsyncMock(return_value=full_exec_mock)
-
-        with (
-            patch(f"{_MODULE}.AsyncDAO", return_value=async_dao_instance),
-            patch.dict(
-                "os.environ",
-                {"RP_METADATASTORE_ASYNC_URL": "sqlite+aiosqlite:///:memory:"},
-            ),
-        ):
-            result = exec_.get_attr("model_version_blessed")
-
-        assert result == "v3"
-
-    # get_attr() ; attribute absent from context_dump
-    def test_get_attr_key_missing(self):
-        exec_ = _make_execution()
-
-        full_exec_mock = MagicMock()
-        full_exec_mock.context_dump = {"other_key": "other_value"}
-
-        async_dao_instance = MagicMock()
-        async_dao_instance.get_execution = AsyncMock(return_value=full_exec_mock)
-
-        with (
-            patch(f"{_MODULE}.AsyncDAO", return_value=async_dao_instance),
-            patch.dict(
-                "os.environ",
-                {"RP_METADATASTORE_ASYNC_URL": "sqlite+aiosqlite:///:memory:"},
-            ),
-        ):
-            result = exec_.get_attr("model_version_blessed")
-
-        assert result is None
-
-    # get_attr() ; context_dump is None / falsy
-    def test_get_attr_no_context_dump(self):
-        exec_ = _make_execution()
-
-        full_exec_mock = MagicMock()
-        full_exec_mock.context_dump = None
-
-        async_dao_instance = MagicMock()
-        async_dao_instance.get_execution = AsyncMock(return_value=full_exec_mock)
-
-        with (
-            patch(f"{_MODULE}.AsyncDAO", return_value=async_dao_instance),
-            patch.dict(
-                "os.environ",
-                {"RP_METADATASTORE_ASYNC_URL": "sqlite+aiosqlite:///:memory:"},
-            ),
-        ):
-            result = exec_.get_attr("anything")
-
-        assert result is None
 
 
 class TestExecutionGetTasksWithName:
@@ -390,9 +365,10 @@ class TestExecutionGetTasksWithName:
 
 
 class TestExecutionGetTaskById:
-    """Cover Execution.get_by_id() classmethod & dao.engine.dispose()."""
+    """Cover Execution.get_by_id() and Execution.get_task_by_id().
 
-    """Cover Execution.get_by_id() classmethod & dao.engine.dispose()."""
+    Exercises dao.engine.dispose() and the KeyError branch of get_task_by_id.
+    """
 
     def test_get_by_id_success(self):
         mock_ext = MagicMock()
@@ -407,9 +383,22 @@ class TestExecutionGetTaskById:
         )
         mock_dao = MagicMock()
         mock_dao.get_execution_ext = AsyncMock(return_value=mock_ext)
-        # engine.dispose() is awaited in the finally block; must be AsyncMock.
+        # engine.dispose() is awaited in the finally block ; must be AsyncMock.
         mock_dao.engine = MagicMock()
         mock_dao.engine.dispose = AsyncMock()
+
+        mock_task = MagicMock()
+        mock_task.id = 123
+        mock_task.name = "task_name"
+        mock_task.start_timestamp = _NOW
+        mock_task.end_timestamp = _LATER
+        mock_task.failed = False
+
+        # get_task_ext returns mock_task for id=123, None otherwise
+        mock_dao.get_task_ext = AsyncMock(
+            side_effect=lambda task_id: mock_task if task_id == 123 else None
+        )
+
         with (
             patch(f"{_MODULE}.AsyncDAO", return_value=mock_dao),
             patch.dict(
@@ -417,10 +406,21 @@ class TestExecutionGetTaskById:
                 {"RP_METADATASTORE_ASYNC_URL": "sqlite+aiosqlite:///:memory:"},
             ),
         ):
+            # Exercise get_by_id ; covers the finally block
             exec_ = Execution.get_by_id(42)
-        assert exec_.id == 42
-        assert exec_.success is True
-        mock_dao.engine.dispose.assert_awaited_once()
+            assert exec_.id == 42
+            assert exec_.success is True
+            mock_dao.engine.dispose.assert_awaited_once()
+
+            # Exercise get_task_by_id
+            task = exec_.get_task_by_id(123)
+            assert task.id == 123
+            assert task.name == "task_name"
+            assert task.success is True
+
+            # Cover the KeyError branch
+            with pytest.raises(KeyError, match="No task found with id=999"):
+                exec_.get_task_by_id(999)
 
     def test_get_by_id_raises_keyerror(self):
         mock_dao = MagicMock()
@@ -706,3 +706,41 @@ class TestTaskGetExitContext:
         ):
             ctx = task.get_exit_context()
         assert len(ctx) == 0
+
+    def test_get_exit_context_full_execution(self):
+        """Cover all lines inside Task.get_exit_context (including inner async def).
+
+        This test patches _run_async to execute the coroutine synchronously,
+        ensuring the background thread is not used and coverage can track the lines.
+        """
+        task = _make_task(metadata_root="/tmp/meta")
+        mock_row = MagicMock()
+        mock_row.attr_name = "my_attr"
+        mock_row.disk_ref = None
+        mock_row.inline_val = "val"
+        mock_row.sha = "hash1"
+
+        mock_dao = MagicMock()
+        mock_dao.get_task_context_attrs = AsyncMock(return_value=[mock_row])
+        mock_dao.engine = MagicMock()
+        mock_dao.engine.dispose = AsyncMock()
+
+        # Patch AsyncDAO as usual, but also patch _run_async to run the coroutine
+        # in the current thread so that coverage records its lines.
+        def run_coro_in_main_thread(coro):
+            return asyncio.run(coro)
+
+        with (
+            patch(f"{_MODULE}.AsyncDAO", return_value=mock_dao),
+            patch(f"{_MODULE}._run_async", side_effect=run_coro_in_main_thread),
+            patch.dict(
+                "os.environ",
+                {"RP_METADATASTORE_ASYNC_URL": "sqlite+aiosqlite:///:memory:"},
+            ),
+        ):
+            ctx = task.get_exit_context()
+
+        assert isinstance(ctx, TaskExitContext)
+        assert ctx["my_attr"] == "val"
+        # Verify that the async function's body was executed (dao method called)
+        mock_dao.get_task_context_attrs.assert_awaited_once_with(task.id)

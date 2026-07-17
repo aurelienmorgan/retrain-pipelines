@@ -47,6 +47,7 @@ from typing import Any
 import cloudpickle
 from pydantic import BaseModel, ConfigDict, Field
 
+from ..config import Config
 from ..db.dao import AsyncDAO
 from ..stores.commons import DISK_REF_KEY, is_disk_ref, load_from_disk
 
@@ -142,7 +143,7 @@ class ExecutionParams:
     Values (defaults or execution-time overrides) are deserialized
     from disk only when individually accessed, never all at once.
     Disk paths are resolved against the execution's own metadata_root
-    as stored in DB, not the current RP_ASSETS_CACHE env-var.
+    as stored in DB, not the current ``Config.get_assets_cache_root()``.
 
     For disk-pickled params, value equality can be tested via ``param_equals()``
     using the stored SHA (computed on the Python object) ;
@@ -325,7 +326,7 @@ class TaskExitContext:
     query ; O(1) regardless of DAG depth or history.
 
     Disk paths are resolved against the execution's own metadata_root
-    as stored in DB, not the current RP_ASSETS_CACHE env-var.
+    as stored in DB, not the current ``Config.get_assets_cache_root()``.
 
     Parameters
     ----------
@@ -468,9 +469,9 @@ class Execution(BaseModel):
     metadata_root: str = Field(
         None,
         description=(
-            "Absolute path to $RP_ASSETS_CACHE/metadata/ as it was on the machine "
+            "Absolute path to {Config.get_assets_cache_root()}/metadata/ as it was on the machine "
             "and at the time this execution ran. Used by SDK read methods to resolve "
-            "disk artifacts independently of the current RP_ASSETS_CACHE value."
+            "disk artifacts independently of the current ``Config.get_assets_cache_root()`` value."
         ),
     )
 
@@ -496,7 +497,7 @@ class Execution(BaseModel):
         """
 
         async def _fetch():
-            dao = AsyncDAO(db_url=os.environ["RP_METADATASTORE_ASYNC_URL"])
+            dao = AsyncDAO(db_url=Config.get_metadatastore_async_url())
             try:
                 return await dao.get_execution_ext(id)
             finally:
@@ -524,40 +525,6 @@ class Execution(BaseModel):
         """
         return self.end_timestamp is not None
 
-    def get_attr(self, attr_name: str) -> Any:
-        """Get attribute from execution context_dump.
-
-        Fetches custom attributes stored in the execution's context.
-
-        Parameters
-        ----------
-        attr_name : str
-            Name of the attribute to retrieve.
-
-        Returns
-        -------
-        Any
-            Value of the attribute or None if not found.
-
-        Examples
-        --------
-        >>> version = await execution.get_attr("model_version_blessed")
-        """
-
-        async def _get_attr_async():
-            dao = AsyncDAO(db_url=os.environ["RP_METADATASTORE_ASYNC_URL"])
-            full_exec = await dao.get_execution(self.id)
-            if full_exec.context_dump:
-                # print(f"_get_attr_async - {full_exec.context_dump.keys()}")
-                return (
-                    full_exec.context_dump[attr_name]
-                    if attr_name in full_exec.context_dump
-                    else None
-                )
-            return None
-
-        return _run_async(_get_attr_async())
-
     def get_tasks_with_name(self, task_type_name: str) -> list["Task"]:
         """Return tasks by name.
 
@@ -568,7 +535,7 @@ class Execution(BaseModel):
         """
 
         async def _get_tasks_async():
-            dao = AsyncDAO(db_url=os.environ["RP_METADATASTORE_ASYNC_URL"])
+            dao = AsyncDAO(db_url=Config.get_metadatastore_async_url())
             tasks_orm = await dao.get_execution_tasks_with_name(
                 execution_id=self.id, task_type_name=task_type_name
             )
@@ -613,7 +580,7 @@ class Execution(BaseModel):
         """
 
         async def _fetch():
-            dao = AsyncDAO(db_url=os.environ["RP_METADATASTORE_ASYNC_URL"])
+            dao = AsyncDAO(db_url=Config.get_metadatastore_async_url())
             return await dao.get_task_ext(id)
 
         row = _run_async(_fetch())
@@ -651,7 +618,7 @@ class Execution(BaseModel):
         """
 
         async def _fetch():
-            dao = AsyncDAO(db_url=os.environ["RP_METADATASTORE_ASYNC_URL"])
+            dao = AsyncDAO(db_url=Config.get_metadatastore_async_url())
             full_exec = await dao.get_execution(self.id)
             return full_exec.params
 
@@ -729,7 +696,7 @@ class Task(BaseModel):
         """
 
         async def _fetch():
-            dao = AsyncDAO(db_url=os.environ["RP_METADATASTORE_ASYNC_URL"])
+            dao = AsyncDAO(db_url=Config.get_metadatastore_async_url())
             return await dao.get_task_context_attrs(self.id)
 
         rows = _run_async(_fetch())

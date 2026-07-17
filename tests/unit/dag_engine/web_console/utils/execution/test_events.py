@@ -322,14 +322,38 @@ async def test_multiplexed_event_generator_new_task_real():
         task = asyncio.create_task(run_gen())
         await asyncio.sleep(0.05)
 
-        q = None
+        # Retrieve the queue for the newTask subscriber
+        q_new_task = None
         for queue, info in events.new_task_subscribers:
             if info == client_info:
-                q = queue
+                q_new_task = queue
                 break
+        assert q_new_task is not None
 
-        assert q is not None
-        await q.put({"name": "task1"})
+        # Also retrieve queues for taskEnd and taskTrace to allow manual removal later
+        q_task_end = None
+        for queue, info in events.task_end_subscribers:
+            if info == client_info:
+                q_task_end = queue
+                break
+        assert q_task_end is not None
+
+        q_task_trace = None
+        for queue, info in events.task_trace_subscribers:
+            if info == client_info:
+                q_task_trace = queue
+                break
+        assert q_task_trace is not None
+
+        # Put an event into the newTask queue ; this will be processed and yield
+        await q_new_task.put({"name": "task1"})
+
+        # Manually remove the subscribers before cancellation so that the
+        # finally block's remove() calls raise ValueError, exercising the
+        # except Exception handlers for new_task, task_end, and task_trace.
+        events.new_task_subscribers.remove((q_new_task, client_info))
+        events.task_end_subscribers.remove((q_task_end, client_info))
+        events.task_trace_subscribers.remove((q_task_trace, client_info))
 
         await asyncio.sleep(0.05)
 
@@ -339,7 +363,14 @@ async def test_multiplexed_event_generator_new_task_real():
         with pytest.raises(asyncio.CancelledError):
             await task
 
+        # The generator's finally block will attempt to remove the subscribers again,
+        # but they are already gone, so the except blocks are triggered.
+        # The lists are now empty because the finally block also clears them
+        # (the remove fails, but the except swallows it; the lists were already
+        # cleared by our manual removal).
         assert len(events.new_task_subscribers) == 0
+        assert len(events.task_end_subscribers) == 0
+        assert len(events.task_trace_subscribers) == 0
 
 
 @pytest.mark.asyncio

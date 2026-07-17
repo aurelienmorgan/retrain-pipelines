@@ -1,12 +1,6 @@
-import atexit
-import os
-import socket
-import sys
-import threading
-import time
-
-# --- WebConsole served via the CLI utility ----------------------------------------------
 """
+WebConsole served via the CLI utility.
+
 CLI daemon design ; rationale and trade-offs
 =============================================
 
@@ -90,6 +84,15 @@ Each pid file contains a single line: ``{pid}:{port}``.
 This lets ``webconsole_shutdown_cli`` recover both the PID to signal and the port
 to report in the confirmation message, without needing a separate lookup.
 """
+
+import atexit
+import os
+import socket
+import sys
+import threading
+import time
+
+from ..config import Config
 
 
 def _pid_file():
@@ -179,8 +182,8 @@ def webconsole_start_cli():
 
     from . import main as _main
 
-    port = args.port or int(os.environ.get("RP_WEB_SERVER_PORT"))
-    grpc_port = args.port or int(os.environ.get("RP_GRPC_SERVER_PORT"))
+    port = args.port or Config.get_web_server_port()
+    grpc_port = args.port or Config.get_grpc_server_port()
 
     pid_file = _pid_file()
     if os.path.exists(pid_file):

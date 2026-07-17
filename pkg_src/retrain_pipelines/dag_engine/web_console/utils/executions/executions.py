@@ -1,4 +1,3 @@
-import os
 from datetime import datetime
 from typing import cast
 
@@ -6,6 +5,7 @@ import tzlocal
 from fasthtml.common import A, B, Div, Span, Style
 
 from .....utils import hex_to_rgba
+from ....config import Config
 from ....core import UiCss
 from ....db.dao import AsyncDAO
 from ....db.model import Execution, ExecutionExt
@@ -14,12 +14,12 @@ server_tz = tzlocal.get_localzone()
 
 
 async def get_users() -> list[str]:
-    dao = AsyncDAO(db_url=os.environ["RP_METADATASTORE_ASYNC_URL"])
+    dao = AsyncDAO(db_url=Config.get_metadatastore_async_url())
     return await dao.get_distinct_execution_usernames(sorted=True)
 
 
 async def get_pipeline_names() -> list[str]:
-    dao = AsyncDAO(db_url=os.environ["RP_METADATASTORE_ASYNC_URL"])
+    dao = AsyncDAO(db_url=Config.get_metadatastore_async_url())
     return await dao.get_distinct_execution_names(sorted=True)
 
 
@@ -124,7 +124,7 @@ async def get_executions_ext(
     -------
     List[str]
     """
-    dao = AsyncDAO(db_url=os.environ["RP_METADATASTORE_ASYNC_URL"])
+    dao = AsyncDAO(db_url=Config.get_metadatastore_async_url())
     executions_ext = await dao.get_executions_ext(
         pipeline_name=pipeline_name,
         username=username,

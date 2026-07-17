@@ -28,6 +28,7 @@ from sklearn.metrics import (
 
 
 from retrain_pipelines import __version__
+from retrain_pipelines.config import Config
 from retrain_pipelines.dataset import features_desc, features_distri_plot
 from retrain_pipelines.dataset.features_dependencies import dataset_to_heatmap_fig
 from retrain_pipelines.dag_engine.core import (
@@ -68,7 +69,7 @@ def start() -> TaskPayload:
     assert ctx.wandb_run_mode in ["disabled", "offline", "online"]
 
     # the WandB local folder with which the server is async.
-    artifacts_root_dir = os.environ["RP_ARTIFACTS_STORE"]
+    artifacts_root_dir = Config.get_artifacts_store_root()
     os.environ["WANDB_DIR"] = artifacts_root_dir
     ctx.wandb_run_dir = os.path.join(
         artifacts_root_dir, ctx.pipeline_name, str(ctx.exec_id)
@@ -1015,7 +1016,7 @@ def pipeline_card(_, task_id: int):
     html = get_html(params)
 
     filename = os.path.join(
-        os.environ["RP_ARTIFACTS_STORE"],
+        Config.get_artifacts_store_root(),
         ctx.pipeline_name,
         str(ctx.exec_id),
         "pipeline_card.html",

@@ -11,6 +11,7 @@ from concurrent.futures import as_completed
 from datetime import datetime, timezone
 from typing import Any
 
+from .config import Config
 from .core import (
     DAG,
     DagExecutionContext,
@@ -131,7 +132,7 @@ def _update_interrupted_tasks_in_db(task_ids: list[int], exec_id: int):
     logger.info(f"[bold white]_update_interrupted_tasks_in_db {task_ids}[/]")
 
     try:
-        dao = DAO(os.environ["RP_METADATASTORE_URL"])
+        dao = DAO(Config.get_metadatastore_url())
     except Exception:
         logger.exception("Failed to instantiate DAO ; aborting DB updates.")
         for h in logger.handlers:
@@ -749,7 +750,7 @@ def _execute(dag: DAG, params: dict[str, Any] | None = None) -> tuple[TaskPayloa
         # Serialize execution-time overrides and inject each as an "override" key
         # inside its param's dict in the executions.params JSON column.
         if params:
-            _dao = DAO(os.environ["RP_METADATASTORE_URL"])
+            _dao = DAO(Config.get_metadatastore_url())
             _execution = _dao.get_execution(exec_id)
             _current_params = dict(_execution.params or {})
             for pname, pval in params.items():

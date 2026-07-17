@@ -403,7 +403,7 @@ class TestWebconsoleStartNotebook:
         with (
             patch.object(nb, "_wait_for_server", return_value=False),
             patch.object(nb, "_notebook_env", return_value="local"),
-            patch.dict("os.environ", {"RP_WEB_SERVER_LOGS": ""}),
+            patch.dict("os.environ", {"RP_WEB_SERVER_LOGS": "/tmp/rp_test_logs"}),
             patch("retrain_pipelines.dag_engine.web_console.main._webconsole_start"),
             patch(
                 "retrain_pipelines.dag_engine.web_console.main_notebook.display"
@@ -418,7 +418,7 @@ class TestWebconsoleStartNotebook:
         with (
             patch.object(nb, "_wait_for_server", return_value=True),
             patch.object(nb, "_notebook_env", return_value="local"),
-            patch.dict("os.environ", {"RP_WEB_SERVER_LOGS": ""}),
+            patch.dict("os.environ", {"RP_WEB_SERVER_LOGS": "/tmp/rp_test_logs"}),
             patch("retrain_pipelines.dag_engine.web_console.main._webconsole_start"),
             patch("time.sleep"),
             patch(
@@ -444,7 +444,7 @@ class TestWebconsoleStartNotebook:
             patch.object(
                 nb, "_ngrok_start", return_value="https://t.ngrok.io"
             ) as mock_ngrok,
-            patch.dict("os.environ", {"RP_WEB_SERVER_LOGS": ""}),
+            patch.dict("os.environ", {"RP_WEB_SERVER_LOGS": "/tmp/rp_test_logs"}),
             patch("retrain_pipelines.dag_engine.web_console.main._webconsole_start"),
             patch("time.sleep"),
             patch("retrain_pipelines.dag_engine.web_console.main_notebook.display"),
@@ -461,7 +461,7 @@ class TestWebconsoleStartNotebook:
             patch.object(nb, "_wait_for_server", return_value=True),
             patch.object(nb, "_notebook_env", return_value="colab"),
             patch.object(nb, "_ngrok_start", return_value=None),
-            patch.dict("os.environ", {"RP_WEB_SERVER_LOGS": ""}),
+            patch.dict("os.environ", {"RP_WEB_SERVER_LOGS": "/tmp/rp_test_logs"}),
             patch("retrain_pipelines.dag_engine.web_console.main._webconsole_start"),
             patch("time.sleep"),
             patch(
@@ -478,7 +478,7 @@ class TestWebconsoleStartNotebook:
         with (
             patch.object(nb, "_wait_for_server", return_value=True),
             patch.object(nb, "_notebook_env", return_value="local"),
-            patch.dict("os.environ", {"RP_WEB_SERVER_LOGS": ""}),
+            patch.dict("os.environ", {"RP_WEB_SERVER_LOGS": "/tmp/rp_test_logs"}),
             patch("retrain_pipelines.dag_engine.web_console.main._webconsole_start"),
             patch("time.sleep"),
             patch("retrain_pipelines.dag_engine.web_console.main_notebook.display"),
@@ -497,7 +497,7 @@ class TestWebconsoleStartNotebook:
             patch.object(nb, "_wait_for_server", side_effect=[True, False]),
             patch.object(nb, "_notebook_env", return_value="colab"),
             patch.object(nb, "_ngrok_start", return_value="https://t.ngrok.io"),
-            patch.dict("os.environ", {"RP_WEB_SERVER_LOGS": ""}),
+            patch.dict("os.environ", {"RP_WEB_SERVER_LOGS": "/tmp/rp_test_logs"}),
             patch("retrain_pipelines.dag_engine.web_console.main._webconsole_start"),
             patch("time.sleep"),
             patch(
@@ -823,6 +823,7 @@ def _run_start_with_live_log():
       - stderr  : the _ServerThreadStream that replaced sys.stderr
       - atexit_fn   : the callable passed to atexit.register
       - cleanup_fn  : the target callable passed to threading.Thread
+      - handler     : the _FlushingRotatingFileHandler instance added
     """
     import logging.handlers as _lh
 
@@ -851,7 +852,7 @@ def _run_start_with_live_log():
     with (
         patch.object(nb, "_wait_for_server", return_value=True),
         patch.object(nb, "_notebook_env", return_value="local"),
-        patch.dict("os.environ", {"RP_WEB_SERVER_LOGS": "/tmp/rp_cov_test"}),
+        patch.dict("os.environ", {"RP_WEB_SERVER_LOGS": ""}),
         patch("retrain_pipelines.dag_engine.web_console.main._webconsole_start"),
         patch("time.sleep"),
         patch("retrain_pipelines.dag_engine.web_console.main_notebook.display"),
@@ -863,6 +864,11 @@ def _run_start_with_live_log():
         patch("threading.Thread", side_effect=_capture_thread),
     ):
         nb._webconsole_start_notebook(port=8000, grpc_port=50051)
+        # Find the handler we just added – it's the only TimedRotatingFileHandler
+        for h in logging.getLogger().handlers:
+            if isinstance(h, _lh.TimedRotatingFileHandler):
+                captured["handler"] = h
+                break
         captured["stdout"] = sys.stdout
         captured["stderr"] = sys.stderr
 
@@ -876,9 +882,12 @@ class TestInnerHelpersLiveLogPath:
 
     def setup_method(self):
         nb._notebook_env.cache_clear()
+        logging.getLogger().handlers.clear()  # clean slate for each test
 
     def teardown_method(self):
         nb._notebook_env.cache_clear()
+        logging.getLogger().handlers.clear()
+        # Restore original stdout/stderr if they were replaced
         import io
 
         if not isinstance(sys.stdout, io.TextIOWrapper) and hasattr(
@@ -890,41 +899,27 @@ class TestInnerHelpersLiveLogPath:
         ):
             sys.stderr = sys.stderr._original
 
-    def _live_handler(self):
-        """Return the _FlushingRotatingFileHandler the module added to root logger."""
-        import logging.handlers as _lh
-
-        for h in logging.getLogger().handlers:
-            if isinstance(h, _lh.TimedRotatingFileHandler):
-                return h
-        return None
-
     # -- _plain / _PlainFormatter.format --
 
     def test_plain_formatter_format_strips_all_markup_variants(self):
         """_PlainFormatter.format() strips Rich markup, │=>|, ─=>-, ANSI=>'' via the real formatter."""
-        root = logging.getLogger()
-        handlers_before = list(root.handlers)
-        try:
-            _run_start_with_live_log()
-            h = self._live_handler()
-            assert h is not None and h.formatter is not None
-            record = logging.LogRecord(
-                name="t",
-                level=logging.INFO,
-                pathname="",
-                lineno=0,
-                msg="[bold]hi[/] \u2502 sep \u2500 \x1b[0m end",
-                args=(),
-                exc_info=None,
-            )
-            result = h.formatter.format(record)
-            assert "\u2502" not in result and "|" in result
-            assert "\u2500" not in result
-            assert "[bold]" not in result
-            assert "\x1b" not in result
-        finally:
-            root.handlers = handlers_before
+        captured = _run_start_with_live_log()
+        h = captured["handler"]
+        assert h is not None and h.formatter is not None
+        record = logging.LogRecord(
+            name="t",
+            level=logging.INFO,
+            pathname="",
+            lineno=0,
+            msg="[bold]hi[/] \u2502 sep \u2500 \x1b[0m end",
+            args=(),
+            exc_info=None,
+        )
+        result = h.formatter.format(record)
+        assert "\u2502" not in result and "|" in result
+        assert "\u2500" not in result
+        assert "[bold]" not in result
+        assert "\x1b" not in result
 
     # -- _FlushingRotatingFileHandler.emit --
 
@@ -932,32 +927,25 @@ class TestInnerHelpersLiveLogPath:
         """_FlushingRotatingFileHandler.emit() on the installed handler hits the module's emit body."""
         import logging.handlers as _lh
 
-        root = logging.getLogger()
-        handlers_before = list(root.handlers)
-        try:
-            _run_start_with_live_log()
-            h = self._live_handler()
-            assert h is not None
-            flushed = []
-            record = logging.LogRecord(
-                name="t",
-                level=logging.INFO,
-                pathname="",
-                lineno=0,
-                msg="x",
-                args=(),
-                exc_info=None,
-            )
-            with (
-                patch.object(
-                    _lh.TimedRotatingFileHandler, "emit", lambda self, r: None
-                ),
-                patch.object(h, "flush", side_effect=lambda: flushed.append(True)),
-            ):
-                h.emit(record)
-            assert flushed
-        finally:
-            root.handlers = handlers_before
+        captured = _run_start_with_live_log()
+        h = captured["handler"]
+        assert h is not None
+        flushed = []
+        record = logging.LogRecord(
+            name="t",
+            level=logging.INFO,
+            pathname="",
+            lineno=0,
+            msg="x",
+            args=(),
+            exc_info=None,
+        )
+        with (
+            patch.object(_lh.TimedRotatingFileHandler, "emit", lambda self, r: None),
+            patch.object(h, "flush", side_effect=lambda: flushed.append(True)),
+        ):
+            h.emit(record)
+        assert flushed
 
     # -- _ServerThreadStream.write --
 
@@ -983,35 +971,25 @@ class TestInnerHelpersLiveLogPath:
 
     def test_server_thread_stream_write_server_branch_value_error_suppressed(self):
         """write() server branch: ValueError on handler stream => silently passes."""
-        root = logging.getLogger()
-        handlers_before = list(root.handlers)
-        try:
-            captured = _run_start_with_live_log()
-            stream = captured["stdout"]
-            stream._original = MagicMock()
-            h = self._live_handler()
-            assert h is not None
-            h.stream.write.side_effect = ValueError("closed")
-            with patch.object(main_mod, "_server_thread", threading.current_thread()):
-                stream.write("x")  # must not raise
-        finally:
-            root.handlers = handlers_before
+        captured = _run_start_with_live_log()
+        stream = captured["stdout"]
+        stream._original = MagicMock()
+        h = captured["handler"]
+        assert h is not None
+        h.stream.write.side_effect = ValueError("closed")
+        with patch.object(main_mod, "_server_thread", threading.current_thread()):
+            stream.write("x")  # must not raise
 
     def test_server_thread_stream_write_server_branch_attribute_error_suppressed(self):
         """write() server branch: AttributeError on handler stream => silently passes."""
-        root = logging.getLogger()
-        handlers_before = list(root.handlers)
-        try:
-            captured = _run_start_with_live_log()
-            stream = captured["stdout"]
-            stream._original = MagicMock()
-            h = self._live_handler()
-            assert h is not None
-            h.stream.write.side_effect = AttributeError("gone")
-            with patch.object(main_mod, "_server_thread", threading.current_thread()):
-                stream.write("x")  # must not raise
-        finally:
-            root.handlers = handlers_before
+        captured = _run_start_with_live_log()
+        stream = captured["stdout"]
+        stream._original = MagicMock()
+        h = captured["handler"]
+        assert h is not None
+        h.stream.write.side_effect = AttributeError("gone")
+        with patch.object(main_mod, "_server_thread", threading.current_thread()):
+            stream.write("x")  # must not raise
 
     # -- _ServerThreadStream.flush --
 
@@ -1026,33 +1004,23 @@ class TestInnerHelpersLiveLogPath:
 
     def test_server_thread_stream_flush_value_error_suppressed(self):
         """flush(): ValueError on handler stream.flush() => silently passes."""
-        root = logging.getLogger()
-        handlers_before = list(root.handlers)
-        try:
-            captured = _run_start_with_live_log()
-            stream = captured["stdout"]
-            stream._original = MagicMock()
-            h = self._live_handler()
-            assert h is not None
-            h.stream.flush.side_effect = ValueError("closed")
-            stream.flush()  # must not raise
-        finally:
-            root.handlers = handlers_before
+        captured = _run_start_with_live_log()
+        stream = captured["stdout"]
+        stream._original = MagicMock()
+        h = captured["handler"]
+        assert h is not None
+        h.stream.flush.side_effect = ValueError("closed")
+        stream.flush()  # must not raise
 
     def test_server_thread_stream_flush_attribute_error_suppressed(self):
         """flush(): AttributeError on handler stream.flush() => silently passes."""
-        root = logging.getLogger()
-        handlers_before = list(root.handlers)
-        try:
-            captured = _run_start_with_live_log()
-            stream = captured["stdout"]
-            stream._original = MagicMock()
-            h = self._live_handler()
-            assert h is not None
-            h.stream.flush.side_effect = AttributeError("gone")
-            stream.flush()  # must not raise
-        finally:
-            root.handlers = handlers_before
+        captured = _run_start_with_live_log()
+        stream = captured["stdout"]
+        stream._original = MagicMock()
+        h = captured["handler"]
+        assert h is not None
+        h.stream.flush.side_effect = AttributeError("gone")
+        stream.flush()  # must not raise
 
     # -- _ServerThreadStream.__getattr__ --
 
@@ -1069,50 +1037,69 @@ class TestInnerHelpersLiveLogPath:
 
     def test_write_termination_line_value_error_suppressed(self):
         """_write_termination_line() (real closure): ValueError on closed stream => silently passes."""
-        root = logging.getLogger()
-        handlers_before = list(root.handlers)
-        try:
-            captured = _run_start_with_live_log()
-            h = self._live_handler()
-            assert h is not None
-            h.stream.write.side_effect = ValueError("closed")
-            captured["atexit_fn"]()  # must not raise
-        finally:
-            root.handlers = handlers_before
+        captured = _run_start_with_live_log()
+        h = captured["handler"]
+        assert h is not None
+        h.stream.write.side_effect = ValueError("closed")
+        captured["atexit_fn"]()  # must not raise
 
     def test_write_termination_line_attribute_error_suppressed(self):
         """_write_termination_line() (real closure): AttributeError on closed stream => silently passes."""
-        root = logging.getLogger()
-        handlers_before = list(root.handlers)
-        try:
-            captured = _run_start_with_live_log()
-            h = self._live_handler()
-            assert h is not None
-            h.stream.write.side_effect = AttributeError("gone")
-            captured["atexit_fn"]()  # must not raise
-        finally:
-            root.handlers = handlers_before
+        captured = _run_start_with_live_log()
+        h = captured["handler"]
+        assert h is not None
+        h.stream.write.side_effect = AttributeError("gone")
+        captured["atexit_fn"]()  # must not raise
 
     # -- _cleanup_on_shutdown (real closure via threading.Thread target capture) --
 
     def test_cleanup_on_shutdown_joins_server_and_grpc_threads(self):
         """_cleanup_on_shutdown() (real closure): joins _server_thread and _grpc_thread."""
-        root = logging.getLogger()
-        handlers_before = list(root.handlers)
-        real_stdout = sys.stdout
-        real_stderr = sys.stderr
-        try:
-            captured = _run_start_with_live_log()
-            mock_server_t = MagicMock()
-            mock_grpc_t = MagicMock()
-            with (
-                patch.object(main_mod, "_server_thread", mock_server_t),
-                patch.object(main_mod, "_grpc_thread", mock_grpc_t),
-            ):
-                captured["cleanup_fn"]()
-            mock_server_t.join.assert_called_once()
-            mock_grpc_t.join.assert_called_once()
-        finally:
-            root.handlers = handlers_before
-            sys.stdout = real_stdout
-            sys.stderr = real_stderr
+        captured = _run_start_with_live_log()
+        mock_server_t = MagicMock()
+        mock_grpc_t = MagicMock()
+        with (
+            patch.object(main_mod, "_server_thread", mock_server_t),
+            patch.object(main_mod, "_grpc_thread", mock_grpc_t),
+        ):
+            captured["cleanup_fn"]()
+        mock_server_t.join.assert_called_once()
+        mock_grpc_t.join.assert_called_once()
+
+    # -- _ServerThreadFilter --
+
+    def test_server_thread_filter_filters_by_current_thread(self):
+        """
+        Verify that _ServerThreadFilter.filter returns True only when the
+        current thread is the server thread.
+
+        This exercises the filter logic that prevents non-server log records
+        from being written to the live console log file. The filter compares
+        threading.current_thread() against _main._server_thread, and this test
+        covers both branches of that conditional.
+        """
+        captured = _run_start_with_live_log()
+        handler = captured["handler"]
+        assert handler is not None
+        assert len(handler.filters) == 1, (
+            "Expected exactly one filter on the live handler"
+        )
+
+        filter_obj = handler.filters[0]
+        record = logging.LogRecord(
+            name="test",
+            level=logging.INFO,
+            pathname="",
+            lineno=0,
+            msg="test message",
+            args=(),
+            exc_info=None,
+        )
+
+        # Branch: current thread IS the server thread → filter returns True
+        with patch.object(main_mod, "_server_thread", threading.current_thread()):
+            assert filter_obj.filter(record) is True
+
+        # Branch: current thread is NOT the server thread → filter returns False
+        with patch.object(main_mod, "_server_thread", None):
+            assert filter_obj.filter(record) is False

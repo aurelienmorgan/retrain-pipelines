@@ -2,11 +2,11 @@ import asyncio
 import copy
 import json
 import logging
-import os
 from uuid import UUID
 
 from fasthtml.common import JSONResponse, Response
 
+from ....config import Config
 from ....db.dao import AsyncDAO
 from .. import ClientInfo
 from .gantt_chart import CustomStyleDict, GroupTypes, fill_defaults
@@ -85,7 +85,7 @@ def reset_for_restart():
 
 async def execution_number(execution_id: int) -> Response | JSONResponse:
     """Living counts - DO NOT USE CACHE."""
-    dao = AsyncDAO(db_url=os.environ["RP_METADATASTORE_ASYNC_URL"])
+    dao = AsyncDAO(db_url=Config.get_metadatastore_async_url())
     execution_number_dict = await dao.get_execution_number(execution_id)
     if execution_number_dict is None:
         return Response(f"Invalid execution ID {execution_id}", 500)
@@ -95,7 +95,7 @@ async def execution_number(execution_id: int) -> Response | JSONResponse:
 
 
 async def taskgroups_hierarchy(taskgroup_uuid: UUID) -> Response | JSONResponse:
-    dao = AsyncDAO(db_url=os.environ["RP_METADATASTORE_ASYNC_URL"])
+    dao = AsyncDAO(db_url=Config.get_metadatastore_async_url())
     taskgroups_list = await dao.get_taskgroups_hierarchy(taskgroup_uuid)
     if taskgroups_list is None:
         return Response(f"Invalid TaskType UUID {str(taskgroup_uuid)}", 500)

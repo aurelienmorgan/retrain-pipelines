@@ -10,8 +10,8 @@ from IPython import get_ipython
 warnings.filterwarnings("ignore", category=SyntaxWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
 
-from . import config  # <<== !! first ever import of the lib !!  # noqa: E402, F401
 from .__version__ import __version__  # noqa: E402
+from .dag_engine.config import Config  # noqa: E402
 from .utils import animate_wave  # noqa: E402
 
 if get_ipython() is not None:
@@ -38,6 +38,6 @@ else:
 ################################################################
 
 
-logging.getLogger().debug(f"cache root directory : {os.environ['RP_ASSETS_CACHE']}")
+logging.getLogger().debug(f"cache root directory : {Config.get_assets_cache_root()}")
 if not bool(os.getenv("ALEMBIC_REV_AUTOGEN", False)):
     run_alembic_upgrade_once()
