@@ -167,6 +167,13 @@ class TestInterruptThread:
         # ctypes returns 0 => logs warning, no exception
         _interrupt_thread(0)
 
+    def test_res_zero_logs_warning(self):
+        """Covers branch where SetAsyncExc returns zero (no matching thread)."""
+        with patch.object(
+            ctypes.pythonapi, "PyThreadState_SetAsyncExc", return_value=0
+        ):
+            _interrupt_thread(12345)
+
     def test_valid_thread_id_res_equals_one(self):
         with patch.object(
             ctypes.pythonapi, "PyThreadState_SetAsyncExc", return_value=1
@@ -331,6 +338,31 @@ class TestUpdateInterruptedTasksInDb:
             _update_interrupted_tasks_in_db([1], exec_id=1)
         fake_handler.flush.assert_called()
 
+    def test_flush_exception_during_dao_failure_absorbed(self):
+        """Covers branch where handler flush raises during DAO-init-failure cleanup."""
+        bad_handler = MagicMock()
+        bad_handler.flush.side_effect = Exception("flush fail")
+        with (
+            self._patch_dao(side_effect=Exception("no db")),
+            patch.dict(os.environ, {"RP_METADATASTORE_URL": "sqlite://"}),
+            patch(f"{_RT}.logger") as mock_log,
+        ):
+            mock_log.handlers = [bad_handler]
+            _update_interrupted_tasks_in_db([1], exec_id=1)
+
+    def test_flush_exception_at_end_absorbed(self):
+        """Covers branch where handler flush raises during final cleanup."""
+        mock_dao_inst = MagicMock()
+        bad_handler = MagicMock()
+        bad_handler.flush.side_effect = Exception("flush fail")
+        with (
+            self._patch_dao(return_value=mock_dao_inst),
+            patch.dict(os.environ, {"RP_METADATASTORE_URL": "sqlite://"}),
+            patch(f"{_RT}.logger") as mock_log,
+        ):
+            mock_log.handlers = [bad_handler]
+            _update_interrupted_tasks_in_db([1], exec_id=1)
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  _sigint_handler
@@ -364,6 +396,19 @@ class TestSigintHandler:
             mock_ctxvar.get.return_value = None
             _sigint_handler(None, None)
         mock_kill.assert_called_once_with(12345)
+
+    def test_falsy_pid_skips_kill_process(self, suppress_logger):
+        """Covers branch where a registered task has a falsy pid (no process to kill)."""
+        _task_registry.register_task(1, 0)
+        with (
+            suppress_logger(_RT),
+            patch(f"{_RT}._kill_process") as mock_kill,
+            patch.object(sys, "exit"),
+            patch(f"{_RT}._dag_execution_context_var") as mock_ctxvar,
+        ):
+            mock_ctxvar.get.return_value = None
+            _sigint_handler(None, None)
+        mock_kill.assert_not_called()
 
     def test_updates_db_when_context_and_exec_id_present(self, suppress_logger):
         # context exists with exec_id => calls _update_interrupted_tasks_in_db
@@ -511,6 +556,12 @@ class TestTopologicalSort:
         # Neither inner_tg (nested) nor child (has task_group) should appear raw
         assert parent in result
 
+    def test_taskgroup_root_skipped_in_traversal(self):
+        """Covers branch where a root element is a TaskGroup (skipped during stack-based traversal)."""
+        tg = _mock_tg(name="root_tg", elements=[])
+        result = _topological_sort([tg])
+        assert result == []
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  _find_subdag_end
@@ -616,7 +667,7 @@ class TestParallelInputCount:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  _execute_task  (lines 550-581)
+#  _execute_task
 # ══════════════════════════════════════════════════════════════════════════════
 
 
@@ -1073,6 +1124,8 @@ class TestExecute:
             return execute(dag, params)
 
     def test_single_plain_task_dag(self):
+        from retrain_pipelines.dag_engine.core.core import DagParam
+
         t = _mock_task("T")
         t.is_parallel = False
         t.merge_func = None
@@ -1080,8 +1133,6 @@ class TestExecute:
         dag = _make_dag_mock(
             roots=[t], params={"exec_id": {"description": "id", "default": 1}}
         )
-
-        from retrain_pipelines.dag_engine.core.core import DagParam
 
         dag.params = {"exec_id": DagParam(description="id", default=1)}
 
@@ -1135,6 +1186,39 @@ class TestExecute:
         assert ctx_dump["exec_id"] == 99
         assert ctx_dump["missing"] is None
 
+    def test_params_override_stored_to_db(self):
+        """Covers branch where execution-time override is injected into DB-tracked params."""
+        from retrain_pipelines.dag_engine.core.core import DagParam
+
+        t = _mock_task("T")
+        t.is_parallel = False
+        t.merge_func = None
+        dag = _make_dag_mock(roots=[t])
+        dag.params = {"exec_id": DagParam(description="id", default=1)}
+
+        with (
+            patch(f"{_RT}._execute_task", return_value="r"),
+            patch(f"{_RT}._topological_sort", return_value=[t]),
+            patch(f"{_RT}._collect_parent_results", return_value=TaskPayload({})),
+            patch(f"{_RT}.DAG") as MockDAG,
+            patch(f"{_RT}.DAO") as MockRtDAO,
+            patch(f"{_RT}.get_trace_buffer"),
+            patch(f"{_RT}.GrpcClient"),
+            patch(f"{_RT}.RichLoggingController"),
+            patch(f"{_RT}._install_interrupt_handler"),
+            patch(f"{_RT}._task_registry") as registry_mock,
+        ):
+            MockDAG.mark_complete = MagicMock()
+            registry_mock.get_running_tasks.return_value = {}
+            MockRtDAO.return_value.get_execution.return_value.params = {
+                "exec_id": {"description": "id"}
+            }
+            execute(dag, params={"exec_id": 99})
+
+        MockRtDAO.return_value.update_execution.assert_called_once()
+        _, kwargs = MockRtDAO.return_value.update_execution.call_args
+        assert kwargs["params"]["exec_id"]["override"] == 99
+
     def test_last_element_taskgroup_collects_results(self):
         # last element is a TaskGroup
         from retrain_pipelines.dag_engine.core.core import DagParam
@@ -1154,6 +1238,28 @@ class TestExecute:
             result, _ = self._minimal_exec(dag)
 
         assert result["inner"] == "tg_val"
+
+    def test_nested_taskgroup_in_last_element_collects_results(self):
+        """Covers branch where the last DAG element is a TaskGroup containing nested TaskGroups."""
+        from retrain_pipelines.dag_engine.core.core import DagParam
+
+        inner_task = _mock_task("inner_task")
+        inner_tg = _mock_tg(name="inner_tg", elements=[inner_task])
+        outer_tg = _mock_tg(name="outer_tg", elements=[inner_tg])
+        dag = _make_dag_mock(roots=[outer_tg])
+        dag.params = {"exec_id": DagParam(description="id", default=1)}
+
+        with (
+            patch(
+                f"{_RT}._execute_taskgroup",
+                return_value=TaskPayload({"inner_task": "val"}),
+            ),
+            patch(f"{_RT}._topological_sort", return_value=[outer_tg]),
+            patch(f"{_RT}._collect_parent_results", return_value=TaskPayload({})),
+        ):
+            result, _ = self._minimal_exec(dag)
+
+        assert result["inner_task"] == "val"
 
     def test_parallel_subdag_executed(self):
         # is_parallel branch in _execute
@@ -1225,3 +1331,33 @@ class TestExecute:
             _, ctx_dump = self._minimal_exec(dag)
 
         assert "exec_id" in ctx_dump
+
+    def test_missing_exec_id_skips_mark_complete(self):
+        """Covers branch where exec_id is None, causing mark_complete to be skipped."""
+        from retrain_pipelines.dag_engine.core.core import DagParam
+
+        t = _mock_task("T")
+        t.is_parallel = False
+        t.merge_func = None
+        dag = _make_dag_mock(roots=[t])
+        dag.params = {"exec_id": DagParam(description="id", default=None)}
+
+        with (
+            patch(f"{_RT}._execute_task", return_value="r"),
+            patch(f"{_RT}._topological_sort", return_value=[t]),
+            patch(f"{_RT}._collect_parent_results", return_value=TaskPayload({})),
+            patch(f"{_RT}.DAG") as MockDAG,
+            patch(f"{_RT}.DAO") as MockRtDAO,
+            patch(f"{_RT}.get_trace_buffer"),
+            patch(f"{_RT}.GrpcClient"),
+            patch(f"{_RT}.RichLoggingController"),
+            patch(f"{_RT}._install_interrupt_handler"),
+            patch(f"{_RT}._task_registry") as registry_mock,
+        ):
+            MockDAG.mark_complete = MagicMock()
+            registry_mock.get_running_tasks.return_value = {}
+            MockRtDAO.return_value.get_execution.return_value.params = {}
+            with pytest.raises(AssertionError):
+                execute(dag)
+
+        MockDAG.mark_complete.assert_not_called()

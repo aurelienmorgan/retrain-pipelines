@@ -1,26 +1,26 @@
 """Shared serialization primitives used by both params_store and context_store."""
 
 import hashlib
-import os
+import math
 from datetime import date, datetime
 from typing import Any
 
 import cloudpickle
 from pydantic import BaseModel
 
+from ...utils.file_utils import build_path, read_binary_file
 from ..config import Config
 
 DISK_REF_KEY = "__disk_ref__"
 
 
 def metadata_root() -> str:
-    return os.path.join(Config.get_assets_cache_root(), "metadata")
+    return build_path(Config.get_assets_cache_root(), ("metadata",))
 
 
-def load_from_disk(rel_path: str) -> Any:
+def load_from_disk(metadata_root: str, rel_path: str) -> Any:
     """Deserialize a cloudpickle artifact from rel_path (relative to metadata_root())."""
-    with open(os.path.join(metadata_root(), rel_path), "rb") as fh:
-        return cloudpickle.load(fh)
+    return cloudpickle.loads(read_binary_file(metadata_root, [rel_path]))
 
 
 def is_disk_ref(obj: Any) -> bool:
@@ -28,18 +28,18 @@ def is_disk_ref(obj: Any) -> bool:
     return isinstance(obj, dict) and DISK_REF_KEY in obj
 
 
-def make_disk_ref(path: str) -> dict:
+def make_disk_ref(rel_path: str) -> dict:
     """Return a disk-reference sentinel dict pointing to path."""
-    return {DISK_REF_KEY: path}
+    return {DISK_REF_KEY: rel_path}
 
 
-def resolve_storable(obj: Any) -> Any:
+def resolve_storable(metadata_root: str, obj: Any) -> Any:
     """Resolve a disk-ref sentinel dict to its original value.
 
     Returns obj unchanged if it is not a disk-ref sentinel.
     """
     if is_disk_ref(obj):
-        return load_from_disk(obj[DISK_REF_KEY])
+        return load_from_disk(metadata_root, obj[DISK_REF_KEY])
     return obj
 
 
@@ -51,7 +51,13 @@ def try_json_serialize(obj: Any) -> Any:
     """
     if obj is None:
         return None
-    if isinstance(obj, (str, int, float, bool)):
+    if isinstance(obj, (str, bool)):
+        return obj
+    if isinstance(obj, float):
+        # NaN / ±Inf are not valid JSON tokens
+        if math.isfinite(obj):
+            return obj
+    if isinstance(obj, int):
         return obj
     if isinstance(obj, (datetime, date)):
         return obj.isoformat()
@@ -61,7 +67,7 @@ def try_json_serialize(obj: Any) -> Any:
         return {k: try_json_serialize(v) for k, v in obj.items()}
     if isinstance(obj, (list, tuple, set)):
         return [try_json_serialize(v) for v in obj]
-    raise TypeError(f"Cannot JSON-serialize {type(obj).__name__}")
+    raise TypeError(f"Cannot JSON-serialize {type(obj).__name__} -  {obj!r}")
 
 
 def compute_sha(obj: Any) -> str:

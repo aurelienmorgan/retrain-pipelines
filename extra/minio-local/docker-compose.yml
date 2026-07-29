@@ -1,0 +1,18 @@
+services:
+  minio:
+    image: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z
+    container_name: minio-local
+    ports:
+      - "${S3_EXTERNAL_PORT:-9000}:${S3_INTERNAL_PORT:-9000}"
+      - "${MINIO_CONSOLE_EXTERNAL_PORT:-9001}:${MINIO_CONSOLE_INTERNAL_PORT:-9001}"
+    environment:
+      MINIO_ROOT_USER: "${S3_ACCESS_KEY:-minioadmin}"
+      MINIO_ROOT_PASSWORD: "${S3_SECRET_KEY:-minioadmin}"
+    volumes:
+      - ${RP_ASSETS_CACHE:-~/.cache/retrain-pipelines/}/minio-data:/data
+      - minio-config:/root/.minio
+    command: server /data --console-address ":${MINIO_CONSOLE_INTERNAL_PORT:-9001}"
+    restart: unless-stopped
+
+volumes:
+  minio-config:

@@ -1,3 +1,4 @@
+import boto3
 import os
 import json
 import pytest
@@ -286,14 +287,14 @@ class TestRegisterRoutes:
             register(MagicMock(), mock_rt)
             response = await routes["/execution_number"](mock_request)
             assert response == mock_response
-            mock_exec_num.assert_called_once_with("1")
+            mock_exec_num.assert_called_once_with(1)
 
     @pytest.mark.asyncio
     async def test_tasktype_docstring_success(
         self, route_capturer, mock_request, mock_env
     ):
         routes, mock_rt = route_capturer
-        mock_request.query_params.get.return_value = "valid-uuid"
+        mock_request.query_params.get.return_value = str(uuid4())
         mock_dao = AsyncMock()
         mock_dao.get_tasktype_docstring.return_value = "docstring"
 
@@ -301,6 +302,22 @@ class TestRegisterRoutes:
             register(MagicMock(), mock_rt)
             response = await routes["/tasktype_docstring"](mock_request)
             assert isinstance(response, JSONResponse)
+
+    @pytest.mark.asyncio
+    async def test_tasktype_docstring_invalid_uuid(
+        self, route_capturer, mock_request, mock_env
+    ):
+        """Covers the branch where an invalid tasktype UUID is provided,
+        triggering the TypeError/ValueError handler in the route."""
+        routes, mock_rt = route_capturer
+        mock_request.query_params.get.return_value = "invalid-uuid-string"
+        mock_dao = AsyncMock()
+
+        with patch.object(exec_module, "AsyncDAO", return_value=mock_dao):
+            register(MagicMock(), mock_rt)
+            response = await routes["/tasktype_docstring"](mock_request)
+            assert isinstance(response, Response)
+            assert response.status_code == 500
 
     @pytest.mark.asyncio
     async def test_pipeline_card_invalid_exec_id(self, route_capturer, mock_request):
@@ -365,6 +382,37 @@ class TestRegisterRoutes:
             response = await routes["/pipeline-card"](mock_request)
             assert isinstance(response, HTMLResponse)
             assert response.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_pipeline_card_s3_artifacts_store(
+        self, route_capturer, mock_request, mock_env, bucket_name
+    ):
+        """Covers the branch where the artifacts store root is an S3 URI,
+        exercising the S3 read path rather than the local filesystem path."""
+        routes, mock_rt = route_capturer
+        mock_request.query_params.get.return_value = "1"
+        mock_dao = AsyncMock()
+        mock_exec = MagicMock()
+        mock_exec.name = "test_pipeline"
+        mock_dao.get_execution.return_value = mock_exec
+
+        # Upload a mock pipeline card to the session-scoped MinIO bucket
+        s3 = boto3.client("s3")
+        s3.put_object(
+            Bucket=bucket_name,
+            Key="test_pipeline/1/pipeline_card.html",
+            Body="<html>s3 card</html>",
+        )
+
+        with (
+            patch.dict(os.environ, {"RP_ARTIFACTS_STORE": f"s3://{bucket_name}/"}),
+            patch.object(exec_module, "AsyncDAO", return_value=mock_dao),
+        ):
+            register(MagicMock(), mock_rt)
+            response = await routes["/pipeline-card"](mock_request)
+            assert isinstance(response, HTMLResponse)
+            assert response.status_code == 200
+            assert response.body == b"<html>s3 card</html>"
 
     @pytest.mark.asyncio
     async def test_get_task_traces_invalid_task_id(self, route_capturer, mock_request):

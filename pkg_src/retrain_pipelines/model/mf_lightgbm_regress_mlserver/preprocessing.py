@@ -2,7 +2,6 @@ import inspect
 import json
 import logging
 import os
-import shutil
 
 import numpy as np
 import pandas as pd
@@ -14,7 +13,7 @@ def preprocess_data_fct(
     encoder: OrdinalEncoder,
     buckets: dict | None,
     is_training: bool = False,
-    local_path: str = "",
+    path: str = "",
 ) -> pd.DataFrame:
     """Apply feature engineering.
 
@@ -41,9 +40,9 @@ def preprocess_data_fct(
     is_training : bool
         whether or not the call to the herein function
         is made from the model training loop
-    local_path : str, Optional
-        path to be used for the serialization
-        of the fitted artifacts.
+    path : str, Optional
+        path (local or S3 URI) to be used
+        for the serialization of the fitted artifacts.
         Ignored if 'is_training' is false.
 
     Returns
@@ -90,15 +89,21 @@ def preprocess_data_fct(
         del X_raw[bucketize_feature]
         buckets_dict = {**buckets_dict, **{bucketize_feature: bin_bounds.tolist()}}
     if is_training:
+        # inline import so that, when inferring, the herein module
+        # doesn't have that dependency
+        from retrain_pipelines.utils.file_utils import write_text_file
+
         # refresh the dict content
         # without changing its address in memory
         # to allow for upward artifact saving !
         buckets.clear()
         buckets.update(buckets_dict)
         # serialize bukets edges info
-        buckets_dict_path = os.path.join(local_path, "buckets_params.json")
-        with open(buckets_dict_path, "w") as json_file:
-            json.dump(buckets_dict, json_file)
+        write_text_file(
+            path,
+            ["buckets_params.json"],
+            json.dumps(buckets_dict),
+        )
     logging.getLogger().info(f"buckets_dict : {buckets_dict}")
 
     # Separate numerical and categorical columns
@@ -122,9 +127,11 @@ def preprocess_data_fct(
                 )
             }
             logging.getLogger().info(f"encoder_dict : {encoder_dict}")
-            encoder_dict_path = os.path.join(local_path, "encoder_params.json")
-            with open(encoder_dict_path, "w") as json_file:
-                json.dump(encoder_dict, json_file)
+            write_text_file(
+                path,
+                ["encoder_params.json"],
+                json.dumps(encoder_dict),
+            )
         else:
             X_encoded = pd.DataFrame(
                 encoder.transform(X_raw[categorical_features]),
@@ -133,9 +140,11 @@ def preprocess_data_fct(
     else:
         if is_training:
             encoder_dict = {}
-            encoder_dict_path = os.path.join(local_path, "encoder_params.json")
-            with open(encoder_dict_path, "w") as json_file:
-                json.dump(encoder_dict, json_file)
+            write_text_file(
+                path,
+                ["encoder_params.json"],
+                json.dumps(encoder_dict),
+            )
         X_encoded = pd.DataFrame()
 
     # Combine numerical and encoded categorical features
@@ -144,6 +153,8 @@ def preprocess_data_fct(
     if is_training:
         # save preprocessing as artefact
         src_path = inspect.getfile(preprocess_data_fct)
-        shutil.copy(src_path, os.path.join(local_path, os.path.basename(src_path)))
+        with open(src_path, encoding="utf-8") as f:
+            src_code = f.read()
+        write_text_file(path, [os.path.basename(src_path)], src_code)
 
     return X_preprocessed

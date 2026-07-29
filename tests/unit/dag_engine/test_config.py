@@ -64,6 +64,13 @@ class TestAssetsCacheRoot:
         assert root == expected
         assert custom_path.exists()
 
+    def test_s3_path(self, bucket_name, monkeypatch):
+        """Assets cache root should handle S3 URIs and ensure bucket exists."""
+        s3_uri = f"s3://{bucket_name}/cache/"
+        monkeypatch.setenv("RP_ASSETS_CACHE", s3_uri)
+        root = Config.get_assets_cache_root()
+        assert root == s3_uri
+
 
 class TestArtifactsStoreRoot:
     """Tests for `get_artifacts_store_root`."""
@@ -86,6 +93,13 @@ class TestArtifactsStoreRoot:
         assert root == expected
         assert custom_path.exists()
 
+    def test_s3_path(self, bucket_name, monkeypatch):
+        """Artifacts store root should handle S3 URIs and ensure bucket exists."""
+        s3_uri = f"s3://{bucket_name}/artifacts/"
+        monkeypatch.setenv("RP_ARTIFACTS_STORE", s3_uri)
+        root = Config.get_artifacts_store_root()
+        assert root == s3_uri
+
 
 class TestWebServerLogsRoot:
     """Tests for `get_web_server_logs_root`."""
@@ -107,6 +121,13 @@ class TestWebServerLogsRoot:
         expected = str(custom_path) + os.sep
         assert root == expected
         assert custom_path.exists()
+
+    def test_s3_path(self, bucket_name, monkeypatch):
+        """Web server logs root should handle S3 URIs and ensure bucket exists."""
+        s3_uri = f"s3://{bucket_name}/logs/"
+        monkeypatch.setenv("RP_WEB_SERVER_LOGS", s3_uri)
+        root = Config.get_web_server_logs_root()
+        assert root == s3_uri
 
 
 class TestPorts:
@@ -176,6 +197,21 @@ class TestMetadataStoreURL:
         monkeypatch.setenv("RP_METADATASTORE_URL", custom_url)
         assert Config.get_metadatastore_url() == custom_url
 
+    def test_invalid_sqlite_parent_raises(self, monkeypatch):
+        """Should raise FileNotFoundError if SQLite parent directory does not exist."""
+        monkeypatch.setenv(
+            "RP_METADATASTORE_URL", "sqlite:///nonexistent_dir/db.sqlite"
+        )
+        with pytest.raises(FileNotFoundError):
+            Config.get_metadatastore_url()
+
+    def test_s3_cache_no_url_raises(self, bucket_name, monkeypatch):
+        """Should raise NotSupportedError if cache is S3 and no metadatastore URL is set."""
+        monkeypatch.setenv("RP_ASSETS_CACHE", f"s3://{bucket_name}/")
+        monkeypatch.delenv("RP_METADATASTORE_URL", raising=False)
+        with pytest.raises(NotSupportedError):
+            Config.get_metadatastore_url()
+
 
 class TestAsyncMetadataStoreURL:
     """Tests for `get_metadatastore_async_url`."""
@@ -220,3 +256,11 @@ class TestAsyncMetadataStoreURL:
         with pytest.raises(NotSupportedError) as exc_info:
             Config.get_metadatastore_async_url()
         assert "mysql" in str(exc_info.value)
+
+    def test_s3_cache_no_url_raises(self, bucket_name, monkeypatch):
+        """Should raise NotSupportedError if cache is S3 and no async metadatastore URL is set."""
+        monkeypatch.setenv("RP_ASSETS_CACHE", f"s3://{bucket_name}/")
+        monkeypatch.delenv("RP_METADATASTORE_ASYNC_URL", raising=False)
+        monkeypatch.delenv("RP_METADATASTORE_URL", raising=False)
+        with pytest.raises(NotSupportedError):
+            Config.get_metadatastore_async_url()

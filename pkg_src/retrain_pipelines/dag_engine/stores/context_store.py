@@ -1,5 +1,5 @@
 """
-Disk serialization utilities for DAG task execution context.
+Serialization utilities for DAG task execution context.
 
 Artifacts layout under {Config.get_assets_cache_root()}/metadata/ (a.k.a. metadata_root()):
   <exec_id>/<task_id>/<attr_name>.pkl  - cloudpickled context attribute values written at
@@ -16,6 +16,7 @@ Attrs with None values are ignored (equivalent to deleted entries).
 import os
 from typing import Any
 
+from ...utils.file_utils import write_binary_file
 from .commons import compute_sha, metadata_root, try_json_serialize
 
 # Context attrs injected by dag.init() that must never be serialized as serialized user context
@@ -80,10 +81,7 @@ def _serialize_attr(
 
         raw_bytes = cloudpickle.dumps(value)
         rel_path = context_attr_disk_path(exec_id, task_id, attr_name)
-        abs_path = os.path.join(metadata_root(), rel_path)
-        os.makedirs(os.path.dirname(abs_path), exist_ok=True)
-        with open(abs_path, "wb") as fh:
-            fh.write(raw_bytes)
+        write_binary_file(metadata_root(), [rel_path], raw_bytes)
         ref = {"sha": current_sha, "disk_ref": rel_path, "inline": None}
         row = {
             "task_id": task_id,

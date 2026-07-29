@@ -5,11 +5,15 @@ Unit tests for retrain_pipelines.dag_engine.stores.params_store.
 import os
 import re
 import platform
+import boto3
+import botocore
+import pytest
 from unittest.mock import MagicMock
 
 
 from retrain_pipelines.dag_engine.stores import params_store
 from retrain_pipelines.dag_engine.stores.commons import DISK_REF_KEY, metadata_root
+from retrain_pipelines.utils.s3_utils import parse_s3_uri
 
 
 class TestTempDirId:
@@ -101,8 +105,8 @@ class TestLinkParamsDefaultsToExec:
     def test_windows_junction(self, monkeypatch):
         """On Windows/WSL DrvFs, should use cmd.exe mklink /J.
 
-        We use a /mnt/ path format so wsl_to_windows_path succeeds naturally
-        without mocking retrain_pipelines imports.
+        We mock the WSL path detection helpers to simulate a DrvFs mount
+        deterministically without relying on real OS state.
         """
         # Must use /mnt/ path so wsl_to_windows_path doesn't raise ValueError
         monkeypatch.setenv("RP_ASSETS_CACHE", "/mnt/c/fake_cache")
@@ -125,11 +129,14 @@ class TestLinkParamsDefaultsToExec:
         # patch it so it never fires on any test machine.
         monkeypatch.setattr(os.path, "islink", lambda p: False)
 
-        # Force platform.system to return Windows to trigger Windows branch
-        monkeypatch.setattr(platform, "system", lambda: "Windows")
-
-        if hasattr(params_store.is_windows_path, "cache_clear"):
-            params_store.is_windows_path.cache_clear()
+        # Simulate WSL DrvFs mount deterministically
+        monkeypatch.setattr(params_store, "is_windows_path", lambda p: True)
+        monkeypatch.setattr(params_store, "is_wsl_mount_path", lambda p: True)
+        monkeypatch.setattr(
+            params_store,
+            "wsl_to_windows_path",
+            lambda p: p.replace("/mnt/c", "C:\\").replace("/", "\\"),
+        )
 
         mock_cmd = MagicMock()
 
@@ -149,9 +156,9 @@ class TestLinkParamsDefaultsToExec:
         args = mock_cmd.call_args[0][0]
 
         assert args[:4] == ["cmd.exe", "/c", "mklink", "/J"]
-        # Verify paths were converted correctly by wsl_to_windows_path
-        assert args[4] == "C:\\fake_cache\\metadata\\1\\params\\defaults"
-        assert args[5] == "C:\\fake_cache\\metadata\\temp1\\params\\defaults"
+        # Verify paths were converted correctly by mocked wsl_to_windows_path
+        assert args[4] == "C:\\\\fake_cache\\metadata\\1\\params\\defaults"
+        assert args[5] == "C:\\\\fake_cache\\metadata\\temp1\\params\\defaults"
 
     def test_windows_junction_skips_if_exists(self, tmp_path, monkeypatch):
         """If dst already exists, the function should return early without linking."""
@@ -178,6 +185,72 @@ class TestLinkParamsDefaultsToExec:
 
         # Ensure no link was created
         mock_symlink.assert_not_called()
+
+    def test_s3_marker_object_created(self, bucket_name, monkeypatch):
+        """When metadata_root() resolves to an S3 URI, the function places a
+        zero-byte marker object at the exec_id prefix whose key name encodes
+        the src_prefix.
+
+        Uses the session-scoped MinIO bucket provided by conftest.
+        The real S3 client and create_s3_prefix_symlink implementation
+        exercise the branch end-to-end.
+        """
+        prefix = "test-params-store-s3/"
+        monkeypatch.setenv("RP_ASSETS_CACHE", f"s3://{bucket_name}/{prefix}")
+
+        temp_id = "temp_s3_1"
+        exec_id = 42
+
+        s3 = boto3.client("s3")
+        bucket, meta_prefix = parse_s3_uri(metadata_root())
+        src_prefix = f"{meta_prefix}{temp_id}/params/defaults/"
+
+        # Put a dummy object in src_prefix so the real s3_prefix_has_objects()
+        # returns True and the marker object creation branch is exercised.
+        s3.put_object(Bucket=bucket, Key=f"{src_prefix}dummy.pkl", Body=b"")
+
+        params_store.link_params_defaults_to_exec(temp_id, exec_id)
+
+        # Verify the zero-byte marker object was created at the expected key.
+        # The marker's key is {dst_prefix}{readable_src_prefix}, where
+        # readable_src_prefix replaces '/' with '／' (full-width solidus).
+        readable_src_prefix = src_prefix.replace("/", "／")
+        expected_key = f"{meta_prefix}{exec_id}/params/defaults/{readable_src_prefix}"
+
+        try:
+            resp = s3.head_object(Bucket=bucket, Key=expected_key)
+            assert resp["ContentLength"] == 0
+        finally:
+            s3.delete_object(Bucket=bucket, Key=expected_key)
+            s3.delete_object(Bucket=bucket, Key=f"{src_prefix}dummy.pkl")
+
+    def test_s3_marker_object_skipped_when_src_empty(self, bucket_name, monkeypatch):
+        """When metadata_root() resolves to an S3 URI but no defaults were
+        cloudpickled under src_prefix, the function should skip marker creation.
+
+        Covers the early-return guard branch in the S3 path.
+        """
+        prefix = "test-params-store-s3-empty/"
+        monkeypatch.setenv("RP_ASSETS_CACHE", f"s3://{bucket_name}/{prefix}")
+
+        temp_id = "temp_s3_empty"
+        exec_id = 43
+
+        s3 = boto3.client("s3")
+        bucket, meta_prefix = parse_s3_uri(metadata_root())
+
+        # Call function without creating any objects in src_prefix.
+        # The real s3_prefix_has_objects() will return False.
+        params_store.link_params_defaults_to_exec(temp_id, exec_id)
+
+        src_prefix = f"{meta_prefix}{temp_id}/params/defaults/"
+        readable_src_prefix = src_prefix.replace("/", "／")
+        expected_key = f"{meta_prefix}{exec_id}/params/defaults/{readable_src_prefix}"
+
+        # Assert marker object was NOT created
+        with pytest.raises(botocore.exceptions.ClientError) as exc_info:
+            s3.head_object(Bucket=bucket, Key=expected_key)
+        assert exc_info.value.response["Error"]["Code"] == "404"
 
 
 class TestValueToStorable:

@@ -161,7 +161,7 @@ class TestExecutionParams:
             f"{_MODULE}.load_from_disk", return_value="unpickled_value"
         ) as mock_load:
             result = params.default("p")
-        mock_load.assert_called_once_with("/tmp/meta/some/path.pkl")
+        mock_load.assert_called_once_with("/tmp/meta", "some/path.pkl")
         assert result == "unpickled_value"
 
     def test_default_no_default_key_returns_none(self):
@@ -201,7 +201,7 @@ class TestExecutionParams:
         assert p1.param_equals("m", p2) is False
 
     def test_diff(self):
-        # Include a disk‑ref param to exercise the branch inside _sha()
+        # Include a disk-ref param to exercise the branch inside _sha()
         disk_ref = {"__disk_ref__": "path", "__sha__": "abc123"}
         p1 = ExecutionParams(
             {
@@ -587,7 +587,7 @@ class TestTaskExitContext:
         # Patch at the source module where it's defined/imported
         with patch(f"{_MODULE}.load_from_disk", return_value="unpickled") as mock_load:
             val = ctx["a"]
-            mock_load.assert_called_once_with("/tmp/path.pkl")
+            mock_load.assert_called_once_with("/tmp", "path.pkl")
             assert val == "unpickled"
 
     def test_get_found_and_not_found(self):

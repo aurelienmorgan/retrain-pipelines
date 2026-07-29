@@ -49,4 +49,6 @@ repos:
         name: pytest unit
         language: system
         pass_filenames: false
-        entry: pytest tests/unit --cov=pkg_src/retrain_pipelines/dag_engine --cov-report=term-missing --cov-config=pkg_src/pyproject.toml
+        entry: bash tests/unit/pytest_unit_with_minio.sh
+        # Only run when source, or tests stack change.
+        files: ^(pkg_src/|tests/)

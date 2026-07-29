@@ -1,5 +1,6 @@
 import builtins
 import inspect
+import io
 import logging
 import os
 import re
@@ -7,13 +8,14 @@ import sys
 from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from datetime import datetime
 from types import FrameType
-from typing import Any, TextIO
+from typing import Any
 
 from rich.console import Console
 from rich.highlighter import ReprHighlighter
 from rich.text import Text
 
 from ..utils import in_notebook
+from ..utils.s3_utils import S3TextStream, is_s3_path
 
 if in_notebook():
     from .nb_console_print import nb_activate, nb_console_print, nb_deactivate
@@ -104,7 +106,7 @@ class CustomRichHandler(logging.Handler):
                 level_text = Text(f"{record.levelname}: ", style=style)
 
             filename = os.path.basename(record.pathname)
-            if "traceback.py" == os.path.splitext(filename)[0]:
+            if "traceback.py" == filename:
                 parsed_traceback = parse_msg(record.getMessage())
                 if parsed_traceback is not None:
                     (filename, lineno, msg_str) = parsed_traceback
@@ -486,7 +488,7 @@ class RichLoggingController:
 
 
 @contextmanager
-def rp_redirect_stdout(file: TextIO):
+def rp_redirect_stdout(target: str):
     """Generate context manager to redirect streamhandlers.
 
     when RichLoggingController is active.
@@ -497,39 +499,51 @@ def rp_redirect_stdout(file: TextIO):
 
     Parameters
     ----------
-    file : TextIO
-        File object to redirect stdout to
+    target : str
+        File path (local or S3 URI) to redirect stdout to.
 
     Examples
     --------
-    >>> with open('output.txt', 'w') as f:
-    ...     with rp_redirect_stdout(f):
-    ...         print("This goes to the file")
-    ...         logging.warning("This too, plain format")
+    >>> with rp_redirect_stdout('output.txt'):
+    ...     print("This goes to the file")
+    ...     logging.warning("This too, plain format")
     """
-    if _global_controller is None or not _global_controller._active:
-        # Controller not active, use normal redirect
-        with redirect_stdout(file), redirect_stderr(file):
-            yield
+    file_ctx: io.TextIOBase
+    if is_s3_path(target):
+        file_ctx = S3TextStream(target)
     else:
-        controller = _global_controller
-        controller.deactivate()
+        # Ensure local directory exists
+        local_dir = os.path.dirname(target)
+        if local_dir:
+            os.makedirs(local_dir, exist_ok=True)
+        file_ctx = open(target, "w", encoding="utf-8")
 
-        try:
-            with redirect_stdout(file), redirect_stderr(file):
-                # Create handler AFTER redirect
-                # so sys.stdout is already the file
-                root_logger = logging.getLogger()
-                # make sys.stdout BE the file
-                temp_handler = logging.StreamHandler(sys.stdout)
-                temp_handler.setFormatter(logging.Formatter("%(levelname)s:%(name)s:%(message)s"))
-                root_logger.addHandler(temp_handler)
+    with file_ctx as file_obj:
+        if _global_controller is None or not _global_controller._active:
+            # Controller not active, use normal redirect
+            with redirect_stdout(file_obj), redirect_stderr(file_obj):
+                yield
+        else:
+            controller = _global_controller
+            controller.deactivate()
 
-                try:
-                    yield
-                finally:
-                    # Clean up temp handler
-                    root_logger.removeHandler(temp_handler)
-        finally:
-            # Reactivate controller
-            controller.activate()
+            try:
+                with redirect_stdout(file_obj), redirect_stderr(file_obj):
+                    # Create handler AFTER redirect
+                    # so sys.stdout is already the file
+                    root_logger = logging.getLogger()
+                    # make sys.stdout BE the file
+                    temp_handler = logging.StreamHandler(sys.stdout)
+                    temp_handler.setFormatter(
+                        logging.Formatter("%(levelname)s:%(name)s:%(message)s")
+                    )
+                    root_logger.addHandler(temp_handler)
+
+                    try:
+                        yield
+                    finally:
+                        # Clean up temp handler
+                        root_logger.removeHandler(temp_handler)
+            finally:
+                # Reactivate controller
+                controller.activate()

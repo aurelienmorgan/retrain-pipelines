@@ -1,5 +1,7 @@
 import os
+import shutil
 import sys
+import tempfile
 from datetime import datetime
 
 import matplotlib.pyplot as plt
@@ -9,7 +11,9 @@ from huggingface_hub.utils import RepositoryNotFoundError
 from matplotlib.figure import Figure
 
 from retrain_pipelines import __version__
+from retrain_pipelines.utils.file_utils import write_text_file
 from retrain_pipelines.utils.hf_utils import get_commit_created_at, local_repo_folder_to_hub
+from retrain_pipelines.utils.s3_utils import copy_s3_prefix_to_local, is_s3_path
 
 
 def push_model_version_to_hub(
@@ -35,7 +39,7 @@ def push_model_version_to_hub(
     Parameters
     ----------
     repo_id : str
-        Path to the HuggingFace model version
+        Path to the Hugging Face model version
         (is created if needed and if authorized).
     model_version_blessed : bool
         Whether the model version is blessed ;
@@ -62,8 +66,7 @@ def push_model_version_to_hub(
     str
         Commit hash on the HF hub for the new model version.
     """
-    with open(os.path.join(model_dir, "README.md"), "w") as f:
-        f.write(model_readme_content)
+    write_text_file(model_dir, ["README.md"], content=model_readme_content)
 
     commit_message = (
         f"v{version_label} - {timestamp_str} - "
@@ -74,14 +77,28 @@ def push_model_version_to_hub(
 
     branch_name = "main" if model_version_blessed else "retrain-pipelines_not-blessed"
 
-    model_version_commit_hash = local_repo_folder_to_hub(
-        repo_id=repo_id,
-        branch_name=branch_name,
-        local_folder=model_dir,
-        commit_message=commit_message,
-        repo_type="model",
-        hf_token=hf_token,
-    )
+    tmp_dir = None
+    try:
+        if is_s3_path(model_dir):
+            # Hugging Face's HfApi internally requires a local directory for the upload.
+            # If the artifacts are on S3, download them to a temporary local directory.
+            tmp_dir = tempfile.mkdtemp()
+            copy_s3_prefix_to_local(model_dir, tmp_dir)
+            folder_to_upload = tmp_dir
+        else:
+            folder_to_upload = model_dir
+
+        model_version_commit_hash = local_repo_folder_to_hub(
+            repo_id=repo_id,
+            branch_name=branch_name,
+            local_folder=folder_to_upload,
+            commit_message=commit_message,
+            repo_type="model",
+            hf_token=hf_token,
+        )
+    finally:
+        if tmp_dir is not None:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
     if model_version_commit_hash is None:
         raise RuntimeError("Failed to push model version to Hugging Face Hub.")
@@ -109,7 +126,7 @@ def current_blessed_model_version_dict(
     Parameters
     ----------
     repo_id : str
-        Path to the HuggingFace model.
+        Path to the Hugging Face model.
     hf_token : Optional, str
         "create on namespace" permission required.
 

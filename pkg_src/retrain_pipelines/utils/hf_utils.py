@@ -27,7 +27,7 @@ def _repo_branch_commits_files(
     Parameters
     ----------
     repo_id : str
-        Path to the HuggingFace dataset.
+        Path to the Hugging Face dataset.
     repo_type : str
         can be "model", "dataset", "space".
     repo_branch : str
@@ -68,7 +68,7 @@ def get_repo_branches_commits_files(repo_id: str, repo_type: str = "model") -> d
     Parameters
     ----------
     repo_id : str
-        Path to the HuggingFace dataset.
+        Path to the Hugging Face dataset.
     repo_type : str
         can be "model", "dataset", "space".
 
@@ -124,7 +124,7 @@ def get_latest_README_commit(
     Parameters
     ----------
     repo_id : str
-        Path to the HuggingFace repository.
+        Path to the Hugging Face repository.
     target_commit_hash : Optional, str
         particular "revision" of the repository
         to scan.
@@ -209,7 +209,7 @@ def get_arxiv_codes(
     Parameters
     ----------
     repo_id : str
-        Path to the HuggingFace repository.
+        Path to the Hugging Face repository.
     repo_type : str
         can be "model", "dataset", "space".
     commit_hash : Optional, str
@@ -281,7 +281,7 @@ def get_license_label(
     Parameters
     ----------
     repo_id : str
-        Path to the HuggingFace repository.
+        Path to the Hugging Face repository.
     repo_type : str
         can be "model", "dataset", "space".
     commit_hash : Optional, str
@@ -325,7 +325,7 @@ def get_pretty_name(
     Parameters
     ----------
     repo_id : str
-        Path to the HuggingFace repository.
+        Path to the Hugging Face repository.
     repo_type : str
         can be "model", "dataset", "space".
     commit_hash : Optional, str
@@ -416,7 +416,7 @@ def get_repo_latest_version(
     Parameters
     ----------
     repo_id : str
-        Path to the HuggingFace repository.
+        Path to the Hugging Face repository.
     repo_type : str
         can be "model", "dataset", "space".
     hf_token : Optional, str
@@ -485,7 +485,7 @@ def get_new_repo_minor_version(
     Parameters
     ----------
     repo_id : str
-        Path to the HuggingFace repository.
+        Path to the Hugging Face repository.
     repo_type : str
         can be "model", "dataset", "space".
     hf_token : Optional, str
@@ -529,7 +529,7 @@ def create_repo_if_not_exists(
     hf_api : HfApi
         An instanciated FH api object.
     repo_id : str
-        Path to the HuggingFace repository.
+        Path to the Hugging Face repository.
     repo_type : str
         can be "model", "dataset", "space".
     hf_token : Optional, str
@@ -548,7 +548,7 @@ def create_repo_if_not_exists(
         print(
             f"Failed to create {repo_type} `{repo_id.split('/')[1]}` "
             + f"under the `{repo_id.split('/')[0]}` namespace "
-            + "on the HuggingFace Hub.\n"
+            + "on the Hugging Face Hub.\n"
             + "Does the HF_TOKEN you use have the permission "
             + "on that namespace ?",
             file=sys.stderr,
@@ -580,7 +580,7 @@ def create_repo_if_not_exists(
                         f"Failed to create branch {branch_name} for "
                         + f"{repo_type} `{repo_id.split('/')[1]}` "
                         + f"under the `{repo_id.split('/')[0]}` namespace "
-                        + "on the HuggingFace Hub.",
+                        + "on the Hugging Face Hub.",
                         file=sys.stderr,
                     )
                     print("".join(traceback.format_exception(type(err), err, err.__traceback__)))
@@ -590,7 +590,7 @@ def create_repo_if_not_exists(
                     f"Failed to create branch {branch_name} for "
                     + f"{repo_type} `{repo_id.split('/')[1]}` "
                     + f"under the `{repo_id.split('/')[0]}` namespace "
-                    + "on the HuggingFace Hub.",
+                    + "on the Hugging Face Hub.",
                     file=sys.stderr,
                 )
                 print("".join(traceback.format_exception(type(err), err, err.__traceback__)))
@@ -622,7 +622,7 @@ def local_repo_folder_to_hub(
     Parameters
     ----------
     repo_id : str
-        Path to the HuggingFace repository version
+        Path to the Hugging Face repository version
         (is created if needed and if authorized).
     local_folder : str
         path to the source folder to be pushed.
@@ -659,13 +659,16 @@ def local_repo_folder_to_hub(
         repository_new_commit_hash = repository_new_commit.oid
     except HfHubHTTPError as err:
         print(
-            f"Failed to upload {repo_type} to HuggingFace Hub.\n"
+            f"Failed to upload {repo_type} to Hugging Face Hub.\n"
             + "Is 'write' permission associated to "
             + "the HF_TOKEN you use ?\n"
             + f"On the `{repo_id.split('/')[0]}` namespace ?",
             file=sys.stderr,
         )
-        print("".join(traceback.format_exception(type(err), err, err.__traceback__)))
+        print(
+            "".join(traceback.format_exception(type(err), err, err.__traceback__)),
+            file=sys.stderr,
+        )
         return None
 
     return repository_new_commit_hash
@@ -686,11 +689,11 @@ def push_files_to_hub_repo_branch(
     Parameters
     ----------
     repo_id : str
-        Path to the target HuggingFace
+        Path to the target Hugging Face
         repository.
     branch_name : str
         Name of the target branch
-        on the HuggingFace repository.
+        on the Hugging Face repository.
     file_fullnames : List[str]
         list of local fullpaths to
         files to be uploaded
@@ -767,7 +770,7 @@ def get_commit_created_at(
     hf_api : HfApi
         An instanciated FH api object.
     repo_id : str
-        Path to the HuggingFace repository.
+        Path to the Hugging Face repository.
     revision : str
         commit hash or branch name.
         If branch name, we consider

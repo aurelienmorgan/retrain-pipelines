@@ -38,7 +38,6 @@ shutdown.
 import asyncio
 import atexit
 import hashlib
-import os
 import threading
 from collections.abc import Coroutine
 from datetime import datetime
@@ -170,7 +169,7 @@ class ExecutionParams:
     def _resolve(self, storable: Any) -> Any:
         """Resolve storable using this execution's metadata_root."""
         if is_disk_ref(storable):
-            return load_from_disk(os.path.join(self._metadata_root, storable[DISK_REF_KEY]))
+            return load_from_disk(self._metadata_root, storable[DISK_REF_KEY])
         return storable
 
     def __getitem__(self, key: str) -> Any:
@@ -345,7 +344,7 @@ class TaskExitContext:
     def __getitem__(self, key: str) -> Any:
         row = self._index[key]
         if row.disk_ref is not None:
-            return load_from_disk(os.path.join(self._metadata_root, row.disk_ref))
+            return load_from_disk(self._metadata_root, row.disk_ref)
         return row.inline_val
 
     def get(self, key: str, default: Any = None) -> Any:
@@ -467,7 +466,7 @@ class Execution(BaseModel):
     )
     success: bool = Field(..., description="Whether execution completed successfully")
     metadata_root: str = Field(
-        None,
+        ...,
         description=(
             "Absolute path to {Config.get_assets_cache_root()}/metadata/ as it was on the machine "
             "and at the time this execution ran. Used by SDK read methods to resolve "
@@ -661,7 +660,7 @@ class Task(BaseModel):
     )
     success: bool | None = Field(None, description="Whether task completed successfully")
     metadata_root: str = Field(
-        None,
+        ...,
         description=(
             "Absolute path to the metadata root from the parent execution. "
             "Propagated from Execution.metadata_root; used to resolve disk artifacts."

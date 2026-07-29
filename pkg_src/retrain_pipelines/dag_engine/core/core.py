@@ -25,6 +25,7 @@ from rich.logging import RichHandler
 from rich.markup import escape
 
 from ...utils import in_notebook
+from ...utils.file_utils import build_path
 from ...utils.rich_logging import framed_rich_log_str
 from ..config import Config
 from ..db.dao import DAO
@@ -1477,7 +1478,10 @@ class DagExecutionContext:
         for param_name, param_dict in params_json.items():
             # Active value: override if present, else default.
             storable = param_dict.get("override", param_dict.get("default"))
-            resolved_value = resolve_storable(storable)
+            resolved_value = resolve_storable(
+                build_path(Config.get_assets_cache_root(), ("metadata",)),
+                storable,
+            )
             self._attr_refs[param_name] = attr_ref_from_param_storable(storable, resolved_value)
 
         logger.debug(f"execution context cold-start (DAG params) : {self._attr_refs}")

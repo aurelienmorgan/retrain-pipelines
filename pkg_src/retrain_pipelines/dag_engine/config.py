@@ -1,5 +1,7 @@
 import os
 
+from ..utils.s3_utils import ensure_s3_bucket, is_s3_path
+
 
 class NotSupportedError(Exception):
     """Raised when an unsupported database scheme is detected."""
@@ -32,17 +34,20 @@ class Config:
         (DAG.params, execution context, tasks payloads, etc.)
 
         The value is taken from the environment variable RP_ASSETS_CACHE if set,
-        otherwise a default under ~/.cache/retrain-pipelines/ is used.
+        otherwise a default under ``~/.cache/retrain-pipelines/`` is used.
         The path is expanded and normalized to end with a path separator.
+        S3 URIs (``s3://…``) are accepted; the bucket is created if it does not exist.
         """
         default = "~/.cache/retrain-pipelines/"
-        path = os.path.expanduser(os.environ.get("RP_ASSETS_CACHE", default))
+        path = os.environ.get("RP_ASSETS_CACHE", default)
+
+        if is_s3_path(path):
+            ensure_s3_bucket(path)
+            return path.rstrip("/") + "/"
+
+        path = os.path.expanduser(path)
         Config._ensure_dir(path)
-
-        # ensure the returned path ends with a separator
-        assets_cache_root = path.rstrip(os.sep) + os.sep
-
-        return assets_cache_root
+        return path.rstrip(os.sep) + os.sep
 
     ################################################################
     #                      RP_ARTIFACTS_STORE                      #
@@ -58,14 +63,19 @@ class Config:
          Feature engineering outputs, etc.).
 
         The value is taken from the environment variable RP_ARTIFACTS_STORE if set,
-        otherwise a default under <assets_cache>/artifacts/ is used.
+        otherwise a default under ``<assets_cache>/artifacts/`` is used.
         The path is expanded and normalized to end with a path separator.
+        S3 URIs (``s3://…``) are accepted; the bucket is created if it does not exist.
         """
         default = os.path.join(Config.get_assets_cache_root(), "artifacts")
-        path = os.path.expanduser(os.environ.get("RP_ARTIFACTS_STORE", default))
-        Config._ensure_dir(path)
+        path = os.environ.get("RP_ARTIFACTS_STORE", default)
 
-        # ensure the returned path ends with a separator
+        if is_s3_path(path):
+            ensure_s3_bucket(path)
+            return path.rstrip("/") + "/"
+
+        path = os.path.expanduser(path)
+        Config._ensure_dir(path)
         return path.rstrip(os.sep) + os.sep
 
     ################################################################
@@ -79,14 +89,19 @@ class Config:
         Which is used for "local" installs of the web UI.
 
         The value is taken from the environment variable RP_WEB_SERVER_LOGS if set,
-        otherwise a default under <assets_cache>/logs/web_server/ is used.
+        otherwise a default under ``<assets_cache>/logs/web_server/`` is used.
         The path is expanded and normalized to end with a path separator.
+        S3 URIs (``s3://…``) are accepted; the bucket is created if it does not exist.
         """
         default = os.path.join(Config.get_assets_cache_root(), "logs", "web_server")
-        path = os.path.expanduser(os.environ.get("RP_WEB_SERVER_LOGS", default))
-        Config._ensure_dir(path)
+        path = os.environ.get("RP_WEB_SERVER_LOGS", default)
 
-        # ensure the returned path ends with a separator
+        if is_s3_path(path):
+            ensure_s3_bucket(path)
+            return path.rstrip("/") + "/"
+
+        path = os.path.expanduser(path)
+        Config._ensure_dir(path)
         return path.rstrip(os.sep) + os.sep
 
     ################################################################
@@ -121,7 +136,7 @@ class Config:
 
         The value is taken from the environment variable RP_WEB_SERVER_URL if set
         (in which case RP_WEB_SERVER_PORT is ignored),
-        otherwise constructed as http://localhost:{RP_WEB_SERVER_PORT}/ where
+        otherwise constructed as ``http://localhost:{RP_WEB_SERVER_PORT}/`` where
         RP_WEB_SERVER_PORT defaults to "5001".
 
         Note:
@@ -143,11 +158,18 @@ class Config:
 
         The value is taken from the environment variable RP_METADATASTORE_URL if set
         (beware that we perform no connextion-string validation against it),
-        otherwise constructed as sqlite:///<assets_cache_root>local_metadatastore.db?timeout=10.0
+        otherwise constructed as ``sqlite:///<assets_cache_root>local_metadatastore.db?timeout=10.0``
         where assets_cache_root is provided by get_assets_cache_root().
 
         We instruct SQLite to wait for a lock to be released before raising a "db locked" error
         on concurrency issue. Setting a timeout in the URL.
+
+        Raises
+        ------
+            NotSupportedError: If RP_METADATASTORE_URL is unset and the default assets cache
+                is an S3 path, since SQLite cannot operate over S3.
+            FileNotFoundError: If the resolved URL is a ``sqlite:///`` path whose parent
+                directory does not exist.
 
         Note:
         -----
@@ -158,9 +180,33 @@ class Config:
         ...    "postgresql://postgres:mypassword@host:port/postgres",
         ...)
         ```
+        Avoid Pgpooler "transaction" or "statement" modes.
+        They do not support prepared statements properly.
         """
-        default = f"sqlite:///{Config.get_assets_cache_root()}local_metadatastore.db?timeout=10.0"
-        return os.environ.get("RP_METADATASTORE_URL", default)
+        assets_cache_root = Config.get_assets_cache_root()
+
+        if is_s3_path(assets_cache_root) and "RP_METADATASTORE_URL" not in os.environ:
+            raise NotSupportedError(
+                "RP_ASSETS_CACHE is an S3 URI ; SQLite cannot operate over S3. "
+                "Set RP_METADATASTORE_URL to a local path (``sqlite:///….db?timeout=10.0``) "
+                "or a network database (e.g. ``postgresql://…``)."
+            )
+
+        default = f"sqlite:///{assets_cache_root}local_metadatastore.db?timeout=10.0"
+        url = os.environ.get("RP_METADATASTORE_URL", default)
+
+        if url.startswith("sqlite:///"):
+            # The .db file need not exist yet ; validate only that the parent directory does.
+            # strip scheme and query string:
+            # ``sqlite:///path/to/file.db?timeout=10.0`` => ``path/to/file.db``
+            parent = os.path.dirname(url[len("sqlite:///") :].split("?")[0]) or "."
+            if not os.path.isdir(parent):
+                raise FileNotFoundError(
+                    f"SQLite parent directory does not exist: {parent!r} "
+                    f"(resolved from RP_METADATASTORE_URL={url!r})."
+                )
+
+        return url
 
     ################################################################
     #                RP_METADATASTORE_ASYNC_URL                #
@@ -181,7 +227,8 @@ class Config:
 
         Raises
         ------
-            NotSupportedError: If the scheme in RP_METADATASTORE_URL is not recognised.
+            NotSupportedError: If the scheme in RP_METADATASTORE_URL is not recognised,
+                or if RP_METADATASTORE_URL is unset and the default assets cache is an S3 path.
 
         Note:
         -----
@@ -199,6 +246,8 @@ class Config:
             return env_url
 
         # Otherwise derive from sync URL
+        # (get_metadatastore_url raises NotSupportedError
+        #  if assets cache is S3 with no explicit URL)
         sync_url = Config.get_metadatastore_url()
 
         if sync_url.startswith("sqlite://"):

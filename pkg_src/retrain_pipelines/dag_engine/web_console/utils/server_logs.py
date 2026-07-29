@@ -1,18 +1,24 @@
 import asyncio
 import glob
+import io
 import json
 import logging
 import os
-from datetime import datetime
+import threading
+from datetime import date, datetime
 from http import HTTPStatus
 
+import boto3
 import regex
 import tzlocal
+from botocore.exceptions import ClientError
 from fasthtml.common import Div, Span, WebSocket
 from pydantic import BaseModel, field_validator
 from uvicorn.logging import AccessFormatter
 
 from ....utils import rgb_to_rgba, strip_ansi_escape_codes
+from ....utils.file_utils import build_path
+from ....utils.s3_utils import is_s3_path, parse_s3_uri
 from ....utils.wsl_utils import is_wsl, is_wsl_mount_path
 from ...config import Config
 
@@ -25,7 +31,167 @@ logger.setLevel(logging.INFO)
 # ---- Standard daily journalisation ----
 
 
+class S3RotatingLogHandler(logging.Handler):
+    """Logging handler that buffers records and rotates/uploads to S3 daily.
+
+    Behaves analogously to ``TimedRotatingFileHandler(when='midnight',
+    backupCount=N)`` but targets an S3 object instead of the local filesystem.
+
+    boto3 credentials and endpoint are resolved via the standard AWS environment
+    variables (``AWS_ACCESS_KEY_ID``, ``AWS_SECRET_ACCESS_KEY``,
+    ``AWS_ENDPOINT_URL``, etc.), making it compatible with both AWS S3 and
+    S3-compatible stores such as MinIO.
+
+    Parameters
+    ----------
+    bucket : str
+        S3 bucket name.
+    key : str
+        Full S3 object key for the active log file,
+        e.g. ``"logs/web_server/server.log"``.
+    backup_count : int
+        Number of daily-rotated objects to retain.
+    flush_every : int
+        Flush the in-memory buffer to S3 after this many records.
+        A lower value increases recency at the cost of more S3 API calls.
+    """
+
+    def __init__(
+        self,
+        bucket: str,
+        key: str,
+        backup_count: int = 7,
+        flush_every: int = 10,
+    ):
+        super().__init__()
+        self._bucket = bucket
+        self._key = key
+        self._backup_count = backup_count
+        self._flush_every = flush_every
+        self._buffer = io.StringIO()
+        self._pending = 0
+        self._lock = threading.Lock()
+        self._current_date = date.today()
+        self._s3 = boto3.client("s3")
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            msg = self.format(record) + "\n"
+            with self._lock:
+                today = date.today()
+                if today != self._current_date:
+                    self._rotate(self._current_date)
+                    self._current_date = today
+                self._buffer.write(msg)
+                self._pending += 1
+                if self._pending >= self._flush_every:
+                    self._flush_locked()
+        except Exception:
+            self.handleError(record)
+
+    def _flush_locked(self) -> None:
+        """Upload buffered content to S3, appending to the existing object.
+
+        Caller must hold ``self._lock``.
+        """
+        content = self._buffer.getvalue()
+        if not content:
+            return
+        try:
+            existing = b""
+            try:
+                resp = self._s3.get_object(Bucket=self._bucket, Key=self._key)
+                existing = resp["Body"].read()
+            except ClientError as e:
+                if e.response["Error"]["Code"] not in ("NoSuchKey", "404"):
+                    raise
+            self._s3.put_object(
+                Bucket=self._bucket,
+                Key=self._key,
+                Body=existing + content.encode("utf-8"),
+            )
+            self._buffer = io.StringIO()
+            self._pending = 0
+        except Exception as e:
+            # Non-blocking: keep buffer intact so records are retried on the next flush.
+            logger.warning(f"S3 log flush failed for s3://{self._bucket}/{self._key}: {e}")
+
+    def _rotate(self, rotated_date: date) -> None:
+        """Copy the active log object to a dated key and delete the original."""
+        dated_key = f"{self._key}.{rotated_date.isoformat()}"
+        try:
+            self._s3.copy_object(
+                Bucket=self._bucket,
+                CopySource={"Bucket": self._bucket, "Key": self._key},
+                Key=dated_key,
+            )
+            self._s3.delete_object(Bucket=self._bucket, Key=self._key)
+        except ClientError as e:
+            logger.warning(f"S3 log rotation failed for s3://{self._bucket}/{self._key}: {e}")
+        self._prune_old_rotations()
+
+    def _prune_old_rotations(self) -> None:
+        """Delete dated log objects beyond ``backup_count``."""
+        if not self._backup_count:
+            return
+        prefix = f"{self._key}."
+        try:
+            resp = self._s3.list_objects_v2(Bucket=self._bucket, Prefix=prefix)
+            keys = sorted(obj["Key"] for obj in resp.get("Contents", []))
+            for key in keys[: -self._backup_count]:
+                self._s3.delete_object(Bucket=self._bucket, Key=key)
+        except ClientError as e:
+            logger.warning(f"S3 log pruning failed for s3://{self._bucket}/{self._key}.*: {e}")
+
+    def flush(self) -> None:
+        with self._lock:
+            self._flush_locked()
+
+    def close(self) -> None:
+        self.flush()
+        super().close()
+
+
 def get_log_config():
+    log_root = Config.get_web_server_logs_root()
+
+    if is_s3_path(log_root):
+        bucket, key_prefix = parse_s3_uri(log_root)
+        # dictConfig resolves handler classes by dotted import path;
+        # __name__ gives the fully-qualified module name at runtime.
+        handler_class = f"{__name__}.S3RotatingLogHandler"
+        file_default_handler = {
+            "class": handler_class,
+            "bucket": bucket,
+            "key": f"{key_prefix}server.log",
+            "backup_count": 7,
+            "formatter": "default",
+        }
+        file_access_handler = {
+            "class": handler_class,
+            "bucket": bucket,
+            "key": f"{key_prefix}access.log",
+            "backup_count": 7,
+            "formatter": "access",
+        }
+    else:
+        file_default_handler = {
+            "class": "logging.handlers.TimedRotatingFileHandler",
+            "filename": os.path.join(log_root, "server.log"),
+            "when": "midnight",
+            "backupCount": 7,
+            "formatter": "default",
+            "encoding": "utf-8",
+        }
+        file_access_handler = {
+            "class": "logging.handlers.TimedRotatingFileHandler",
+            "filename": os.path.join(log_root, "access.log"),
+            "when": "midnight",
+            "backupCount": 7,
+            "formatter": "access",
+            "encoding": "utf-8",
+        }
+
     return {
         "version": 1,
         "disable_existing_loggers": False,
@@ -46,22 +212,8 @@ def get_log_config():
             },
         },
         "handlers": {
-            "file_default": {
-                "class": "logging.handlers.TimedRotatingFileHandler",
-                "filename": os.path.join(Config.get_web_server_logs_root(), "server.log"),
-                "when": "midnight",
-                "backupCount": 7,
-                "formatter": "default",
-                "encoding": "utf-8",
-            },
-            "file_access": {
-                "class": "logging.handlers.TimedRotatingFileHandler",
-                "filename": os.path.join(Config.get_web_server_logs_root(), "access.log"),
-                "when": "midnight",
-                "backupCount": 7,
-                "formatter": "access",
-                "encoding": "utf-8",
-            },
+            "file_default": file_default_handler,
+            "file_access": file_access_handler,
         },
         "loggers": {
             "uvicorn": {
@@ -391,7 +543,8 @@ def _read_last_n_lines(filename: str, n: int, regex_filter: str | None) -> list[
                 if len(filtered) >= n:
                     return [line.encode("utf-8") for line in reversed(filtered[:n])]
             else:
-                return [line.encode("utf-8") for line in str_lines[-n:]]
+                if len(str_lines) >= n:
+                    return [line.encode("utf-8") for line in str_lines[-n:]]
 
             if len(str_lines) < line_count:
                 # Reached start of file, not enough lines available
@@ -426,17 +579,11 @@ def _read_last_n_lines(filename: str, n: int, regex_filter: str | None) -> list[
                 pass
 
 
-def read_last_access_logs(
+def _fetch_last_n_lines_local(
     log_dir: str, base_filename: str, n: int, regex_filter: str | None
-) -> list[str]:
-    """Read the last n access log lines.
-
-    From current and rotated log files,
-    parse each into AccessLogEntry,
-    and return a list of html div elements.
-    """
-    # Find all log files
-    log_files = glob.glob(f"{log_dir}/{base_filename}*")
+) -> list[bytes]:
+    """Fetch the last *n* log lines from local disk across the current and rotated files."""
+    log_files = glob.glob(os.path.join(log_dir, base_filename) + "*")
     log_files.sort(key=os.path.getmtime, reverse=True)
     logger.debug(f"log_files : {log_files}")
 
@@ -449,16 +596,82 @@ def read_last_access_logs(
         if lines_needed <= 0:
             break
 
-    last_lines = lines[-n:]
+    return lines[-n:]
+
+
+def _fetch_last_n_lines_s3(
+    log_dir: str, base_filename: str, n: int, regex_filter: str | None
+) -> list[bytes]:
+    """Fetch the last *n* log lines from S3 across the current and rotated objects.
+
+    Objects are discovered by listing keys that share the ``base_filename`` prefix
+    under *log_dir* and are processed newest-first, mirroring the local-file path.
+    """
+    bucket, key_prefix = parse_s3_uri(log_dir)
+    s3 = boto3.client("s3")
+
+    try:
+        resp = s3.list_objects_v2(Bucket=bucket, Prefix=f"{key_prefix}{base_filename}")
+    except ClientError as e:
+        logger.warning(f"S3 log listing failed for s3://{bucket}/{key_prefix}{base_filename}: {e}")
+        return []
+
+    objects = sorted(
+        resp.get("Contents", []),
+        key=lambda o: o["LastModified"],
+        reverse=True,
+    )
+    logger.debug(f"S3 log objects: {[o['Key'] for o in objects]}")
+
+    filtering_pattern: regex.Pattern[str] | None = (
+        regex.compile(regex_filter) if regex_filter else None
+    )
+
+    lines: list[bytes] = []
+    lines_needed = n
+    for obj in objects:
+        if lines_needed <= 0:
+            break
+        try:
+            body = s3.get_object(Bucket=bucket, Key=obj["Key"])["Body"].read()
+        except ClientError as e:
+            logger.warning(f"S3 log read failed for s3://{bucket}/{obj['Key']}: {e}")
+            continue
+        file_lines = [ln for ln in body.splitlines() if ln.strip()]
+        if regex_filter:
+            file_lines = [
+                ln
+                for ln in file_lines
+                if filtering_pattern and filtering_pattern.match(ln.decode("utf-8", "replace"))
+            ]
+        # Prepend this object's tail so the final list is chronologically ordered
+        lines = file_lines[-lines_needed:] + lines
+        lines_needed = n - len(lines)
+
+    return lines[-n:]
+
+
+def read_last_access_logs(
+    log_dir: str, base_filename: str, n: int, regex_filter: str | None
+) -> list[str]:
+    """Read the last n access log lines.
+
+    From current and rotated log files,
+    parse each into AccessLogEntry,
+    and return a list of html div elements.
+    """
+    fetch = _fetch_last_n_lines_s3 if is_s3_path(log_dir) else _fetch_last_n_lines_local
+    raw_lines = fetch(log_dir, base_filename, n, regex_filter)
+
     log_entries = []
-    for line in last_lines:
+    for line in raw_lines:
         try:
             log_line = strip_ansi_escape_codes(line.decode("utf-8", errors="replace").strip())
             if log_line:
                 entry = AccessLogEntry.from_access_log(log_line)
                 log_entries.append(str(entry.to_fasthtml_div()))
         except Exception as ex:
-            print(f"log_file={log_file}: {type(ex).__name__}: {ex}")
+            print(f"log_file={build_path(log_dir, (base_filename,))}: {type(ex).__name__}: {ex}")
             continue
 
     return log_entries

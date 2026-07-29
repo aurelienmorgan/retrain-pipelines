@@ -154,8 +154,8 @@ def build_and_run_docker(
         container = docker_client.containers.run(
             full_image_name,
             remove=False,  # do not let auto-remove,
-            # otherwise traces after unhandled exit
-            # will never be reachable.
+            #                otherwise traces after unhandled exit
+            #                will never be reachable.
             detach=True,
             ports=ports_publish_dict or {},
             environment=env_vars_dict or {},

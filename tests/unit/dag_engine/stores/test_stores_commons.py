@@ -1,6 +1,7 @@
 """Unit tests for retrain_pipelines.dag_engine.stores.commons."""
 
 import cloudpickle
+import hashlib
 from datetime import date, datetime, timezone
 
 import pytest
@@ -13,6 +14,7 @@ from retrain_pipelines.dag_engine.stores.commons import (
     try_json_serialize,
     is_disk_ref,
     make_disk_ref,
+    compute_sha,
 )
 from retrain_pipelines.dag_engine.stores.params_store import value_to_storable
 
@@ -83,7 +85,7 @@ class TestLoadFromDisk:
         with open(abs_path, "wb") as fh:
             cloudpickle.dump({"complex": Custom(99)}, fh)
 
-        result = commons.load_from_disk(rel_path)
+        result = commons.load_from_disk(metadata_root(), rel_path)
 
         assert result == {"complex": Custom(99)}
 
@@ -106,17 +108,18 @@ class TestResolveStorable:
         # value_to_storable (params_store) creates the physical file and returns the envelope
         envelope = value_to_storable("tid", "defaults", "p", obj)
 
-        resolved = commons.resolve_storable(envelope)
+        resolved = commons.resolve_storable(metadata_root(), envelope)
 
         assert isinstance(resolved, Custom)
         assert resolved.v == 42
 
     def test_returns_non_envelope_unchanged(self):
         """When given a plain value or non-disk-ref dict, it returns it as-is."""
-        assert commons.resolve_storable(42) == 42
-        assert commons.resolve_storable("hello") == "hello"
-        assert commons.resolve_storable({"other": "dict"}) == {"other": "dict"}
-        assert commons.resolve_storable(None) is None
+        root = metadata_root()
+        assert commons.resolve_storable(root, 42) == 42
+        assert commons.resolve_storable(root, "hello") == "hello"
+        assert commons.resolve_storable(root, {"other": "dict"}) == {"other": "dict"}
+        assert commons.resolve_storable(root, None) is None
 
 
 # ---------------------------------------------------------------------------
@@ -168,3 +171,21 @@ class TestTryJsonSerialize:
 
         with pytest.raises(TypeError):
             try_json_serialize(Custom())
+
+
+# ---------------------------------------------------------------------------
+# compute_sha
+# ---------------------------------------------------------------------------
+
+
+class TestComputeSha:
+    def test_returns_sha256_hex_of_cloudpickle_dumps(self):
+        """Verify compute_sha matches sha256 of cloudpickle.dumps(obj)."""
+        obj = {"a": 1, "b": [2, 3]}
+        expected = hashlib.sha256(cloudpickle.dumps(obj)).hexdigest()
+
+        assert compute_sha(obj) == expected
+
+    def test_distinct_for_different_objects(self):
+        """Different objects should produce different SHAs."""
+        assert compute_sha({"a": 1}) != compute_sha({"a": 2})

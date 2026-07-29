@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+from uuid import UUID
 
 from fasthtml.common import (
     H1,
@@ -29,6 +30,7 @@ from fasthtml.common import (
 from jinja2 import Environment, FileSystemLoader
 
 from ....utils import get_text_pixel_width
+from ....utils.file_utils import read_text_file
 from ...config import Config
 from ...db.dao import AsyncDAO
 from ...db.model import TaskExt, TaskGroup
@@ -187,7 +189,7 @@ def register(app, rt, prefix=""):
 
         (first, second, etc.).
         """
-        execution_id = request.query_params.get("id")
+        execution_id = int(request.query_params.get("id"))
         execution_number_response = await execution_number(execution_id)
 
         return execution_number_response
@@ -196,7 +198,7 @@ def register(app, rt, prefix=""):
     async def tasktype_docstring(request: Request):
         tasktype_uuid = request.query_params.get("uuid")
         try:
-            tasktype_uuid = str(tasktype_uuid)
+            tasktype_uuid = str(UUID(tasktype_uuid))
         except (TypeError, ValueError):
             return Response(f"Invalid tasktype UUID {tasktype_uuid}", 500)
 
@@ -223,26 +225,21 @@ def register(app, rt, prefix=""):
         # from a db-attr or a context-attr to be created
         # (execution-time path is possibly not the same as
         # current of WebConsole browsing).
-        filename = os.path.join(
-            Config.get_artifacts_store_root(),
-            execution_name,
-            str(execution_id),
-            "pipeline_card.html",
+        uvicorn_logger = logging.getLogger("uvicorn")
+        client_info = ClientInfo(
+            ip=request.client.host, port=request.client.port, url=request.url.path
         )
-        if not os.path.exists(filename):
-            uvicorn_logger = logging.getLogger("uvicorn")
-            client_info = ClientInfo(
-                ip=request.client.host, port=request.client.port, url=request.url.path
+        try:
+            html_content = read_text_file(
+                Config.get_artifacts_store_root(),
+                [execution_name, str(execution_id), "pipeline_card.html"],
             )
+        except FileNotFoundError as e:
             uvicorn_logger.info(
                 f"{client_info['ip']}:{client_info['port']}"
-                + f"{client_info['url']} pipeline-card not found "
-                + filename
+                + f"{client_info['url']} pipeline-card not found {e}"
             )
-            raise HTTPException(status_code=404, detail="pipeline-card not found")
-
-        with open(filename, encoding="utf-8") as f:
-            html_content = f.read()
+            raise HTTPException(status_code=404, detail="pipeline-card not found") from None
 
         return HTMLResponse(content=html_content, status_code=200)
 

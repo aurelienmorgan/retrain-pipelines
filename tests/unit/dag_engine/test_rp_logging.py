@@ -195,6 +195,17 @@ class TestCustomRichHandlerEmit:
         with patch("rich.console.Console.print"):
             handler.emit(record)
 
+    def test_emit_with_traceback_parsing_and_valid_splitext(self):
+        # Covers the branch where ``filename == "traceback.py"``
+        # Requires a filename like "traceback.py"
+        msg = 'File "/fake/traceback.py", line 99, in bad_func\nValueError: oops'
+        record = logging.LogRecord(
+            "test", logging.ERROR, "traceback.py.log", 1, msg, (), None
+        )
+        handler = CustomRichHandler(markup=True)
+        with patch("rich.console.Console.print"):
+            handler.emit(record)
+
     def test_emit_with_traceback_filename_but_unparsable_message(self):
         # filename is traceback.py but message doesn't match the
         # 'File "...", line N, in ...' regex -> parse_msg returns None,
@@ -537,6 +548,28 @@ class TestRichLoggingControllerPrivateMethods:
                     frame_offset=2,
                 )
 
+    def test_rich_emit_with_traceback_string_and_valid_parse(self):
+        # Covers the branch where filename is "traceback.py", args_or_text is a str,
+        # and parse_msg successfully extracts the traceback.
+        with _CtrlGuard() as ctrl:
+            with patch("inspect.currentframe") as mock_frame:
+                f2 = MockFrame(
+                    f_back=None,
+                    f_globals={},
+                    co_name="emit",
+                    co_filename="/fake/traceback.py",
+                    f_lineno=77,
+                )
+                f1 = MockFrame(f_back=f2, f_globals={}, co_name="caller")
+                mock_frame.return_value = f1
+                with patch("rich.console.Console.print"):
+                    ctrl._rich_emit(
+                        "test",
+                        'File "/fake/traceback.py", line 99, in bad_func\nValueError: oops',
+                        is_err=False,
+                        frame_offset=1,
+                    )
+
     def test_rich_emit_with_traceback_list_args_and_unparsable(self):
         # filename "traceback.py" but message doesn't match parse_msg regex,
         # and args_or_text is a non-str iterable -> " ".join branch
@@ -611,31 +644,40 @@ class TestRichLoggingControllerPrivateMethods:
 # rp_redirect_stdout
 # ══════════════════════════════════════════════════════════════════════════════
 class TestRpRedirectStdout:
-    def test_redirect_captures_print_when_no_controller(self):
-        buf = io.StringIO()
-        with rp_redirect_stdout(buf):
+    def test_redirect_captures_print_when_no_controller(self, tmp_path):
+        log_file = tmp_path / "log.txt"
+        with rp_redirect_stdout(str(log_file)):
             print("goes to buf")
-        buf.seek(0)
-        assert "goes to buf" in buf.read()
+        assert "goes to buf" in log_file.read_text()
 
-    def test_deactivates_controller_inside_context(self):
+    def test_deactivates_controller_inside_context(self, tmp_path):
         state_inside = []
         with _CtrlGuard() as ctrl:
-            with rp_redirect_stdout(io.StringIO()):
+            with rp_redirect_stdout(str(tmp_path / "log.txt")):
                 state_inside.append(ctrl._active)
         assert state_inside == [False]
 
-    def test_reactivates_controller_after_context_exits(self):
+    def test_reactivates_controller_after_context_exits(self, tmp_path):
         with _CtrlGuard() as ctrl:
-            with rp_redirect_stdout(io.StringIO()):
+            with rp_redirect_stdout(str(tmp_path / "log.txt")):
                 pass
             assert ctrl._active is True
 
-    def test_reactivates_controller_even_on_inner_exception(self):
+    def test_reactivates_controller_even_on_inner_exception(self, tmp_path):
         with _CtrlGuard() as ctrl:
             try:
-                with rp_redirect_stdout(io.StringIO()):
+                with rp_redirect_stdout(str(tmp_path / "log.txt")):
                     raise ValueError("inner")
             except ValueError:
                 pass
             assert ctrl._active is True
+
+    def test_redirect_captures_print_to_s3(self, bucket_name):
+        s3_uri = f"s3://{bucket_name}/test_redirect_s3.log"
+        with rp_redirect_stdout(s3_uri):
+            print("goes to s3")
+
+        from retrain_pipelines.utils.file_utils import read_text_file
+
+        content = read_text_file(f"s3://{bucket_name}/", ["test_redirect_s3.log"])
+        assert "goes to s3" in content

@@ -94,7 +94,7 @@ dev = [
     "pre-commit>=4.6.0"
 ]
 pgsql = [
-    "psycopg2-binary>=2.9.12",
+    "psycopg2-binary>=2.9.10",
     "asyncpg>=0.31.0"
 ]
 

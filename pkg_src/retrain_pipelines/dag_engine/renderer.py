@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from jinja2 import Environment, FileSystemLoader
 
 from ..utils import get_text_pixel_width, in_notebook
+from ..utils.file_utils import write_text_file
 from .config import Config
 from .core import DAG
 from .db.dao import AsyncDAO
@@ -16,24 +17,36 @@ def render_svg(dag: DAG, filename="dag.html"):
     """Render the DAG for visualization.
 
     at SVG format as a portable html file.
+
+    Parameters
+    ----------
+    dag : DAG
+        the dag to render.
+    filename : str
+        Local directory path or S3 URI where the file will be saved.
+        If local, when provided as an absolute path, it will land in CWD.
     """
+    # get style template
     static_dir = os.path.join(os.path.dirname(__file__), "web_console", "static")
     with open(os.path.join(static_dir, "html_body.css"), encoding="utf-8") as f:
         html_body_css = f.read()
 
-    with open(filename, "w", encoding="utf-8") as file:
-        file.write(
-            "<html>"
-            + "<head>"
-            + "<style>\n"
-            + html_body_css
-            + "\n"
-            + "</style>\n"
-            + "</head>"
-            + "<body>\n"
-            + dag_svg(dag)
-            + "</body></html>"
-        )
+    # generate html body content and insert
+    html_content = (
+        "<html>"
+        + "<head>"
+        + "<style>\n"
+        + html_body_css
+        + "\n"
+        + "</style>\n"
+        + "</head>"
+        + "<body>\n"
+        + dag_svg(dag)
+        + "</body></html>"
+    )
+
+    # write to target
+    write_text_file(filename, [], html_content)
 
 
 def dag_svg(dag: DAG | None = None, execution_id: int | None = None) -> str:

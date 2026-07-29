@@ -20,6 +20,9 @@ from PIL import Image, ImageDraw, ImageFont
 from PIL.ImageFont import FreeTypeFont
 from PIL.ImageFont import ImageFont as PILImageFont
 
+from retrain_pipelines.utils.file_utils import read_text_file, write_text_file
+from retrain_pipelines.utils.s3_utils import is_s3_path
+
 # conditional import of the "torch" package
 # required for some callables in hp_dict
 # (but not necessarily installed
@@ -81,6 +84,26 @@ def get_text_pixel_width(
 
     bbox = draw.textbbox((0, 0), text, font=font)
     return int(bbox[2] - bbox[0])
+
+
+def _get_local_module_path(module_dir: str, module_filename: str) -> str:
+    """
+    Return a local filesystem path for a python module.
+
+    If the provided directory is an S3 URI, the module
+    is downloaded to a temporary local file first.
+    This is necessary because the consumers of this method
+    (by calling e.g., ``importlib.util.spec_from_file_location``) require
+    a local filesystem path and cannot load directly from an S3 URI.
+    """
+    if is_s3_path(module_dir):
+        src_code = read_text_file(module_dir, [module_filename])
+        tmp_file = tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False)
+        tmp_file.write(src_code)
+        tmp_file.close()
+        return tmp_file.name
+    else:
+        return os.path.realpath(os.path.join(module_dir, module_filename))
 
 
 def _load_and_get_function(
@@ -148,8 +171,8 @@ def get_get_dataset_readme_content(pipeline_card_module_dir: str) -> Callable[..
     (path given through the pipeline
      "pipeline_card_module_dir" parameter)
     """
-    pipeline_card_module_path = os.path.realpath(
-        os.path.join(pipeline_card_module_dir, "dataset_readme.py")
+    pipeline_card_module_path = _get_local_module_path(
+        pipeline_card_module_dir, "dataset_readme.py"
     )
 
     get_dataset_readme_content = _load_and_get_function(
@@ -169,9 +192,7 @@ def get_get_model_readme_content(pipeline_card_module_dir: str) -> Callable[...,
     (path given through the pipeline
      "pipeline_card_module_dir" parameter)
     """
-    pipeline_card_module_path = os.path.realpath(
-        os.path.join(pipeline_card_module_dir, "model_readme.py")
-    )
+    pipeline_card_module_path = _get_local_module_path(pipeline_card_module_dir, "model_readme.py")
 
     get_model_readme_content = _load_and_get_function(
         pipeline_card_module_path,
@@ -190,9 +211,7 @@ def get_get_html(pipeline_card_module_dir: str) -> Callable[..., Any]:
     (path given through the pipeline
      "pipeline_card_module_dir" parameter)
     """
-    pipeline_card_module_path = os.path.realpath(
-        os.path.join(pipeline_card_module_dir, "pipeline_card.py")
-    )
+    pipeline_card_module_path = _get_local_module_path(pipeline_card_module_dir, "pipeline_card.py")
 
     get_html = _load_and_get_function(
         pipeline_card_module_path,
@@ -211,9 +230,7 @@ def get_preprocess_data_fct(preprocess_module_dir: str) -> Callable[..., Any]:
     (path given through the pipeline
      "preprocess_module_dir" parameter).
     """
-    preprocessing_module_path = os.path.realpath(
-        os.path.join(preprocess_module_dir, "preprocessing.py")
-    )
+    preprocessing_module_path = _get_local_module_path(preprocess_module_dir, "preprocessing.py")
 
     preprocess_data_fct = _load_and_get_function(
         preprocessing_module_path,
@@ -322,8 +339,11 @@ def _create_requirements_from_conda(
     ######################
     #  requirements.txt  #
     ######################
-    with open(os.path.join(target_dir, "requirements.txt"), "w") as f:
-        f.write("\n".join(updated_packages))
+    write_text_file(
+        target_dir,
+        ["requirements.txt"],
+        "\n".join(updated_packages),
+    )
     ######################
 
 
@@ -357,8 +377,11 @@ def _create_requirements_from_pip(
             regex.fullmatch(pattern, regex.split(r"(==| @ )", entry)[0]) for pattern in exclude
         )
     ]
-    with open(os.path.join(target_dir, "requirements.txt"), "w") as f:
-        f.write("\n".join(filtered_entries) + "\n")
+    write_text_file(
+        target_dir,
+        ["requirements.txt"],
+        "\n".join(filtered_entries) + "\n",
+    )
 
 
 def create_requirements(
@@ -606,6 +629,11 @@ def grant_read_access(file_path: str):
     file_path : str
         file fullname.
     """
+    if is_s3_path(file_path):
+        # S3 objects don't support local POSIX permissions.
+        # Access control is managed via bucket policies / IAM.
+        return
+
     # Get the current file permissions
     current_permissions = stat.S_IMODE(os.lstat(file_path).st_mode)
     # Add read permission for all users

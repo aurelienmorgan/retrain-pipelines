@@ -70,8 +70,29 @@ class DAOBase:
                     cursor.close()
 
             else:
+                # For Postgres, use a conservative QueuePool
                 self.engine = create_engine(
-                    db_url, poolclass=QueuePool, pool_size=5, max_overflow=10, pool_timeout=30
+                    db_url,
+                    poolclass=QueuePool,
+                    pool_timeout=30,
+                    pool_pre_ping=True,  # Automatically recycle stale connections
+                    # Note
+                    # ----
+                    # max Supabase "Session Mode" pooler
+                    # [when on port 5432] connexction count <15.
+                    # You could favor Supabase's Transaction Mode
+                    # pooler [by switching to port 6543] which
+                    # supports up to 200 concurrent connections
+                    # BUT pgbouncer with pool_mode set to
+                    # "transaction" or "statement" does not support
+                    # prepared statements properly so you'd need
+                    # appending ``prepared_statement_cache_size=0``
+                    # to the async db_url. Didn't test that.
+                    # Too cumbersome (and hacky) to implement.
+                    # ----
+                    # keep below sum under 15
+                    pool_size=5,
+                    max_overflow=9,
                 )
 
             Base.metadata.create_all(self.engine)

@@ -3,7 +3,6 @@ from __future__ import annotations
 import inspect
 import json
 import os
-import shutil
 
 import numpy as np
 import pandas as pd
@@ -17,7 +16,7 @@ def preprocess_data_fct(
     buckets: dict | None = None,
     grouped_features: list | None = None,
     is_training: bool = False,
-    local_path: str = "",
+    path: str = "",
 ) -> pd.DataFrame:
     """Apply feature engineering.
 
@@ -54,9 +53,9 @@ def preprocess_data_fct(
     is_training : bool
         whether or not the call to the herein function
         is made from the model training loop
-    local_path : str, Optional
-        path to be used for the serialization
-        of the fitted artifacts.
+    path : str, Optional
+        path (local or S3 URI) to be used
+        for the serialization of the fitted artifacts.
         Ignored if 'is_training' is false.
 
     Returns
@@ -69,10 +68,16 @@ def preprocess_data_fct(
 
     # raw features names
     if is_training:
+        # inline import so that, when inferring, the herein module
+        # doesn't have that dependency
+        from retrain_pipelines.utils.file_utils import write_text_file
+
         # serialize
-        feature_names_path = os.path.join(local_path, "feature_names.json")
-        with open(feature_names_path, "w") as json_file:
-            json.dump(X_raw.columns.tolist(), json_file)
+        write_text_file(
+            path,
+            ["feature_names.json"],
+            json.dumps(X_raw.columns.tolist()),
+        )
     else:
         # deserialize on serving side
         # during model init so, not here
@@ -120,9 +125,11 @@ def preprocess_data_fct(
         buckets.clear()
         buckets.update(buckets_dict)
         # serialize bukets edges info
-        buckets_dict_path = os.path.join(local_path, "buckets_params.json")
-        with open(buckets_dict_path, "w") as json_file:
-            json.dump(buckets_dict, json_file)
+        write_text_file(
+            path,
+            ["buckets_params.json"],
+            json.dumps(buckets_dict),
+        )
     print(f"buckets_dict : {buckets_dict}")
 
     # Separate numerical and categorical columns
@@ -146,9 +153,11 @@ def preprocess_data_fct(
                 )
             }
             print(f"encoder_dict : {encoder_dict}")
-            encoder_dict_path = os.path.join(local_path, "encoder_params.json")
-            with open(encoder_dict_path, "w") as json_file:
-                json.dump(encoder_dict, json_file)
+            write_text_file(
+                path,
+                ["encoder_params.json"],
+                json.dumps(encoder_dict),
+            )
             # Create and serialize the list of lists of ints
             # for the model "grouped_features" argument
             # at inference time
@@ -168,9 +177,11 @@ def preprocess_data_fct(
     else:
         if is_training:
             encoder_dict = {}
-            encoder_dict_path = os.path.join(local_path, "encoder_params.json")
-            with open(encoder_dict_path, "w") as json_file:
-                json.dump(encoder_dict, json_file)
+            write_text_file(
+                path,
+                ["encoder_params.json"],
+                json.dumps(encoder_dict),
+            )
         X_encoded = pd.DataFrame()
 
     # Scaling numerical features
@@ -180,9 +191,11 @@ def preprocess_data_fct(
             # Serialize the fitted scaler
             scaler_dict = {"mean": scaler.mean_.tolist(), "std_dev": scaler.scale_.tolist()}
             print(f"scaler_dict : {scaler_dict}")
-            scaler_dict_path = os.path.join(local_path, "scaler_params.json")
-            with open(scaler_dict_path, "w") as json_file:
-                json.dump(scaler_dict, json_file)
+            write_text_file(
+                path,
+                ["scaler_params.json"],
+                json.dumps(scaler_dict),
+            )
         else:
             X_scaled = scaler.transform(X_raw[numerical_features])
         X_scaled = pd.DataFrame(
@@ -199,6 +212,8 @@ def preprocess_data_fct(
     if is_training:
         # save preprocessing as artefact
         src_path = inspect.getfile(preprocess_data_fct)
-        shutil.copy(src_path, os.path.join(local_path, os.path.basename(src_path)))
+        with open(src_path, encoding="utf-8") as f:
+            src_code = f.read()
+        write_text_file(path, [os.path.basename(src_path)], src_code)
 
     return X_preprocessed

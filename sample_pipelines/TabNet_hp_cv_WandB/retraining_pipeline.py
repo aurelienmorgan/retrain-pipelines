@@ -2,6 +2,7 @@ import os
 import re
 import sys
 import json
+import tempfile
 import time
 import shutil
 import logging
@@ -28,7 +29,7 @@ from sklearn.metrics import (
 
 
 from retrain_pipelines import __version__
-from retrain_pipelines.config import Config
+from retrain_pipelines.dag_engine.config import Config
 from retrain_pipelines.dataset import features_desc, features_distri_plot
 from retrain_pipelines.dataset.features_dependencies import dataset_to_heatmap_fig
 from retrain_pipelines.dag_engine.core import (
@@ -40,6 +41,20 @@ from retrain_pipelines.dag_engine.core import (
     DagParam,
     ctx,
     UiCss,
+)
+
+from retrain_pipelines.utils.file_utils import (
+    list_files,
+    read_binary_file,
+    read_text_file,
+    validate_path,
+    write_binary_file,
+    write_text_file,
+)
+from retrain_pipelines.utils.s3_utils import (
+    is_s3_path,
+    copy_local_dir_to_s3,
+    copy_s3_prefix_to_local,
 )
 
 from retrain_pipelines.utils import flatten_dict, dict_dict_list_get_all_combinations
@@ -67,16 +82,43 @@ def start() -> TaskPayload:
     ctx.buckets_param = json.loads(ctx.buckets_param)
     ctx.cv_folds = int(ctx.cv_folds)
     assert ctx.wandb_run_mode in ["disabled", "offline", "online"]
+    validate_path(ctx.preprocess_artifacts_path)
+    validate_path(ctx.pipeline_card_artifacts_path)
+
+    validate_path(ctx.serving_artifacts_storage_location)
+    if is_s3_path(ctx.serving_artifacts_storage_location):
+        ctx.serving_artifacts_storage_location = \
+            ctx.serving_artifacts_storage_location.rstrip("/") + \
+            f"/{ctx.pipeline_name}/{ctx.exec_id}"
+    else:
+        ctx.serving_artifacts_storage_location = os.path.expanduser(os.path.join(
+            ctx.serving_artifacts_storage_location,
+            ctx.pipeline_name, str(ctx.exec_id)
+        ))
+        os.makedirs(ctx.serving_artifacts_storage_location, exist_ok=True)
+    logger.debug(f"serving_artifacts_storage_location : {ctx.serving_artifacts_storage_location}")
 
     # the WandB local folder with which the server is async.
+    # WandB requires a local filesystem path for its internal sync mechanism.
+    # If the primary artifacts store is on S3, we fallback to a local cache:
+    # the assets cache root if it is local, otherwise the user's home cache.
     artifacts_root_dir = Config.get_artifacts_store_root()
-    os.environ["WANDB_DIR"] = artifacts_root_dir
+    if is_s3_path(artifacts_root_dir):
+        assets_cache_root = Config.get_assets_cache_root()
+        if is_s3_path(assets_cache_root):
+            wandb_local_dir = os.path.expanduser("~/.cache/retrain-pipelines/artifacts/")
+        else:
+            wandb_local_dir = os.path.join(assets_cache_root, "artifacts")
+        logger.debug(f"wandb_local_dir : {wandb_local_dir}")
+    else:
+        wandb_local_dir = artifacts_root_dir
+
+    os.environ["WANDB_DIR"] = wandb_local_dir
     ctx.wandb_run_dir = os.path.join(
-        artifacts_root_dir, ctx.pipeline_name, str(ctx.exec_id)
+        wandb_local_dir, ctx.pipeline_name, str(ctx.exec_id)
     )
-    # logger.info(f"wandb_run_dir : {ctx.wandb_run_dir}")
     if not os.path.exists(ctx.wandb_run_dir):
-        os.makedirs(ctx.wandb_run_dir)
+        os.makedirs(ctx.wandb_run_dir, exist_ok=True)
     if "disabled" != ctx.wandb_run_mode:
         _ = wandb.login(host="https://api.wandb.ai")
 
@@ -88,20 +130,6 @@ def start() -> TaskPayload:
 
     ctx.retrain_pipelines = f"retrain-pipelines {__version__}"
     ctx.retrain_pipeline_type = os.environ["retrain_pipeline_type"]
-
-    ctx.serving_artifacts_local_folder = os.path.realpath(
-        os.path.join(
-            os.path.dirname(__file__),
-            "..",
-            "..",
-            "serving_artifacts",
-            ctx.pipeline_name,
-            str(ctx.exec_id),
-        )
-    )
-
-    if not os.path.exists(ctx.serving_artifacts_local_folder):
-        os.makedirs(ctx.serving_artifacts_local_folder)
 
     return data
 
@@ -171,7 +199,7 @@ def preprocess_data(payload: TaskPayload) -> TaskPayload:
         buckets,
         grouped_features,
         is_training=True,
-        local_path=ctx.serving_artifacts_local_folder,
+        path=ctx.serving_artifacts_storage_location,
     )
     ctx.scaler = scaler  # <= to artifact store
     ctx.encoder = encoder  # <= to artifact store
@@ -525,6 +553,18 @@ def train_model(_, task_id: int):
 
     if "disabled" != ctx.wandb_run_mode:
         training_run.finish()
+    if "offline" == ctx.wandb_run_mode:
+        artifacts_root_dir = Config.get_artifacts_store_root()
+        if is_s3_path(artifacts_root_dir):
+            # WandB requires a local filesystem path for its internal sync mechanism.
+            # If the primary artifacts store  root and the assets cache root are on S3,
+            # we secure copies of the local dir on s3
+            assets_cache_root = Config.get_assets_cache_root()
+            if is_s3_path(assets_cache_root):
+                target_prefix = artifacts_root_dir.rstrip("/") + \
+                                f"/{ctx.pipeline_name}/{str(ctx.exec_id)}"
+                copy_local_dir_to_s3(ctx.wandb_run_dir, target_prefix)
+                logger.info(f"copy of un-synced WandB logs placed at {target_prefix}")
 
     ctx.model = model
     ctx.predictions = model.predict(ctx.X_test.values)
@@ -661,11 +701,11 @@ def evaluate_model(_, task_id: int):
     #############################################
     # as categ_features at this stage are One-Hot encoded,
     # we shall retrieve the column names (from the encoder)
-    encoder_file = os.path.join(
-        ctx.serving_artifacts_local_folder, "encoder_params.json"
+    encoder_params_str = read_text_file(
+        ctx.serving_artifacts_storage_location,
+        ["encoder_params.json"],
     )
-    with open(encoder_file, "r") as json_file:
-        encoder_dict = json.load(json_file)
+    encoder_dict = json.loads(encoder_params_str)
     if encoder_dict:
         # we choose to report on model performance
         # per slice of the first categorical feature
@@ -722,11 +762,18 @@ def model_version_blessing(_):
     for execution in ExecutionsIterator(
         exec_name=ctx.pipeline_name, success_only=True, page_size=10
     ):
-        # print(f"execution {execution.id} - {execution.get_attr('model_version_blessed')}")
-        if execution.get_attr("model_version_blessed"):
+        exec_blessing_tasks = execution.get_tasks_with_name('model_version_blessing')
+        if len(exec_blessing_tasks) == 0:
+            continue
+        exec_blessing_context = exec_blessing_tasks[0].get_exit_context()
+        # print(f"execution {execution.id} - {exec_blessing_context}")
+        if (
+            "model_version_blessed" in exec_blessing_context
+            and exec_blessing_context["model_version_blessed"]
+        ):
             ctx.current_blessed_exec = execution
             current_blessed_accuracy = float(
-                execution.get_attr("classes_weighted_metrics")["accuracy"]
+                exec_blessing_context["classes_weighted_metrics"]["accuracy"]
             )
             ctx.model_version_blessed = (
                 ctx.classes_weighted_metrics["accuracy"] >= current_blessed_accuracy
@@ -778,8 +825,18 @@ def infra_validator(_):
 
     if ctx.model_version_blessed:
         # serialize model as artifact
-        model_file = os.path.join(ctx.serving_artifacts_local_folder, "model")
-        ctx.model.save_model(model_file)
+        if is_s3_path(ctx.serving_artifacts_storage_location):
+            # PyTorch save_model expects a local file path.
+            # If the target is S3, we save to a temporary local file
+            # and then upload it to the target S3 location.
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                tmp_model_zip_path = os.path.join(tmp_dir, "model")
+                ctx.model.save_model(tmp_model_zip_path)
+                copy_local_dir_to_s3(tmp_dir, ctx.serving_artifacts_storage_location)
+        else:
+            model_zip_filefullname = os.path.join(ctx.serving_artifacts_storage_location,
+                                                  "model")
+            ctx.model.save_model(model_zip_filefullname)
 
         preprocess_module_dir = os.path.dirname(
             importlib.util.find_spec(
@@ -787,22 +844,24 @@ def infra_validator(_):
             ).origin
         )
         # save Dockerfile.torchserve as artifact
-        shutil.copy(
-            os.path.join(preprocess_module_dir, "Dockerfile.torchserve"),
-            os.path.join(ctx.serving_artifacts_local_folder, "Dockerfile.torchserve"),
+        write_text_file(
+            ctx.serving_artifacts_storage_location,
+            ["Dockerfile.torchserve"],
+            read_text_file(preprocess_module_dir, ["Dockerfile.torchserve"]),
         )
         # save TabNet TorchServe handler class as artifact
-        shutil.copy(
-            os.path.join(preprocess_module_dir, "torchserve_tabnet_handler.py"),
-            os.path.join(
-                ctx.serving_artifacts_local_folder, "torchserve_tabnet_handler.py"
-            ),
+        write_text_file(
+            ctx.serving_artifacts_storage_location,
+            ["torchserve_tabnet_handler.py"],
+            read_text_file(preprocess_module_dir, ["torchserve_tabnet_handler.py"]),
         )
         # save dependencies as artifact
-        open(
-            f"{ctx.serving_artifacts_local_folder}/requirements.txt", "w"
-        ).close()  # just create an empty one here
-        # create_requirements(ctx.serving_artifacts_local_folder,
+        write_text_file(
+            ctx.serving_artifacts_storage_location,
+            ["requirements.txt"],
+            "", # (just create an empty one here)
+        )
+        # create_requirements(ctx.serving_artifacts_storage_location,
         # exclude=[
         # "matplotlib", "pillow", # version conflict
         # # quick fix
@@ -830,10 +889,23 @@ def infra_validator(_):
             endpoint_is_ready,
         )
 
+        # Docker requires a local build context.
+        # If the artifacts are in S3, we download them to a temporary local directory.
+        tmp_build_dir = None
+        if is_s3_path(ctx.serving_artifacts_storage_location):
+            tmp_build_dir = tempfile.mkdtemp()
+            copy_s3_prefix_to_local(
+                ctx.serving_artifacts_storage_location,
+                tmp_build_dir,
+            )
+            docker_build_context = tmp_build_dir
+        else:
+            docker_build_context = ctx.serving_artifacts_storage_location
+
         serving_container = build_and_run_docker(
             image_name="tabnet_serve",
             image_tag="1.0",
-            build_path=ctx.serving_artifacts_local_folder,
+            build_path=docker_build_context,
             dockerfile="Dockerfile.torchserve",
             ports_publish_dict={"8080/tcp": 9080, "8081/tcp": 9081, "8082/tcp": 9082},
         )
@@ -916,6 +988,12 @@ def infra_validator(_):
         except Exception:
             # fail silently
             pass
+
+        if tmp_build_dir is not None:
+            try:
+                shutil.rmtree(tmp_build_dir)
+            except Exception:
+                pass
     else:
         logger.info("skipped")
 
@@ -1015,14 +1093,11 @@ def pipeline_card(_, task_id: int):
     }
     html = get_html(params)
 
-    filename = os.path.join(
+    filename = write_text_file(
         Config.get_artifacts_store_root(),
-        ctx.pipeline_name,
-        str(ctx.exec_id),
-        "pipeline_card.html",
+        [ctx.pipeline_name, str(ctx.exec_id), "pipeline_card.html"],
+        content=html,
     )
-    with open(filename, "w", encoding="utf-8") as file:
-        file.write(html)
     logger.debug(
         "pipeline_card - " + f"[bold]pipeline_card_file_fullname : {filename}[/]"
     )
@@ -1156,7 +1231,8 @@ def retrain_pipeline():
     preprocess_artifacts_path = DagParam(
         description="TorchServe artifacts location "
         + "(i.e. dir hosting your custom 'preprocessing.py'"
-        + " file), if different from default",
+        + " file), if different from default. "
+        + "Accepted are local directory path or s3 prefix.",
         default=default_preprocess_module_dir,
     )
     # TODO  -  convert from class method to TBD
@@ -1191,7 +1267,8 @@ def retrain_pipeline():
         description="pipeline_card artifacts location "
         + "(i.e. dir hosting your custom 'pipeline_card.py'"
         + " and/or 'template.html' file),"
-        + " if different from default",
+        + " if different from default. "
+        + "Accepted are local directory path or s3 prefix.",
         default=default_pipeline_card_module_dir,
     )
 
@@ -1235,6 +1312,22 @@ def retrain_pipeline():
     # "template.html")
     # shutil.copy(filefullname, target_dir)
     # print(filefullname)
+
+    serving_artifacts_storage_location = DagParam(
+        description="serving artifacts location "
+        + "(i.e. dir the fitted preprocessing artifacts,"
+        + " the trained model-version),"
+        + " if different from default. "
+        + "Accepted are local directory path or s3 prefix.",
+        default=os.path.realpath(
+            os.path.join(
+                os.path.dirname(__file__),
+                "..",
+                "..",
+                "serving_artifacts",
+            )
+        ),
+    )
 
     del RETRAIN_PIPELINE_TYPE
 

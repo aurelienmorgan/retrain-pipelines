@@ -79,7 +79,9 @@ def wsl_to_windows_path(wsl_path):
         str: The converted Windows-style path.
     """
     if not wsl_path.startswith("/mnt/"):
-        raise ValueError("The provided path does not appear to be a WSL mount path.")
+        raise ValueError(
+            f"The provided path does not appear to be a WSL mount path : {wsl_path}",
+        )
 
     # Remove the '/mnt/' prefix and replace '/' with '\\'
     windows_path = wsl_path[5:]  # Remove '/mnt/'

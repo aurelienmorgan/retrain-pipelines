@@ -15,6 +15,7 @@ import json
 import time
 import shutil
 import logging
+import tempfile
 
 import importlib.util
 from enum import Enum
@@ -32,7 +33,7 @@ from datasets.config import HF_DATASETS_CACHE
 from transformers import AutoTokenizer
 
 from retrain_pipelines import __version__
-from retrain_pipelines.config import Config
+from retrain_pipelines.dag_engine.config import Config
 
 from retrain_pipelines.dataset.hf_utils import (
     get_lazy_df,
@@ -60,6 +61,20 @@ from retrain_pipelines.dag_engine.core import (
     DagParam,
     ctx,
     UiCss,
+)
+
+from retrain_pipelines.utils.file_utils import (
+    build_path,
+    list_files,
+    read_text_file,
+    validate_path,
+    write_text_file,
+)
+from retrain_pipelines.utils.s3_utils import (
+    copy_local_dir_to_s3,
+    copy_s3_prefix_to_local,
+    is_s3_path,
+    parse_s3_uri,
 )
 
 from retrain_pipelines.dag_engine.rp_logging import rp_redirect_stdout
@@ -262,24 +277,23 @@ def start() -> TaskPayload:
     ctx.retrain_pipelines = f"retrain-pipelines {__version__}"
     ctx.retrain_pipeline_type = os.environ["retrain_pipeline_type"]
 
-    ctx.serving_artifacts_local_folder = os.path.realpath(
-        os.path.join(
-            os.path.dirname(__file__),
-            "..",
-            "..",
-            "serving_artifacts",
-            ctx.pipeline_name,
-            str(ctx.exec_id),
-        )
-    )
+    validate_path(ctx.serving_artifacts_storage_location)
+    if is_s3_path(ctx.serving_artifacts_storage_location):
+        ctx.serving_artifacts_storage_location = \
+            ctx.serving_artifacts_storage_location.rstrip("/") + \
+            f"/{ctx.pipeline_name}/{ctx.exec_id}"
+    else:
+        ctx.serving_artifacts_storage_location = os.path.expanduser(os.path.join(
+            ctx.serving_artifacts_storage_location,
+            ctx.pipeline_name, str(ctx.exec_id)
+        ))
+        os.makedirs(ctx.serving_artifacts_storage_location, exist_ok=True)
+    logger.debug(f"serving_artifacts_storage_location : {ctx.serving_artifacts_storage_location}")
 
-    if not os.path.exists(ctx.serving_artifacts_local_folder):
-        os.makedirs(ctx.serving_artifacts_local_folder)
-
-    ctx.unsloth_dir = os.path.join(ctx.serving_artifacts_local_folder, "Unsloth")
+    ctx.unsloth_dir = build_path(ctx.serving_artifacts_storage_location, ("Unsloth",))
     logger.debug(f"unsloth_dir : {ctx.unsloth_dir}")
-    ctx.cpt_model_dir = os.path.join(ctx.unsloth_dir, "cpt_model")
-    ctx.sft_model_dir = os.path.join(ctx.unsloth_dir, "sft_model")
+    ctx.cpt_model_dir = build_path(ctx.unsloth_dir, ("cpt_model",))
+    ctx.sft_model_dir = build_path(ctx.unsloth_dir, ("sft_model",))
 
     return None
 
@@ -464,7 +478,7 @@ def enrich_data(_) -> None:
     """
     Further enrich our dataset with 'negative' records from
     another dataset (can be general-purpose text dataset)
-    as specified by the the flow 'hf_enrich_dataset' argument.
+    as specified by the flow 'hf_enrich_dataset' argument.
     """
     """
     Note : we here use the Hugging Face `datasets` library
@@ -796,6 +810,19 @@ def continued_pre_training(_) -> None:
         cpt_dataset = cpt_dataset.take(ctx.cpt_training_args["records_cap"])
         print(f"cpt_dataset : {cpt_dataset}")
 
+    local_cache = None
+    # Hugging Face/Unsloth Trainer does not natively support S3 for output_dir.
+    # We use a local directory for checkpoints.
+    if is_s3_path(ctx.unsloth_dir):
+        local_cache = os.path.expanduser("~/.cache/retrain-pipelines/tmp_unsloth")
+        # force-clear any pre-existing content
+        shutil.rmtree(local_cache, ignore_errors=True)
+        # assign
+        os.makedirs(local_cache, exist_ok=True)
+        local_output_dir = local_cache
+    else:
+        local_output_dir = build_path(ctx.unsloth_dir, ("outputs", "cpt"))
+
     train_args = UnslothTrainingArguments(
         # https://huggingface.co/docs/transformers/main_classes/trainer#transformers.TrainingArguments.save_strategy
         per_device_train_batch_size=2,
@@ -812,12 +839,11 @@ def continued_pre_training(_) -> None:
         weight_decay=0.01,
         lr_scheduler_type="linear",
         # seed=3407,
-        output_dir=os.path.join(ctx.unsloth_dir, "outputs", "cpt"),
+        output_dir=local_output_dir,
         save_total_limit=2,
         report_to="tensorboard",
-        logging_dir=os.path.join(ctx.sft_model_dir, "runs", "cpt"),
+        logging_dir=build_path(ctx.sft_model_dir, ("runs", "cpt")),  # TensorBoard support s3 natively
     )
-
     # silence dis.py bytecode spam (Unsloth monkey-patch side-effect)
     _dis_module.print = lambda *a, **kw: None
     trainer = UnslothTrainer(
@@ -848,17 +874,24 @@ def continued_pre_training(_) -> None:
     print(f"{ctx.start_gpu_memory} GB of memory reserved.")
     #######################################
 
-    ctx.cpt_traces_file_fullname = os.path.join(
-        ctx.unsloth_dir, "cpt_trainer_traces.txt"
+    ctx.cpt_traces_file_fullname = build_path(
+        ctx.unsloth_dir, ("cpt_trainer_traces.txt",)
     )
     logger.info(
         "Training started. "
         + f"Check [underline]{ctx.cpt_traces_file_fullname}[/] for live traces "
         + "or go watch your [white bold]TensorBoard[/] charts live updates !"
     )
-    with open(ctx.cpt_traces_file_fullname, "w") as f:
-        with rp_redirect_stdout(f):
+    try:
+        with rp_redirect_stdout(ctx.cpt_traces_file_fullname):
             trainer_stats = trainer.train()
+    finally:
+        if local_cache is not None:
+            try:
+                copy_local_dir_to_s3(local_cache, build_path(ctx.unsloth_dir, ("outputs", "cpt")))
+            finally:
+                # Force delete the temporary directory and its contents
+                shutil.rmtree(local_cache, ignore_errors=True)
     print(
         f"{trainer_stats.metrics['train_runtime']} "
         + "seconds used for CPT training "
@@ -873,11 +906,20 @@ def continued_pre_training(_) -> None:
     del trainer
     # logger.debug(f"Continued pretraining loss curve : {ctx.cpt_log_history}")
 
-    model.save_pretrained_merged(
-        save_directory=ctx.cpt_model_dir, tokenizer=tokenizer, save_method="lora"
-    )
+    if is_s3_path(ctx.cpt_model_dir):
+        # Hugging Face/Unsloth save methods require a local directory.
+        # If the target is S3, we save to a temporary local directory
+        # and then copy its contents to the target S3 location.
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            model.save_pretrained_merged(
+                save_directory=tmp_dir, tokenizer=tokenizer, save_method="lora"
+            )
+            copy_local_dir_to_s3(tmp_dir, ctx.cpt_model_dir)
+    else:
+        model.save_pretrained_merged(
+            save_directory=ctx.cpt_model_dir, tokenizer=tokenizer, save_method="lora"
+        )
     print(f"cpt_model_dir : {ctx.cpt_model_dir}\n")
-
     # vRAM & RAM cleanup
     # (incl. force-delete all CUDA tensors in gc)
     del model
@@ -898,12 +940,28 @@ def supervised_finetuning(_) -> None:
     """
     from retrain_pipelines.model.hf_utils import plot_log_history
 
-    model, tokenizer = FastLanguageModel.from_pretrained(
-        model_name=ctx.cpt_model_dir,
-        max_seq_length=ctx.max_seq_length,
-        dtype=None,
-        load_in_4bit=False,
-    )
+    tmp_dir = None
+    if is_s3_path(ctx.cpt_model_dir):
+        # Hugging Face/Unsloth from_pretrained expects a local directory.
+        # If the model is on S3, we download it to a temporary local directory first.
+        tmp_dir = tempfile.mkdtemp()
+        copy_s3_prefix_to_local(ctx.cpt_model_dir, tmp_dir)
+        model_path = tmp_dir
+    else:
+        model_path = ctx.cpt_model_dir
+
+    try:
+        model, tokenizer = FastLanguageModel.from_pretrained(
+            model_name=model_path,
+            max_seq_length=ctx.max_seq_length,
+            dtype=None,
+            load_in_4bit=False,
+        )
+    finally:
+        # Force delete the temporary directory and its contents
+        if tmp_dir is not None:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
     # !!!! bug fix BEGIN !!!!
     # otherwise, 'embed_tokens' and 'lm_head'
     # trained during CPT are "ignored",
@@ -1020,6 +1078,19 @@ def supervised_finetuning(_) -> None:
         print(f"train_dataset : {train_dataset}")
         print(f"eval_dataset :  {eval_dataset}")
 
+    local_cache = None
+    # Hugging Face/Unsloth Trainer does not natively support S3 for output_dir.
+    # We use a local directory for checkpoints.
+    if is_s3_path(ctx.unsloth_dir):
+        local_cache = os.path.expanduser("~/.cache/retrain-pipelines/tmp_unsloth")
+        # force-clear any pre-existing content
+        shutil.rmtree(local_cache, ignore_errors=True)
+        # assign
+        os.makedirs(local_cache, exist_ok=True)
+        local_output_dir = local_cache
+    else:
+        local_output_dir = build_path(ctx.unsloth_dir, ("outputs", "sft"))
+
     train_args = UnslothTrainingArguments(
         per_device_train_batch_size=2,
         gradient_accumulation_steps=8,
@@ -1036,12 +1107,12 @@ def supervised_finetuning(_) -> None:
         weight_decay=0.00,
         lr_scheduler_type="linear",
         # seed=3407,
-        output_dir=os.path.join(ctx.unsloth_dir, "outputs", "sft"),
+        output_dir=local_output_dir,
         save_total_limit=2,
         disable_tqdm=True,
         logging_steps=1,
         report_to="tensorboard",
-        logging_dir=os.path.join(ctx.sft_model_dir, "runs", "sft"),
+        logging_dir=build_path(ctx.sft_model_dir, ("runs", "sft")),  # TensorBoard supports s3 natively
     )
 
     # silence dis.py bytecode spam (Unsloth monkey-patch side-effect)
@@ -1080,20 +1151,27 @@ def supervised_finetuning(_) -> None:
     )
     #######################################
 
-    ctx.sft_traces_file_fullname = os.path.join(
-        ctx.unsloth_dir, "sft_trainer_traces.txt"
+    ctx.sft_traces_file_fullname = build_path(
+        ctx.unsloth_dir, ("sft_trainer_traces.txt",)
     )
     logger.info(
         "Training started. "
         + f"Check [underline]{ctx.sft_traces_file_fullname}[/] for live traces "
         + "or go watch your [white bold]TensorBoard[/] charts live updates !"
     )
-    with open(ctx.sft_traces_file_fullname, "w") as f:
-        with rp_redirect_stdout(f):
+    try:
+        with rp_redirect_stdout(ctx.sft_traces_file_fullname):
             trainer_stats = trainer.train()
+    finally:
+        if local_cache is not None:
+            try:
+                copy_local_dir_to_s3(local_cache, build_path(ctx.unsloth_dir, ("outputs", "sft")))
+            finally:
+                # Force delete the temporary directory and its contents
+                shutil.rmtree(local_cache, ignore_errors=True)
     print(
         f"{trainer_stats.metrics['train_runtime']} "
-        + "seconds used for training "
+        + "seconds used for SFT training "
         + f"({round(trainer_stats.metrics['train_runtime'] / 60, 2)}"
         + " minutes)."
     )
@@ -1104,7 +1182,19 @@ def supervised_finetuning(_) -> None:
     )
     del trainer
 
-    model.save_pretrained_merged(ctx.sft_model_dir, tokenizer, save_method="lora")
+    if is_s3_path(ctx.sft_model_dir):
+        # Hugging Face/Unsloth save methods require a local directory.
+        # If the target is S3, we save to a temporary local directory
+        # and then copy its contents to the target S3 location.
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            model.save_pretrained_merged(
+                save_directory=tmp_dir, tokenizer=tokenizer, save_method="lora"
+            )
+            copy_local_dir_to_s3(tmp_dir, ctx.sft_model_dir)
+    else:
+        model.save_pretrained_merged(
+            save_directory=ctx.sft_model_dir, tokenizer=tokenizer, save_method="lora"
+        )
     print(f"sft_model_dir : {ctx.sft_model_dir}\n")
 
     # vRAM & RAM cleanup
@@ -1176,14 +1266,30 @@ def evaluate_model(_) -> None:
         token=os.getenv("HF_TOKEN", None),
     )
     model = FastLanguageModel.for_inference(model)
-    # load our CPT+SFT trained & locally-saved adapter
-    model.load_adapter(peft_model_id=ctx.sft_model_dir)
-    # Separately load our (potentially trained &)
-    # locally-saved adapter-tokenizer
-    # (loading it below via HF and not Unsloth)
-    tokenizer = AutoTokenizer.from_pretrained(
-        pretrained_model_name_or_path=ctx.sft_model_dir
-    )
+
+    tmp_dir = None
+    try:
+        if is_s3_path(ctx.sft_model_dir):
+            # Hugging Face/Unsloth load_adapter and AutoTokenizer
+            # expect a local directory. If the artifacts are on S3,
+            # we download them to a temporary local directory.
+            tmp_dir = tempfile.mkdtemp()
+            copy_s3_prefix_to_local(ctx.sft_model_dir, tmp_dir)
+            sft_model_path = tmp_dir
+        else:
+            sft_model_path = ctx.sft_model_dir
+
+        # load our CPT+SFT trained & locally-saved adapter
+        model.load_adapter(peft_model_id=sft_model_path)
+        # Separately load our (potentially trained &)
+        # locally-saved adapter-tokenizer
+        # (loading it below via HF and not Unsloth)
+        tokenizer = AutoTokenizer.from_pretrained(
+            pretrained_model_name_or_path=sft_model_path
+        )
+    finally:
+        if tmp_dir is not None:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
     ######################################################
 
     ctx.max_new_tokens = 400
@@ -1199,9 +1305,10 @@ def evaluate_model(_) -> None:
         max_new_tokens=ctx.max_new_tokens,
         device="cuda",
     )
+    elapsed_time = time.time() - start_time
     print(
-        "infer_validation -   Elapsed time: "
-        + f"{(time.time() - start_time):.2f} seconds"
+        f"infer_validation -   Elapsed time: {(elapsed_time):.2f} seconds "
+        + f"({round(elapsed_time / 60, 2)} minutes)."
     )
     ctx.validation_results = validation_results  #  <= to artifacts store
 
@@ -1294,8 +1401,8 @@ def model_version_blessing(_) -> None:
 
         if not ctx.model_version_blessed:
             ctx.current_blessed_version_dict = current_blessed_version_dict
-            # may have failed after the "pipeline_card" task,
-            # so we do not filter on success
+            # debatable but, as it may have failed after the "pipeline_card" task,
+            # we chose to not filter on success
             for execution in ExecutionsIterator(
                 exec_name=ctx.pipeline_name, page_size=10
             ):
@@ -1328,10 +1435,15 @@ def model_version_blessing(_) -> None:
                         # retraining of a prior version of the same model
                         # (to minimize the risk that this was obtained
                         #  on another DAG-engine instance)
+                        exec_blessing_context = \
+                            execution.get_tasks_with_name('model_version_blessing')[0] \
+                                .get_exit_context()
+                        # print(f"execution {execution.id} - {exec_blessing_context}")
                         if (
-                            execution.get_attr("model_version_blessed")
-                            and execution.get_attr("model_repo_id")
-                            or "" == ctx.model_repo_id
+                            "model_version_blessed" in exec_blessing_context
+                            and exec_blessing_context["model_version_blessed"]
+                            and "model_repo_id" in exec_blessing_context
+                            and exec_blessing_context["model_repo_id"] == ctx.model_repo_id
                         ):
                             ctx.current_blessed_exec = execution
 
@@ -1478,15 +1590,16 @@ def infra_validator(_) -> None:
     (using @conda task decorator)
     is advisable to not embark the whole
     pipeline dependencies into the local server.
-    We don't for educational purpose,
-    keep things "simple" to grasp
+    We don't, for educational purpose,
+    we keep things "simple" to grasp
     as well as to avoid forcing conda
     (for instance miniconda) as
     a virtual environment management mean
     to the user.
     """
     """
-    Note : We load base model from HF-cache
+    Note : In the spun inference-service container,
+    we load base model from HF-cache
     (mounted as /huggingface_hub_cache
     docker volume) and adapter from local dir
     (mounted as /FuncCallAdater docker volume.
@@ -1510,18 +1623,23 @@ def infra_validator(_) -> None:
                 "litserve_datamodel.py",
                 "litserve_serverconfig.py",
                 ".dockerignore",  # docker context loading
-                # at image-build time,
-                # exclude model weights
+                #                   at image-build time,
+                #                   exclude model weights
             ]
             for filename in files_to_copy:
-                shutil.copy(
-                    os.path.join(model_module_dir, "litserve", filename),
-                    os.path.join(ctx.serving_artifacts_local_folder, filename),
+                content = read_text_file(
+                    os.path.join(model_module_dir, "litserve"),
+                    [filename]
+                )
+                write_text_file(
+                    ctx.serving_artifacts_storage_location,
+                    [filename],
+                    content
                 )
 
             # save dependencies as artifact
             create_requirements(
-                ctx.serving_artifacts_local_folder,
+                ctx.serving_artifacts_storage_location,
                 exclude=[
                     "numpy",  # version conflict
                     # quick fix
@@ -1556,13 +1674,11 @@ def infra_validator(_) -> None:
             }
             server_config_yaml = template.render(server_config_data)
             print(server_config_yaml)
-            with open(
-                os.path.join(
-                    ctx.serving_artifacts_local_folder, "litserve_serverconfig.yaml"
-                ),
-                "w",
-            ) as output_file:
-                output_file.write(server_config_yaml)
+            write_text_file(
+                ctx.serving_artifacts_storage_location,
+                ["litserve_serverconfig.yaml"],
+                server_config_yaml,
+            )
 
             # Dockerfile
             env = Environment(loader=FileSystemLoader(os.path.join(model_module_dir)))
@@ -1570,11 +1686,11 @@ def infra_validator(_) -> None:
             # Change CUDA version here from available list
             # @see https://hub.docker.com/r/nvidia/cuda/tags
             dockerfile_content = template.render({"cuda_version": "12.0.0"})
-            with open(
-                os.path.join(ctx.serving_artifacts_local_folder, "Dockerfile.litserve"),
-                "w",
-            ) as output_file:
-                output_file.write(dockerfile_content)
+            write_text_file(
+                ctx.serving_artifacts_storage_location,
+                ["Dockerfile.litserve"],
+                dockerfile_content,
+            )
 
             os.environ["no_proxy"] = "localhost,127.0.0.1,0.0.0.0"
 
@@ -1605,48 +1721,85 @@ def infra_validator(_) -> None:
             print(f"HF_HUB_CACHE : {HF_HUB_CACHE}")
             image_name = container_name = "litserve-model"
 
-            serving_container = build_and_run_docker(
-                image_name=image_name,
-                image_tag="1.0",
-                build_path=ctx.serving_artifacts_local_folder,
-                dockerfile="Dockerfile.litserve",
-                ports_publish_dict={"8000/tcp": ctx.port},
-                env_vars_dict={
-                    "HF_HUB_CACHE": "/huggingface_hub_cache",
-                    "HF_TOKEN": os.getenv("HF_TOKEN"),
-                },
-                volumes_dict={
-                    ctx.sft_model_dir: {"bind": "/FuncCallAdapter", "mode": "ro"},
-                    HF_HUB_CACHE: {"bind": "/huggingface_hub_cache", "mode": "ro"},
-                },
-            )
-
-            if not serving_container:
-                print("failed spinning the LitServe container", file=sys.stderr)
-                ctx.local_serve_is_ready = LocalServeReadinessEnum.FAILURE
-                try:
-                    cleanup_docker(
-                        container_name=container_name,
-                        image_name=f"{image_name}:1.0",
-                        no_pruning=True,  # for intermediate layers recycling
-                        # (during later re-runs)
-                        # to avoid long rebuild time
-                        # of exactly the same.
-                    )
-                except Exception:
-                    # fail silently
-                    pass
+            # Docker requires a local build context.
+            # If the artifacts are in S3, we download them to a temporary local directory.
+            tmp_build_dir = None
+            if is_s3_path(ctx.serving_artifacts_storage_location):
+                tmp_build_dir = tempfile.mkdtemp()
+                copy_s3_prefix_to_local(
+                    ctx.serving_artifacts_storage_location,
+                    tmp_build_dir,
+                    recursive=False,
+                )
+                docker_build_context = tmp_build_dir
             else:
-                print("Awaiting endpoint launch..")
-                start_time = time.time()
-                if not endpoint_started(container_name, port=ctx.port, timeout=10 * 60):
-                    print(f"The endpoint '{container_name}' " + "did not start.")
+                docker_build_context = ctx.serving_artifacts_storage_location
+
+            tmp_model_dir = None
+            if is_s3_path(ctx.sft_model_dir):
+                # Docker volumes require a local directory path.
+                # Use local cache to avoid /tmp disk space limits for large models.
+                tmp_model_dir = os.path.expanduser("~/.cache/retrain-pipelines/serving_models")
+                # force-clear any pre-existing content
+                shutil.rmtree(tmp_model_dir, ignore_errors=True)
+                # copy from S3
+                os.makedirs(tmp_model_dir, exist_ok=True)
+                copy_s3_prefix_to_local(ctx.sft_model_dir, tmp_model_dir)
+                volume_model_dir = tmp_model_dir
+            else:
+                volume_model_dir = ctx.sft_model_dir
+
+            try:
+                serving_container = build_and_run_docker(
+                    image_name=image_name,
+                    image_tag="1.0",
+                    build_path=docker_build_context,
+                    dockerfile="Dockerfile.litserve",
+                    ports_publish_dict={"8000/tcp": ctx.port},
+                    env_vars_dict={
+                        "HF_HUB_CACHE": "/huggingface_hub_cache",
+                        "HF_TOKEN": os.getenv("HF_TOKEN"),
+                    },
+                    volumes_dict={
+                        volume_model_dir: {"bind": "/FuncCallAdapter", "mode": "ro"},
+                        HF_HUB_CACHE: {"bind": "/huggingface_hub_cache", "mode": "ro"},
+                    },
+                )
+
+                if not serving_container:
+                    print("failed spinning the LitServe container", file=sys.stderr)
                     ctx.local_serve_is_ready = LocalServeReadinessEnum.FAILURE
-                # health check on the spun-up endpoint
-                elif endpoint_is_ready(port=ctx.port):
-                    ctx.local_serve_is_ready = LocalServeReadinessEnum.SUCCESS
-            elapsed_time = time.time() - start_time
-            print("deploy_local -   Elapsed time: " + f"{elapsed_time:.2f} seconds")
+                    try:
+                        cleanup_docker(
+                            container_name=container_name,
+                            image_name=f"{image_name}:1.0",
+                            # no_pruning=True,  # for intermediate layers recycling
+                            # #                   (during later re-runs)
+                            # #                    to avoid long rebuild time
+                            # #                    of exactly the same.
+                        )
+                    except Exception:
+                        # fail silently
+                        pass
+                else:
+                    print("Awaiting endpoint launch..")
+                    start_time = time.time()
+                    if not endpoint_started(container_name, port=ctx.port, timeout=10 * 60):
+                        print(f"The endpoint '{container_name}' did not start.")
+                        ctx.local_serve_is_ready = LocalServeReadinessEnum.FAILURE
+                    # health check on the spun-up endpoint
+                    elif endpoint_is_ready(port=ctx.port):
+                        ctx.local_serve_is_ready = LocalServeReadinessEnum.SUCCESS
+                elapsed_time = time.time() - start_time
+                print(
+                    f"deploy_local -   Elapsed time: {elapsed_time:.2f} seconds "
+                    + f"({round(elapsed_time / 60, 2)} minutes)."
+                )
+            finally:
+                if tmp_build_dir is not None:
+                    shutil.rmtree(tmp_build_dir, ignore_errors=True)
+                if tmp_model_dir is not None:
+                    shutil.rmtree(tmp_model_dir, ignore_errors=True)
             ############################################
         else:
             # env doesn't have docker
@@ -1697,10 +1850,10 @@ def infra_validator(_) -> None:
             cleanup_docker(
                 container_name=container_name,
                 image_name=f"{image_name}:1.0",
-                no_pruning=True,  # for intermediate layers recycling
-                # (during later re-runs)
-                # to avoid long rebuild time
-                # of exactly the same.
+                # no_pruning=True,  # for intermediate layers recycling
+                # #                   (during later re-runs)
+                # #                    to avoid long rebuild time
+                # #                    of exactly the same.
             )
         except Exception:
             # fail silently
@@ -1812,15 +1965,11 @@ def pipeline_card(_, task_id: int) -> None:
     }
     html = get_html(params)
 
-    filename = os.path.join(
+    filename = write_text_file(
         Config.get_artifacts_store_root(),
-        ctx.pipeline_name,
-        str(ctx.exec_id),
-        "pipeline_card.html",
+        [ctx.pipeline_name, str(ctx.exec_id), "pipeline_card.html"],
+        content=html,
     )
-    os.makedirs(os.path.dirname(filename), exist_ok=True)
-    with open(filename, "w", encoding="utf-8") as file:
-        file.write(html)
     logger.debug(
         "pipeline_card - " + f"[bold]pipeline_card_file_fullname : {filename}[/]"
     )
@@ -2198,6 +2347,22 @@ def retrain_pipeline():
     # "template.html")
     # shutil.copy(filefullname, target_dir)
     # print(filefullname)
+
+    serving_artifacts_storage_location = DagParam(
+        description="serving artifacts location "
+        + "(i.e. dir the fitted preprocessing artifacts,"
+        + " the trained model-version),"
+        + " if different from default. "
+        + "Accepted are local directory path or s3 prefix.",
+        default=os.path.realpath(
+            os.path.join(
+                os.path.dirname(__file__),
+                "..",
+                "..",
+                "serving_artifacts",
+            )
+        ),
+    )
 
     del RETRAIN_PIPELINE_TYPE
 
