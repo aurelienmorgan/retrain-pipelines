@@ -18,6 +18,7 @@ from retrain_pipelines.dag_engine.config import Config
 
 
 DEFAULT_METADATA_ROOT = os.path.join(Config.get_assets_cache_root(), "metadata")
+DEFAULT_ARTIFACTS_STORE_ROOT = Config.get_artifacts_store_root()
 
 # revision identifiers, used by Alembic.
 revision: str = '450e163fd43d'
@@ -34,7 +35,8 @@ def upgrade() -> None:
     op.create_table('task_context_attrs',
         sa.Column('task_id', sa.Integer(), nullable=False),
         sa.Column('attr_name', sa.String(), nullable=False),
-        sa.Column('sha', sa.String(), nullable=False),
+        sa.Column('eTAG', sa.String(), nullable=False),
+        sa.Column('sha', sa.String(), nullable=True),
         sa.Column('disk_ref', sa.String(), nullable=True),
         sa.Column('inline_val', sa.JSON(none_as_null=True), nullable=True),
         sa.ForeignKeyConstraint(['task_id'], ['tasks.id'], ),
@@ -50,6 +52,7 @@ def upgrade() -> None:
 
     ##############################################################
     ## insert "executions.metadata_root" column in 4th position ##
+    ## and "executions.artifacts_store_root" in 5th.            ##
     ##############################################################
     conn = op.get_bind()
     inspector = sa.inspect(conn)
@@ -65,10 +68,10 @@ def upgrade() -> None:
     pks = [name in pk_columns for name in names]
 
     # 2. Build new column list with metadata_root at 4th position (index 3)
-    new_names = names[:3] + ["metadata_root"] + names[3:]
-    new_types = types[:3] + [sa.String()] + types[3:]
-    new_nullables = nullables[:3] + [False] + nullables[3:]
-    new_pks = pks[:3] + [False] + pks[3:]
+    new_names = names[:3] + ["metadata_root", "artifacts_store_root"] + names[3:]
+    new_types = types[:3] + [sa.String(), sa.String()] + types[3:]
+    new_nullables = nullables[:3] + [False, False] + nullables[3:]
+    new_pks = pks[:3] + [False, False] + pks[3:]
 
     new_cols = [
         sa.Column(n, t, nullable=nul, primary_key=pk)
@@ -108,14 +111,18 @@ def upgrade() -> None:
     # 5. Create new table with reordered columns
     op.create_table("executions_new", *new_cols)
 
-    # 6. Copy data, setting metadata_root for all existing rows
+    # 6. Copy data, setting metadata_root & artifacts_store_root
+    # for all existing rows
     sel = ", ".join(names)
-    ins = sel + ", metadata_root"
+    ins = sel + ", metadata_root, artifacts_store_root"
     op.execute(
         sa.text(
             f"INSERT INTO executions_new ({ins}) "
-            f"SELECT {sel}, :default FROM executions"
-        ).bindparams(default=DEFAULT_METADATA_ROOT)
+            f"SELECT {sel}, :default1, :default2 FROM executions"
+        ).bindparams(
+            default1=DEFAULT_METADATA_ROOT,
+            default2=DEFAULT_ARTIFACTS_STORE_ROOT,
+        )
     )
 
     # 7. Drop old table (now no FKs depend on it)

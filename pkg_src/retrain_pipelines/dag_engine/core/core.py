@@ -25,15 +25,14 @@ from rich.logging import RichHandler
 from rich.markup import escape
 
 from ...utils import in_notebook
-from ...utils.file_utils import build_path
 from ...utils.rich_logging import framed_rich_log_str
 from ..config import Config
 from ..db.dao import DAO
-from ..stores.commons import resolve_storable
-from ..stores.context_store import (
+from ..stores.commons import generate_etag
+from ..stores.contexts_store import (
     _CONTEXT_EXCLUDE_ATTRS,
     compute_context_diff,
-    snapshot_context_shas,
+    snapshot_context_etags,
 )
 from ..stores.params_store import (
     attr_ref_from_param_storable,
@@ -448,10 +447,10 @@ class TaskType(BaseModel):
                 )
             )
 
-            # Snapshot entry context before the user func runs.
+            # Snapshot entry context eTAGs before the user func runs.
             _context = _dag_execution_context_var.get()
-            entry_shas = (
-                snapshot_context_shas(_context, _CONTEXT_EXCLUDE_ATTRS)
+            entry_etags = (
+                snapshot_context_etags(_context, _CONTEXT_EXCLUDE_ATTRS)
                 if _context is not None
                 else {}
             )
@@ -485,14 +484,14 @@ class TaskType(BaseModel):
                 if not task_failed and _context is not None:
                     try:
                         rows = compute_context_diff(
-                            exec_id, task_id, _context, entry_shas, _CONTEXT_EXCLUDE_ATTRS
+                            exec_id, task_id, _context, entry_etags, _CONTEXT_EXCLUDE_ATTRS
                         )
                         if rows:
                             dao.add_task_context_attrs(rows)
-                    except Exception:
+                    except Exception as ex:
                         logger.exception(
-                            f"Failed to serialize exit context for task {task_id}; "
-                            "context attrs for this task will be unavailable."
+                            f"Failed to serialize exit context for task {task_id} ; "
+                            f"context attrs for this task will be unavailable : {ex}"
                         )
                 dao.update_task(id=task_id, end_timestamp=end_timestamp, failed=task_failed)
                 dao.dispose()
@@ -835,11 +834,12 @@ class DAG(BaseModel):
         exec_id = dao.add_execution(
             name=pipeline_name,
             docstring=self.docstring,
+            metadata_root=metadata_root(),
+            artifacts_store_root=Config.get_artifacts_store_root(),
             params=serialized_params,
             username=username,
             ui_css=self.ui_css.__dict__ if self.ui_css else None,
             start_timestamp=datetime.now(timezone.utc),
-            metadata_root=metadata_root(),
         )
         # Symlink metadata/<exec_id>/params/defaults => metadata/<tmp>/params/defaults
         # so canonical exec_id-based disk access resolves correctly.
@@ -1402,7 +1402,7 @@ class DagExecutionContext:
         self._updates: dict[str, Any] = {}  # Track updates made in this context
 
         # _attr_refs tracks disk/inline storage metadata per attr:
-        #   {attr_name: {"sha": str, "disk_ref": str|None, "inline": Any}}
+        #   {attr_name: {"eTAG": str, "disk_ref": str|None, "inline": Any}}
         # Populated by _init_attr_refs_from_params() once exec_id is known,
         # then updated in-place by compute_context_diff() at each task exit.
         self._attr_refs: dict[str, dict] = {}
@@ -1413,17 +1413,35 @@ class DagExecutionContext:
         return self._params.get(name)
 
     @staticmethod
-    def _deep_update(target: dict, updates: dict):
+    def deep_update(target: dict, updates: dict):
+        """Recursively merge `updates` into `target`.
+
+        For each key in `updates`:
+        - If the key exists in `target` and both the existing and new values
+          are dictionaries, they are merged recursively.
+        - Otherwise, the value in `target` is overwritten by the value from `updates`.
+
+        This is used internally to merge parameter updates and context state
+        from parallel branches or taskgroups back into the parent context,
+        preserving nested dictionary structures where applicable.
+
+        Parameters
+        ----------
+        target : dict
+            The dictionary to update. Modified in-place.
+        updates : dict
+            The dictionary with updates to apply.
+        """
         for k, v in updates.items():
             if k in target and isinstance(target[k], dict) and isinstance(v, dict):
-                DagExecutionContext._deep_update(target[k], v)  # recurse
+                DagExecutionContext.deep_update(target[k], v)  # recurse
             else:
                 target[k] = v
 
     def update(self, **kwargs):
         """Update context parameters."""
-        DagExecutionContext._deep_update(self._params, kwargs)
-        DagExecutionContext._deep_update(self._updates, kwargs)
+        DagExecutionContext.deep_update(self._params, kwargs)
+        DagExecutionContext.deep_update(self._updates, kwargs)
 
     def get_updates(self) -> dict[str, Any]:
         """Get all updates made in this context."""
@@ -1437,8 +1455,8 @@ class DagExecutionContext:
         """
         return self._attr_refs.copy()
 
-    def merge_updates(self, updates: dict[str, Any], attr_refs: dict[str, dict] | None = None):
-        """Merge updates from child context (child wins on conflicts).
+    def concat_taskgroup_updates(self, updates: dict[str, Any], attr_refs: dict[str, dict]):
+        """Concat updates from child context (child wins on conflicts).
 
         Parameters
         ----------
@@ -1447,11 +1465,24 @@ class DagExecutionContext:
         attr_refs : dict[str, dict] | None
             _attr_refs from child execution ; merged so that disk_refs
             written in processes/threads are visible to the parent context.
+            Is used for taskgroup successors.
         """
-        DagExecutionContext._deep_update(self._params, updates)
-        DagExecutionContext._deep_update(self._updates, updates)
-        if attr_refs:
-            DagExecutionContext._deep_update(self._attr_refs, attr_refs)
+        # print(f"updated context entries to concat : {[k for k in updates.keys()]}")
+        DagExecutionContext.deep_update(self._params, updates)
+        DagExecutionContext.deep_update(self._updates, updates)
+        DagExecutionContext.deep_update(self._attr_refs, attr_refs)
+
+    def merge_parallel_updates(self, updates: dict[str, Any]):
+        """Merge updates from branches contexts (child wins on conflicts).
+
+        Parameters
+        ----------
+        updates : dict[str, Any]
+            _params / _updates changes from child execution.
+        """
+        # print(f"updated context entries to merge : {[k for k in updates.keys()]}")
+        DagExecutionContext.deep_update(self._params, updates)
+        DagExecutionContext.deep_update(self._updates, updates)
 
     def copy(self):
         """Create a deep copy of this context for child tasks runs."""
@@ -1464,8 +1495,8 @@ class DagExecutionContext:
 
         Must be called once exec_id is known and params have been written to DB
         (including any execution-time overrides). Establishes the baseline
-        disk_ref / inline / sha entries for all DAG params so that
-        snapshot_context_shas() and compute_context_diff() work correctly
+        disk_ref / inline / eTAG entries for all DAG params so that
+        snapshot_context_etags() and compute_context_diff() work correctly
         at the first (DAG-head) task entry.
 
         Parameters
@@ -1478,11 +1509,7 @@ class DagExecutionContext:
         for param_name, param_dict in params_json.items():
             # Active value: override if present, else default.
             storable = param_dict.get("override", param_dict.get("default"))
-            resolved_value = resolve_storable(
-                build_path(Config.get_assets_cache_root(), ("metadata",)),
-                storable,
-            )
-            self._attr_refs[param_name] = attr_ref_from_param_storable(storable, resolved_value)
+            self._attr_refs[param_name] = attr_ref_from_param_storable(storable)
 
         logger.debug(f"execution context cold-start (DAG params) : {self._attr_refs}")
 
@@ -1508,6 +1535,13 @@ class _ContextProxy:
             )
         ctx._params[name] = value
         ctx._updates[name] = value  # Track the updates
+        if value is not None:
+            # New eTAG on every assignment so compute_context_diff detects the change.
+            # disk_ref/inline are resolved at task-exit serialization.
+            ctx._attr_refs[name] = {"eTAG": generate_etag(), "disk_ref": None, "inline": None}
+        else:
+            # Deletion: remove tracking entry so the attr is not carried forward.
+            ctx._attr_refs.pop(name, None)
 
 
 ctx = _ContextProxy()

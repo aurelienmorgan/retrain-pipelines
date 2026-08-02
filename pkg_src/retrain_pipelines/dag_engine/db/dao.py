@@ -391,8 +391,8 @@ class DAO(DAOBase):
         Parameters
         ----------
         rows : list[dict]
-            Each dict must contain: task_id, attr_name, sha, disk_ref, inline_val.
-            One row per surviving or deleted context attribute.
+            Each dict must contain: task_id, attr_name, eTAG, sha, disk_ref, inline_val.
+            One row per surviving context attribute.
         """
         if rows:
             self._batch_add_entities(TaskContextAttr, items=rows)

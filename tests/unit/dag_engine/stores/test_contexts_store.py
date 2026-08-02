@@ -2,11 +2,11 @@ import os
 from typing import Any
 import pytest
 
-from retrain_pipelines.dag_engine.stores.context_store import (
+from retrain_pipelines.dag_engine.stores.contexts_store import (
     _CONTEXT_EXCLUDE_ATTRS,
     context_attr_disk_path,
     _serialize_attr,
-    snapshot_context_shas,
+    snapshot_context_etags,
     compute_context_diff,
 )
 from retrain_pipelines.dag_engine.stores.commons import compute_sha
@@ -41,15 +41,17 @@ class TestSerializeAttr:
     def test_json_serializable_value(self):
         exec_id, task_id, attr_name = 1, 1, "config"
         value = {"lr": 0.01, "epochs": 10}
-        current_sha = compute_sha(value)
-        row, ref = _serialize_attr(exec_id, task_id, attr_name, value, current_sha)
+        current_etag = "etag-1"
+        row, ref = _serialize_attr(exec_id, task_id, attr_name, value, current_etag)
 
-        assert ref["sha"] == current_sha
+        assert ref["eTAG"] == current_etag
+        assert "sha" not in ref  # sha is absent in ref for JSON-serializable
         assert ref["disk_ref"] is None
         assert ref["inline"] == value
         assert row["task_id"] == task_id
         assert row["attr_name"] == attr_name
-        assert row["sha"] == current_sha
+        assert row["eTAG"] == current_etag
+        assert row["sha"] is None  # sha is None in row for JSON-serializable
         assert row["disk_ref"] is None
         assert row["inline_val"] == value
 
@@ -59,44 +61,43 @@ class TestSerializeAttr:
         def value(x: int) -> int:
             return x**2
 
+        current_etag = "etag-2"
         current_sha = compute_sha(value)
-        row, ref = _serialize_attr(exec_id, task_id, attr_name, value, current_sha)
+        row, ref = _serialize_attr(exec_id, task_id, attr_name, value, current_etag)
 
+        assert ref["eTAG"] == current_etag
         assert ref["sha"] == current_sha
         assert ref["inline"] is None
         assert ref["disk_ref"] == os.path.join("5", "10", "lambda_func.pkl")
         assert row["disk_ref"] == ref["disk_ref"]
         assert row["inline_val"] is None
+        assert row["sha"] == current_sha
+        assert row["eTAG"] == current_etag
 
         abs_path = os.path.join(tmp_path, "cache", "metadata", ref["disk_ref"])
         assert os.path.exists(abs_path)
 
 
-class TestSnapshotContextShas:
-    def test_computes_shas_for_new_attrs(self):
-        ctx = MockContext({"a": 1, "b": "test"})
-        res = snapshot_context_shas(ctx, frozenset())
-
-        assert res["a"] == compute_sha(1)
-        assert res["b"] == compute_sha("test")
-
-    def test_skips_excluded_and_none(self):
+class TestSnapshotContextEtags:
+    def test_excludes_and_none(self):
         ctx = MockContext(
-            {"exec_id": 1, "pipeline_name": "p", "username": "u", "c": None, "d": 42}
+            {"keep": "val", "skip": "skip_val", "none_val": None},
+            {"keep": {"eTAG": "etag-keep"}, "skip": {"eTAG": "etag-skip"}},
         )
-        res = snapshot_context_shas(ctx, _CONTEXT_EXCLUDE_ATTRS)
+        exclude = frozenset(["skip"])
+        etags = snapshot_context_etags(ctx, exclude)
 
-        assert "exec_id" not in res
-        assert "pipeline_name" not in res
-        assert "c" not in res
-        assert "d" in res
+        assert "skip" not in etags
+        assert "none_val" not in etags
+        assert etags["keep"] == "etag-keep"
 
-    def test_reuses_tracked_sha(self):
-        tracked_sha = "precomputed_stable_sha"
-        ctx = MockContext({"x": 99}, {"x": {"sha": tracked_sha}})
-        res = snapshot_context_shas(ctx, frozenset())
+    def test_generates_new_etag(self):
+        ctx = MockContext({"new": "val"}, {})
+        etags = snapshot_context_etags(ctx, frozenset())
 
-        assert res["x"] == tracked_sha
+        assert "new" in etags
+        assert isinstance(etags["new"], str)
+        assert len(etags["new"]) > 0
 
 
 class TestComputeContextDiff:
@@ -108,38 +109,50 @@ class TestComputeContextDiff:
         assert rows[0]["attr_name"] == "new"
         assert "new" in ctx._attr_refs
         assert rows[0]["inline_val"] == [1, 2, 3]
+        assert rows[0]["eTAG"] is not None
+        assert rows[0]["sha"] is None
+        assert ctx._attr_refs["new"]["eTAG"] == rows[0]["eTAG"]
 
     def test_modified_attr_serializes(self):
-        old_val, new_val = "old", "updated"
-        ctx = MockContext({"mod": new_val}, {"mod": {"sha": compute_sha(old_val)}})
-        entry_shas = {"mod": compute_sha(old_val)}
-        rows = compute_context_diff(1, 1, ctx, entry_shas, frozenset())
+        _, new_val = "old", "updated"
+        old_etag = "etag-old"
+        new_etag = "etag-new"
+        ctx = MockContext({"mod": new_val}, {"mod": {"eTAG": new_etag}})
+        entry_etags = {"mod": old_etag}
+        rows = compute_context_diff(1, 1, ctx, entry_etags, frozenset())
 
         assert len(rows) == 1
-        assert rows[0]["sha"] == compute_sha(new_val)
-        assert ctx._attr_refs["mod"]["sha"] == compute_sha(new_val)
+        assert rows[0]["eTAG"] == new_etag
+        assert rows[0]["sha"] is None  # "updated" is JSON-serializable
+        assert rows[0]["inline_val"] == new_val
+        assert ctx._attr_refs["mod"]["eTAG"] == new_etag
 
     def test_unchanged_attr_carries_forward_ref(self):
         val = "stable"
-        ref = {"sha": compute_sha(val), "disk_ref": None, "inline": val}
+        etag = "etag-stable"
+        ref = {"eTAG": etag, "disk_ref": None, "inline": val}
         ctx = MockContext({"keep": val}, {"keep": ref})
-        entry_shas = {"keep": compute_sha(val)}
-        rows = compute_context_diff(1, 1, ctx, entry_shas, frozenset())
+        entry_etags = {"keep": etag}
+        rows = compute_context_diff(1, 1, ctx, entry_etags, frozenset())
 
         assert len(rows) == 1
-        assert rows[0]["sha"] == compute_sha(val)
+        assert rows[0]["eTAG"] == etag
+        assert rows[0]["sha"] is None  # ref.get("sha") evaluates to None
         assert rows[0]["disk_ref"] is None
         assert rows[0]["inline_val"] == val
 
     def test_unchanged_attr_missing_ref_serializes(self):
         val = "edge_case"
+        etag = "etag-edge"
         ctx = MockContext({"edge": val}, {})
-        entry_shas = {"edge": compute_sha(val)}
-        rows = compute_context_diff(1, 1, ctx, entry_shas, frozenset())
+        entry_etags = {"edge": etag}
+        rows = compute_context_diff(1, 1, ctx, entry_etags, frozenset())
 
         assert len(rows) == 1
         assert rows[0]["inline_val"] == val
+        assert rows[0]["eTAG"] is not None
         assert "edge" in ctx._attr_refs
+        assert ctx._attr_refs["edge"]["eTAG"] == rows[0]["eTAG"]
 
     def test_filters_excluded_and_none(self):
         ctx = MockContext({"username": "admin", "val": None, "keep": True})
@@ -147,3 +160,4 @@ class TestComputeContextDiff:
 
         assert len(rows) == 1
         assert rows[0]["attr_name"] == "keep"
+        assert rows[0]["inline_val"] is True

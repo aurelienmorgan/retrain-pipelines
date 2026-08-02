@@ -47,6 +47,7 @@ class Execution(Base):
     docstring: Mapped[str | None] = mapped_column(String)
 
     metadata_root: Mapped[str] = mapped_column(String, nullable=False)
+    artifacts_store_root: Mapped[str] = mapped_column(String, nullable=False)
 
     params: Mapped[dict | None] = mapped_column(JSON)
 
@@ -351,8 +352,6 @@ class TaskContextAttr(Base):
       - disk_ref non-null  : cloudpickled artifact; path is relative to
                              the execution's metadata_root column.
       - inline_val non-null: JSON-safe value stored directly.
-    Python None is a valid inline_val (stored as SQL NULL via none_as_null=True).
-    disk_ref being non-null is the authoritative signal that the value is on disk.
     """
 
     __tablename__ = "task_context_attrs"
@@ -362,10 +361,15 @@ class TaskContextAttr(Base):
     )
     attr_name: Mapped[str] = mapped_column(String, primary_key=True, nullable=False)
 
-    sha: Mapped[str] = mapped_column(String, nullable=False)
+    # eTAG: uuid assigned at serialization time; used internally for task-to-task change detection.
+    eTAG: Mapped[str] = mapped_column(String, nullable=False)
+    # sha: content-based SHA-256 computed at serialization time via compute_sha();
+    #      non-null for disk-pickled attrs only ; null for inline attrs.
+    #      Used by the SDK for value-equality comparisons across executions.
+    sha: Mapped[str | None] = mapped_column(String, nullable=True)
     # Cloudpickled artifact path, relative to the execution's metadata_root.
     disk_ref: Mapped[str | None] = mapped_column(String, nullable=True)
-    # JSON-safe value stored directly. ``disk_ref``  being non-null (not this column)
+    # JSON-safe value stored directly. ``disk_ref`` being non-null (not this column)
     # is the signal that the value lives on disk.
     inline_val: Mapped[Any] = mapped_column(JSON(none_as_null=True), nullable=True)
 

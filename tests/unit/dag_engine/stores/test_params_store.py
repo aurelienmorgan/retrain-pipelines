@@ -285,17 +285,27 @@ class TestAttrRefFromParamStorable:
 
     def test_disk_ref_storable(self):
         """Disk-ref sentinel dicts should extract sha and disk_ref."""
-        storable = {"__sha__": "abc", DISK_REF_KEY: "some/path.pkl"}
-        res = params_store.attr_ref_from_param_storable(storable, None)
+        storable = {
+            "__eTAG__": "etag1",
+            "__sha__": "abc",
+            DISK_REF_KEY: "some/path.pkl",
+        }
+        res = params_store.attr_ref_from_param_storable(storable)
 
-        assert res == {"sha": "abc", "disk_ref": "some/path.pkl", "inline": None}
+        assert res == {
+            "eTAG": "etag1",
+            "sha": "abc",
+            "disk_ref": "some/path.pkl",
+            "inline": None,
+        }
 
     def test_inline_storable(self, tmp_path, monkeypatch):
         """Inline JSON-safe values should compute SHA on the resolved object."""
         monkeypatch.setenv("RP_ASSETS_CACHE", str(tmp_path))
         storable = 42
-        res = params_store.attr_ref_from_param_storable(storable, 42)
+        res = params_store.attr_ref_from_param_storable(storable)
 
         assert res["disk_ref"] is None
         assert res["inline"] == 42
-        assert "sha" in res
+        assert res["sha"] is None
+        assert "eTAG" in res

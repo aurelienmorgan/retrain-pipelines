@@ -16,15 +16,20 @@ Artifacts layout under {Config.get_assets_cache_root()}/metadata/ (a.k.a. _metad
                                                     written after exec_id is known.
 
 Values stored in DB use one of two formats:
-  <json_safe_value>                                         - for natively serializable values
-  {"__sha__": "<sha256hex>", "__disk_ref__": "<rel_path>"}  - for cloudpickled values
-SHA is computed on the raw pickle bytes (sha256(cloudpickle.dumps(obj))).
+  <json_safe_value>                                   - for natively
+                                                      serializable values
+  {"__eTAG__": "<uuid_hex>", "__sha__": "<sha256hex>", "__disk_ref__": "<rel_path>"}
+                                                      - for cloudpickled values
+- eTAG is generated at serialization time (uuid4().hex)
+    used internally for task-to-task change detection.
+- SHA is a content-based digest computed at serialization time via compute_sha()
+    used by the SDK for value-equality comparisons.
 
 _attr_refs entries (held in DagExecutionContext._attr_refs) use:
-  {"sha": "<sha256hex>", "disk_ref": "<rel_path> | None", "inline": <value> | None}
+  disk : {"eTAG": "<uuid_hex>", "sha": "<sha256hex>", "disk_ref": "<rel_path>", "inline": None}
+  inline: {"eTAG": "<uuid_hex>", "disk_ref": None, "inline": <value>}
 """
 
-import hashlib
 import os
 import subprocess
 import uuid
@@ -48,6 +53,7 @@ from ...utils.wsl_utils import (
 from .commons import (
     DISK_REF_KEY,
     compute_sha,
+    generate_etag,
     is_disk_ref,
     metadata_root,
     try_json_serialize,
@@ -152,8 +158,9 @@ def value_to_storable(dir_id: int | str, subdir: str, param_name: str, obj: Any)
 
     Natively JSON-serializable values are returned as-is.
     Everything else is cloudpickled to disk; the returned dict contains
-    ``__disk_ref__`` (relative path) and ``__sha__`` (sha256 of the pickle
-    bytes) so that change detection requires no deserialization.
+    ``__disk_ref__`` (relative path), ``__eTAG__`` (uuid generated at write
+    time, for internal change detection) and ``__sha__`` (content-based digest
+    via compute_sha(), for SDK value-equality comparisons).
 
     Parameters
     ----------
@@ -170,13 +177,16 @@ def value_to_storable(dir_id: int | str, subdir: str, param_name: str, obj: Any)
         return try_json_serialize(obj)
     except TypeError:
         raw_bytes = cloudpickle.dumps(obj)
-        sha = hashlib.sha256(raw_bytes).hexdigest()
         rel_path = param_disk_path(dir_id, subdir, param_name)
         write_binary_file(metadata_root(), [rel_path], raw_bytes)
-        return {"__sha__": sha, DISK_REF_KEY: rel_path}
+        return {
+            "__eTAG__": generate_etag(),
+            "__sha__": compute_sha(obj),
+            DISK_REF_KEY: rel_path,
+        }
 
 
-def attr_ref_from_param_storable(storable: Any, resolved_value: Any) -> dict:
+def attr_ref_from_param_storable(storable: Any) -> dict:
     """Build an _attr_ref dict from a param's active storable (from executions.params JSON).
 
     Parameters
@@ -184,16 +194,27 @@ def attr_ref_from_param_storable(storable: Any, resolved_value: Any) -> dict:
     storable : Any
         The raw storable as read from executions.params
         (disk-ref sentinel dict, or inline JSON-safe value).
-    resolved_value : Any
-        The deserialized Python object (result of resolve_storable(metadata_root, storable)).
-        Used to compute SHA for inline values.
 
     Returns
     -------
     dict
-        {"sha": str, "disk_ref": str | None, "inline": Any}
+        Disk-pickled: {"eTAG": str, "sha": str, "disk_ref": str, "inline": None}
+        Inline      : {"eTAG": str, "sha": None, "disk_ref": None, "inline": Any}
+        eTAG is used internally for task-to-task change detection.
+        sha (disk only) is used by the SDK for value-equality comparisons;
+        inline values are compared directly by the SDK without SHA involvement.
     """
     if is_disk_ref(storable):
-        return {"sha": storable["__sha__"], "disk_ref": storable[DISK_REF_KEY], "inline": None}
-    # Inline JSON-safe param: SHA computed on the resolved Python object.
-    return {"sha": compute_sha(resolved_value), "disk_ref": None, "inline": storable}
+        return {
+            "eTAG": storable["__eTAG__"],
+            "sha": storable["__sha__"],
+            "disk_ref": storable[DISK_REF_KEY],
+            "inline": None,
+        }
+    # Inline JSON-safe param: no SHA ; SDK compares by value directly.
+    return {
+        "eTAG": generate_etag(),
+        "sha": None,
+        "disk_ref": None,
+        "inline": storable,
+    }

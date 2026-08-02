@@ -1,9 +1,11 @@
 """Unit tests for retrain_pipelines.dag_engine.stores.commons."""
 
-import cloudpickle
 import hashlib
+import io
+import sys
 from datetime import date, datetime, timezone
 
+import cloudpickle
 import pytest
 from pydantic import BaseModel
 
@@ -17,8 +19,6 @@ from retrain_pipelines.dag_engine.stores.commons import (
     compute_sha,
 )
 from retrain_pipelines.dag_engine.stores.params_store import value_to_storable
-
-_MODULE = "retrain_pipelines.dag_engine.stores.commons"
 
 
 # ---------------------------------------------------------------------------
@@ -189,3 +189,97 @@ class TestComputeSha:
     def test_distinct_for_different_objects(self):
         """Different objects should produce different SHAs."""
         assert compute_sha({"a": 1}) != compute_sha({"a": 2})
+
+    def test_numpy_ndarray(self):
+        """numpy ndarray: SHA-256 of raw bytes + dtype + shape string."""
+        np = pytest.importorskip("numpy")
+        arr = np.array([[1, 2], [3, 4]], dtype=np.int64)
+
+        h = hashlib.sha256()
+        h.update(arr.tobytes())
+        h.update(str(arr.dtype).encode())
+        h.update(str(arr.shape).encode())
+        expected = h.hexdigest()
+
+        assert compute_sha(arr) == expected
+
+    def test_numpy_branch_falls_through_on_import_error(self, monkeypatch):
+        """If the inline numpy import raises, except triggers and we fall through to cloudpickle."""
+
+        class FakeNumpy:
+            pass
+
+        FakeNumpy.__module__ = "numpy.fake"
+        obj = FakeNumpy()
+
+        # Force `import numpy as np` inside compute_sha to raise ImportError
+        monkeypatch.setitem(sys.modules, "numpy", None)
+
+        expected = hashlib.sha256(cloudpickle.dumps(obj)).hexdigest()
+        assert compute_sha(obj) == expected
+
+    def test_pandas_dataframe(self):
+        """pandas DataFrame: SHA-256 via pd.util.hash_pandas_object."""
+        pd = pytest.importorskip("pandas")
+        df = pd.DataFrame({"a": [1, 2], "b": [3, 4]})
+
+        expected = hashlib.sha256(
+            pd.util.hash_pandas_object(df, index=True).values.tobytes()
+        ).hexdigest()
+
+        assert compute_sha(df) == expected
+
+    def test_pandas_series(self):
+        """pandas Series: SHA-256 via pd.util.hash_pandas_object."""
+        pd = pytest.importorskip("pandas")
+        s = pd.Series([10, 20, 30], name="vals")
+
+        expected = hashlib.sha256(
+            pd.util.hash_pandas_object(s, index=True).values.tobytes()
+        ).hexdigest()
+
+        assert compute_sha(s) == expected
+
+    def test_pandas_branch_falls_through_on_import_error(self, monkeypatch):
+        """If the inline pandas import raises, except triggers and we fall through to cloudpickle."""
+
+        class FakePandas:
+            pass
+
+        FakePandas.__module__ = "pandas.fake"
+        obj = FakePandas()
+
+        # Force `import pandas as pd` inside compute_sha to raise ImportError
+        monkeypatch.setitem(sys.modules, "pandas", None)
+
+        expected = hashlib.sha256(cloudpickle.dumps(obj)).hexdigest()
+        assert compute_sha(obj) == expected
+
+    def test_matplotlib_figure(self):
+        """matplotlib Figure: SHA-256 of a PNG render at 72 dpi."""
+        matplotlib = pytest.importorskip("matplotlib")
+        matplotlib.use("Agg", force=True)
+        import matplotlib.pyplot as plt
+
+        fig = plt.figure()
+        ax = fig.add_subplot(111)
+        ax.plot([1, 2, 3], [4, 5, 6])
+
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", dpi=72)
+        expected = hashlib.sha256(buf.getvalue()).hexdigest()
+
+        assert compute_sha(fig) == expected
+        plt.close(fig)
+
+    def test_matplotlib_branch_falls_through_on_savefig_failure(self):
+        """If savefig raises (obj is not a real Figure), except triggers and we fall through."""
+
+        class FakeMpl:
+            pass
+
+        FakeMpl.__module__ = "matplotlib.fake"
+        obj = FakeMpl()
+
+        expected = hashlib.sha256(cloudpickle.dumps(obj)).hexdigest()
+        assert compute_sha(obj) == expected

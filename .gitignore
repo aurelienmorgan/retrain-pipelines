@@ -73,3 +73,5 @@ serving_artifacts/
 sample_pipelines/data
 sample_pipelines/.env
 extra/gleevy_labs/
+pkg_src/LICENSE
+pkg_src/README.md

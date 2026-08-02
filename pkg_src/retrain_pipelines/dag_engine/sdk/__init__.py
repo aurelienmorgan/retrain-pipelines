@@ -100,6 +100,7 @@ class ExecutionsIterator(BaseModel):
                     id=exec_ext.id,
                     name=exec_ext.name,
                     metadata_root=exec_ext.metadata_root,
+                    artifacts_store_root=exec_ext.artifacts_store_root,
                     start_timestamp=exec_ext.start_timestamp,
                     end_timestamp=exec_ext.end_timestamp,
                     success=exec_ext.success,

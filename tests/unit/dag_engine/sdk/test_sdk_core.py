@@ -39,6 +39,7 @@ def _make_execution(**kwargs):
         id=1,
         name="pipe",
         metadata_root="/tmp/meta",
+        artifacts_store_root="/tmp/artifacts",
         start_timestamp=_NOW,
         end_timestamp=None,
         success=True,
@@ -200,6 +201,13 @@ class TestExecutionParams:
         p2 = ExecutionParams({"m": {"default": disk_b}}, "/tmp/meta")
         assert p1.param_equals("m", p2) is False
 
+    def test_param_equals_mixed_storage_mismatch(self):
+        """Covers branch where one param is disk-pickled and the other is inline."""
+        disk_a = {"__sha__": "hash1", "__disk_ref__": True}
+        p1 = ExecutionParams({"m": {"default": disk_a}}, "/tmp/meta")
+        p2 = ExecutionParams({"m": {"default": 1}}, "/tmp/meta")
+        assert p1.param_equals("m", p2) is False
+
     def test_diff(self):
         # Include a disk-ref param to exercise the branch inside _sha()
         disk_ref = {"__disk_ref__": "path", "__sha__": "abc123"}
@@ -235,6 +243,14 @@ class TestExecutionParams:
         assert diff.only_in_self == []
         assert diff.modified == []
         assert diff.only_in_other == []
+
+    def test_diff_mixed_storage_mismatch(self):
+        """Covers branch in diff() where one param is disk and the other is inline."""
+        disk_a = {"__sha__": "hash1", "__disk_ref__": True}
+        p1 = ExecutionParams({"mod": {"default": disk_a}}, "/tmp")
+        p2 = ExecutionParams({"mod": {"default": 1}}, "/tmp")
+        diff = p1.diff(p2)
+        assert diff.modified == ["mod"]
 
 
 # ---------------------------------------------------------------------------
@@ -376,10 +392,11 @@ class TestExecutionGetTaskById:
         mock_ext.configure_mock(
             id=42,
             name="pipe_v2",
+            metadata_root="/tmp/meta",
+            artifacts_store_root="/tmp/artifacts",
             start_timestamp=_NOW,
             end_timestamp=_LATER,
             success=True,
-            metadata_root="/tmp/meta",
         )
         mock_dao = MagicMock()
         mock_dao.get_execution_ext = AsyncMock(return_value=mock_ext)
@@ -615,9 +632,9 @@ class TestTaskExitContext:
         assert repr(ctx) == "TaskExitContext(attrs=['a'])"
 
     def test_attr_equals(self):
-        r1 = self._make_row("a", sha="h1")
-        r2 = self._make_row("a", sha="h1")
-        r3 = self._make_row("a", sha="h2")
+        r1 = self._make_row("a", inline_val="v1", sha=None)
+        r2 = self._make_row("a", inline_val="v1", sha=None)
+        r3 = self._make_row("a", inline_val="v2", sha=None)
 
         ctx1 = TaskExitContext([r1], "/tmp")
         ctx2 = TaskExitContext([r2], "/tmp")
@@ -629,31 +646,134 @@ class TestTaskExitContext:
         assert ctx1.attr_equals("missing", ctx4) is True  # both missing
         assert ctx1.attr_equals("a", ctx4) is False  # one missing
 
-    def test_diff(self):
-        r1 = self._make_row("only1", sha="h1")
-        r2 = self._make_row("mod", sha="h1")
-        r3 = self._make_row("same", sha="h1")
+    def test_attr_equals_disk_ref(self):
+        """Covers branch in attr_equals where one or both rows are disk-pickled."""
+        r1 = self._make_row("a", disk_ref="d1", sha="h1")
+        r2 = self._make_row("a", disk_ref="d1", sha="h1")
+        r3 = self._make_row("a", disk_ref="d1", sha="h2")
 
-        r4 = self._make_row("only2", sha="h2")
-        r5 = self._make_row("mod", sha="h2")
-        r6 = self._make_row("same", sha="h1")
+        ctx1 = TaskExitContext([r1], "/tmp")
+        ctx2 = TaskExitContext([r2], "/tmp")
+        ctx3 = TaskExitContext([r3], "/tmp")
 
-        ctx1 = TaskExitContext([r1, r2, r3], "/tmp")
-        ctx2 = TaskExitContext([r4, r5, r6], "/tmp")
+        assert ctx1.attr_equals("a", ctx2) is True
+        assert ctx1.attr_equals("a", ctx3) is False
+
+    @pytest.mark.parametrize(
+        "case_id, self_rows, other_rows, expected_only_in_self, expected_modified, "
+        "expected_only_in_other",
+        [
+            (
+                "all_inline",
+                [
+                    ("only1", None, "v1", None),
+                    ("mod", None, "v1", None),
+                    ("same", None, "v1", None),
+                ],
+                [
+                    ("only2", None, "v2", None),
+                    ("mod", None, "v2", None),
+                    ("same", None, "v1", None),
+                ],
+                ["only1"],
+                ["mod"],
+                ["only2"],
+            ),
+            (
+                "all_disk_ref",
+                [
+                    ("only1", "d1", None, "h1"),
+                    ("mod", "d2", None, "h1"),
+                    ("same", "d3", None, "h1"),
+                ],
+                [
+                    ("only2", "d4", None, "h2"),
+                    ("mod", "d2", None, "h2"),
+                    ("same", "d3", None, "h1"),
+                ],
+                ["only1"],
+                ["mod"],
+                ["only2"],
+            ),
+            (
+                "mixed_inline_and_disk",
+                [
+                    ("only1", None, "v1", None),
+                    ("mod", "d1", None, "h1"),
+                    ("same", None, "v1", None),
+                    ("mixed_mod", "d2", None, "h1"),
+                ],
+                [
+                    ("only2", "d3", None, "h2"),
+                    ("mod", "d1", None, "h2"),
+                    ("same", None, "v1", None),
+                    ("mixed_mod", None, "v1", None),
+                ],
+                ["only1"],
+                ["mixed_mod", "mod"],
+                ["only2"],
+            ),
+            (
+                "inline_vs_disk_mismatch",
+                [("attr", None, "v1", None)],
+                [("attr", "d1", None, "h1")],
+                [],
+                ["attr"],
+                [],
+            ),
+        ],
+    )
+    def test_diff(
+        self,
+        case_id,
+        self_rows,
+        other_rows,
+        expected_only_in_self,
+        expected_modified,
+        expected_only_in_other,
+    ):
+        r1 = [
+            self._make_row(n, disk_ref=d, inline_val=v, sha=s)
+            for n, d, v, s in self_rows
+        ]
+        r2 = [
+            self._make_row(n, disk_ref=d, inline_val=v, sha=s)
+            for n, d, v, s in other_rows
+        ]
+
+        ctx1 = TaskExitContext(r1, "/tmp")
+        ctx2 = TaskExitContext(r2, "/tmp")
 
         diff = ctx1.diff(ctx2)
-        assert diff.only_in_self == ["only1"]
-        assert diff.only_in_other == ["only2"]
-        assert diff.modified == ["mod"]
+        assert diff.only_in_self == expected_only_in_self
+        assert diff.only_in_other == expected_only_in_other
+        assert diff.modified == expected_modified
 
-    def test_diff_identical(self):
-        r1 = self._make_row("a", sha="h1")
-        r2 = self._make_row("a", sha="h1")
-        r3 = self._make_row("a", sha="h2")
-        context = [r1, r2, r3]
+    @pytest.mark.parametrize(
+        "case_id, rows_config",
+        [
+            (
+                "all_inline",
+                [("a", None, "v1", None), ("b", None, "v2", None)],
+            ),
+            (
+                "all_disk_ref",
+                [("a", "d1", None, "h1"), ("b", "d2", None, "h2")],
+            ),
+            (
+                "mixed_inline_and_disk",
+                [("a", None, "v1", None), ("b", "d1", None, "h1")],
+            ),
+        ],
+    )
+    def test_diff_identical(self, case_id, rows_config):
+        rows = [
+            self._make_row(n, disk_ref=d, inline_val=v, sha=s)
+            for n, d, v, s in rows_config
+        ]
 
-        ctx1 = TaskExitContext(context, "/tmp")
-        ctx2 = TaskExitContext(context, "/tmp")
+        ctx1 = TaskExitContext(rows, "/tmp")
+        ctx2 = TaskExitContext(rows, "/tmp")
 
         diff = ctx1.diff(ctx2)
 

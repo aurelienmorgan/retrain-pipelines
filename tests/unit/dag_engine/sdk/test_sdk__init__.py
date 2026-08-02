@@ -31,6 +31,7 @@ def _make_exec_ext(
         id=id,
         name=name,
         metadata_root="/tmp/meta",
+        artifacts_store_root="/tmp/artifacts",
         start_timestamp=start,
         end_timestamp=end,
         success=success,

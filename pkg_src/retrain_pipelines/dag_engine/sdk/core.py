@@ -37,13 +37,11 @@ shutdown.
 
 import asyncio
 import atexit
-import hashlib
 import threading
 from collections.abc import Coroutine
 from datetime import datetime
 from typing import Any
 
-import cloudpickle
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..config import Config
@@ -145,8 +143,7 @@ class ExecutionParams:
     as stored in DB, not the current ``Config.get_assets_cache_root()``.
 
     For disk-pickled params, value equality can be tested via ``param_equals()``
-    using the stored SHA (computed on the Python object) ;
-    no deserialization required.
+    using the stored eTAG (assigned at write time) ; no deserialization required.
 
     Parameters
     ----------
@@ -224,12 +221,10 @@ class ExecutionParams:
     def param_equals(self, key: str, other: "ExecutionParams") -> bool:
         """Return True if key holds the same value in both ExecutionParams instances.
 
-        Comparison is always SHA-based ; no deserialization from disk ever occurs.
-        SHAs are computed via sha256(cloudpickle.dumps(obj)).hexdigest() on
-        the Python object itself, matching what ``value_to_storable`` stores
-        for disk-pickled params.
-        Disk-pickled params read their pre-computed SHA straight from DB ;
-        native params have their SHA computed on the fly from the inline value.
+        Comparison is SHA-based for disk-pickled params and direct value equality
+        for inline (JSON-safe) params ; no deserialization from disk ever occurs.
+        At execution time, SHAs are computed once at serialization time
+        via compute_sha() and stored in DB.
 
         Parameters
         ----------
@@ -259,22 +254,25 @@ class ExecutionParams:
         a = self._active_storable(key)
         b = other._active_storable(key)
 
-        def _sha(storable: Any) -> str:
-            # Disk-pickled: SHA was pre-computed on the Python object at store time.
-            if isinstance(storable, dict) and DISK_REF_KEY in storable:
-                return storable["__sha__"]
+        def _is_disk(storable: Any) -> bool:
+            return isinstance(storable, dict) and DISK_REF_KEY in storable
 
-            # Native: compute SHA on the Python object the same way value_to_storable does.
-            return hashlib.sha256(cloudpickle.dumps(storable)).hexdigest()
-
-        return _sha(a) == _sha(b)
+        a_disk, b_disk = _is_disk(a), _is_disk(b)
+        if a_disk != b_disk:
+            return False  # one disk-pickled, one inline: different storage types
+        if a_disk:
+            return a["__sha__"] == b["__sha__"]
+        return a == b  # both inline: compare values directly
 
     def diff(self, other: "ExecutionParams") -> "AttrsDiff":
         """Return a SHA-based diff between this param set and another.
 
-        No deserialization occurs: only param names and stored SHA values
-        are compared. The active storable (override if present, else default)
-        is used for each param on both sides.
+        No deserialization occurs: for entries common to both sets,
+        disk-pickled params are compared by their stored SHA
+        (computed once at serialization time via compute_sha()).
+        Inline params are compared directly by value.
+        The active storable (override if present, else default) is used for each
+        param on both sides.
 
         Parameters
         ----------
@@ -292,16 +290,22 @@ class ExecutionParams:
         >>> d = a.diff(b)
         >>> d.only_in_self   # params declared only in execution 1
         ['legacy_flag']
-        >>> d.modified        # params present in both but with a different value
+        >>> d.modified       # params present in both but with a different value
         ['dummy_param_1']
         >>> d.only_in_other  # params declared only in execution 2
         []
         """
 
-        def _sha(storable: Any) -> str:
-            if isinstance(storable, dict) and DISK_REF_KEY in storable:
-                return storable["__sha__"]
-            return hashlib.sha256(cloudpickle.dumps(storable)).hexdigest()
+        def _is_disk(storable: Any) -> bool:
+            return isinstance(storable, dict) and DISK_REF_KEY in storable
+
+        def _differs(s: Any, o: Any) -> bool:
+            s_disk, o_disk = _is_disk(s), _is_disk(o)
+            if s_disk != o_disk:
+                return True  # one disk-pickled, one inline: different storage types
+            if s_disk:
+                return s["__sha__"] != o["__sha__"]
+            return s != o  # both inline: compare values directly
 
         self_keys = set(self._raw)
         other_keys = set(other._raw)
@@ -310,7 +314,7 @@ class ExecutionParams:
             modified=sorted(
                 k
                 for k in self_keys & other_keys
-                if _sha(self._active_storable(k)) != _sha(other._active_storable(k))
+                if _differs(self._active_storable(k), other._active_storable(k))
             ),
             only_in_other=sorted(other_keys - self_keys),
         )
@@ -371,7 +375,10 @@ class TaskExitContext:
     def attr_equals(self, key: str, other: "TaskExitContext") -> bool:
         """Return True if key holds the same value in both TaskExitContext instances.
 
-        Comparison is SHA-based; no deserialization from disk ever occurs.
+        Comparison is SHA-based for disk-pickled attrs and direct value equality
+        for inline attrs ; no deserialization from disk ever occurs.
+        At execution time, SHAs are computed once at serialization time
+        via compute_sha() and stored in DB.
 
         Parameters
         ----------
@@ -403,13 +410,20 @@ class TaskExitContext:
             return True
         if a_row is None or b_row is None:
             return False
-        return a_row.sha == b_row.sha
+
+        # Disk-pickled: compare stored SHA.
+        if a_row.disk_ref is not None or b_row.disk_ref is not None:
+            return a_row.sha == b_row.sha
+        # Both inline: compare values directly.
+        return a_row.inline_val == b_row.inline_val
 
     def diff(self, other: "TaskExitContext") -> AttrsDiff:
         """Return a SHA-based diff between this context and another.
 
-        No deserialization occurs: only attr names and stored SHA values
-        are compared.
+        No deserialization occurs: for entries common to both sets,
+        disk-pickled attrs are compared by their stored
+        SHA (computed once at serialization time via compute_sha()) ; inline attrs
+        are compared directly by value.
 
         Parameters
         ----------
@@ -432,12 +446,18 @@ class TaskExitContext:
         >>> d.only_in_other  # attrs present only in execution 2's task
         ['legacy_flag']
         """
+
+        def _differs(a: Any, b: Any) -> bool:
+            if a.disk_ref is not None or b.disk_ref is not None:
+                return a.sha != b.sha
+            return a.inline_val != b.inline_val
+
         self_keys = set(self._index)
         other_keys = set(other._index)
         return AttrsDiff(
             only_in_self=sorted(self_keys - other_keys),
             modified=sorted(
-                k for k in self_keys & other_keys if self._index[k].sha != other._index[k].sha
+                k for k in self_keys & other_keys if _differs(self._index[k], other._index[k])
             ),
             only_in_other=sorted(other_keys - self_keys),
         )
@@ -456,6 +476,7 @@ class Execution(BaseModel):
         end_timestamp: When execution ended (None if still running)
         success: Whether execution completed successfully
         metadata_root: Absolute metadata root recorded at execution time
+        artifacts_store_root: Absolute artifacts store root recorded at execution time
     """
 
     id: int = Field(..., description="Unique execution identifier")
@@ -471,6 +492,15 @@ class Execution(BaseModel):
             "Absolute path to {Config.get_assets_cache_root()}/metadata/ as it was on the machine "
             "and at the time this execution ran. Used by SDK read methods to resolve "
             "disk artifacts independently of the current ``Config.get_assets_cache_root()`` value."
+        ),
+    )
+    artifacts_store_root: str = Field(
+        ...,
+        description=(
+            "Absolute path to {Config.get_artifacts_store_root()} as it was on the machine "
+            "and at the time this execution ran. Used by SDK read methods to resolve "
+            "disk artifacts independently of the current ``Config.get_artifacts_store_root()`` "
+            "value."
         ),
     )
 
@@ -512,6 +542,7 @@ class Execution(BaseModel):
             end_timestamp=row.end_timestamp,
             success=row.success,
             metadata_root=row.metadata_root,
+            artifacts_store_root=row.artifacts_store_root,
         )
 
     def completed(self) -> bool:

@@ -400,10 +400,10 @@ def _execute_parallel_branches_with_context(
             result, updates = f.result()
             results.append(result)
             # Merge updates (later branches win)
-            DagExecutionContext._deep_update(all_updates, updates)
+            DagExecutionContext.deep_update(all_updates, updates)
 
-        # Merge all updates back
-        context.merge_updates(all_updates)
+        # Merge all updates back into parent context.
+        context.merge_parallel_updates(all_updates)
 
         return results
     finally:
@@ -501,9 +501,24 @@ def _execute_branch_with_context(
     exec_id: int,
     rank: list[int],
 ) -> tuple[TaskPayload, dict[str, Any]]:
-    """Return the wrapper that sets context before executing branch."""
+    """Set the execution context and run a single parallel branch.
+
+    Returns the branch result and the context updates made within this branch.
+
+    Note
+    ----
+    Unlike ``_execute_taskgroup_with_context``, we intentionally do not return
+    ``_attr_refs`` here. The context updates from all parallel branches are
+    merged by the caller, but their corresponding ``_attr_refs`` are discarded.
+    As a result, the subsequent merge task sees these updated context entries
+    as changes and re-serializes them, which is correct since it is the first
+    task to observe the merged context.
+    """
     token = _dag_execution_context_var.set(context)
     try:
+        # Clear inherited updates so we only return the delta made in this branch.
+        # Safe because the process pool gives us a deserialized copy of the context.
+        context._updates.clear()
         result = _execute_branch(branch_elements, branch_input, exec_id, rank)
         return result, context.get_updates()
     finally:
@@ -589,14 +604,18 @@ def _execute_task_with_context(
     parent_results: TaskPayload,
     exec_id: int,
     rank: list[int] | None = None,
-) -> tuple[TaskPayload, dict[str, Any]]:
+) -> tuple[TaskPayload, dict[str, Any], dict[str, dict]]:
     """Return the wrapper that sets context before executing task."""
-    # We don't copy, but use shared context, and track updates
+    # The context is a deserialized copy in the worker process.
     token = _dag_execution_context_var.set(context)
     try:
+        # Clear inherited updates so we only return the delta made by this task.
+        # Safe because the process pool gives us a deserialized copy of the context.
+        context._updates.clear()
         result = _execute_task(t, parent_results, exec_id, rank)
-        # Return result and updates made during execution
-        return result, context.get_updates()
+        # Return result, param updates, and attr_ref updates (eTAG/sha/disk_ref)
+        # so _execute_taskgroup can propagate them to the parent context.
+        return result, context.get_updates(), context.get_attr_ref_updates()
     finally:
         _dag_execution_context_var.reset(token)
 
@@ -638,6 +657,7 @@ def _execute_taskgroup(
     context = _dag_execution_context_var.get()
     assert context is not None
     all_updates: dict[str, Any] = {}  # Collect all context updates
+    all_attr_refs: dict[str, dict] = {}  # Collect all _attr_refs updates
 
     executor = RetrainPipelinesExecutor()
 
@@ -662,10 +682,11 @@ def _execute_taskgroup(
         for future in as_completed(futures):
             element_name = futures[future]
             try:
-                element_result, updates = future.result()
+                element_result, updates, attr_refs = future.result()
 
                 # Merge context updates (child wins on conflicts)
-                DagExecutionContext._deep_update(all_updates, updates)
+                DagExecutionContext.deep_update(all_updates, updates)
+                DagExecutionContext.deep_update(all_attr_refs, attr_refs)
 
                 if isinstance(element_result, TaskPayload):
                     for task_name, task_result in element_result.items():
@@ -676,8 +697,10 @@ def _execute_taskgroup(
                 logger.error(f"Element {element_name} generated an exception: {exc}")
                 raise
 
-        # Merge all updates back into parent context
-        context.merge_updates(all_updates)
+        # Concat all updates back into parent context, including _attr_refs so that
+        # the successor task's entry snapshot finds stable eTAGs and does not
+        # re-serialize attrs that were not modified.
+        context.concat_taskgroup_updates(all_updates, all_attr_refs)
 
         return result
     finally:
@@ -690,12 +713,15 @@ def _execute_taskgroup_with_context(
     parent_results: TaskPayload,
     exec_id: int,
     rank: list[int] | None = None,
-) -> tuple[TaskPayload, dict[str, Any]]:
+) -> tuple[TaskPayload, dict[str, Any], dict[str, dict]]:
     """Return the wrapper that sets context before executing taskgroup."""
     token = _dag_execution_context_var.set(context)
     try:
+        # Clear inherited updates so we only return the delta made by this taskgroup.
+        # Safe because the process pool gives us a deserialized copy of the context.
+        context._updates.clear()
         result = _execute_taskgroup(tg, parent_results, exec_id, rank)
-        return result, context.get_updates()
+        return result, context.get_updates(), context.get_attr_ref_updates()
     finally:
         _dag_execution_context_var.reset(token)
 
@@ -769,7 +795,7 @@ def _execute(dag: DAG, params: dict[str, Any] | None = None) -> tuple[TaskPayloa
             # Those context attributes being inside ``context``
             # but not inside ``_current_params``, no need
             # to explicitely filter them out here
-            # @see ``retrain_pipelines.dag_engines.stores.context_store._CONTEXT_EXCLUDE_ATTRS``.
+            # @see ``retrain_pipelines.dag_engines.stores.contexts_store._CONTEXT_EXCLUDE_ATTRS``.
             context._init_attr_refs_from_params(_current_params)
 
         logger.info(f"Execution ID: {exec_id}")

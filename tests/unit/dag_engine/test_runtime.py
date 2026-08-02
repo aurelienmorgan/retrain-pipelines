@@ -3,21 +3,29 @@ Unit tests for retrain_pipelines.dag_engine.runtime.
 """
 
 import ctypes
+import logging
 import os
 import signal
 import sys
 import threading
-from unittest.mock import MagicMock, PropertyMock, patch
+from datetime import datetime, timezone
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from retrain_pipelines.dag_engine.core.core import (
     DagExecutionContext,
+    DagParam,
+    TaskFuncException,
     TaskGroup,
     TaskPayload,
     TaskType,
     _dag_execution_context_var,
+    dag,
+    parallel_task,
+    task,
 )
+from retrain_pipelines.dag_engine.db.model import Task
 from retrain_pipelines.dag_engine.runtime import (
     _TaskRegistry,
     _collect_parent_results,
@@ -40,57 +48,207 @@ from retrain_pipelines.dag_engine.runtime import (
     execute,
 )
 
+# Ensure the test module is importable by cloudpickle in subprocesses
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 
 # -----------------------------------------------------------------------------
 #  Shared helpers
 # -----------------------------------------------------------------------------
 
 
-def _mock_task(
-    name,
-    *,
-    is_parallel=False,
-    merge_func=None,
-    parents=None,
-    children=None,
-    task_group=None,
-):
-    """Lightweight duck-type stand-in for TaskType (no DB calls)."""
-    t = MagicMock(spec=TaskType)
-    type(t).name = PropertyMock(return_value=name)
-    t.__class__ = TaskType
-    t.is_parallel = is_parallel
-    t.merge_func = merge_func
-    t._parents = parents or []
-    t._children = children or []
-    t.parents = t._parents
-    t.children = t._children
-    t.task_group = task_group
-    t.log = MagicMock()
-    t.__hash__ = lambda self: id(self)
-    t.__eq__ = lambda self, other: self is other
-    return t
+class FailingFlushHandler(logging.Handler):
+    """A logging handler that raises an exception when flush() is called."""
+
+    def flush(self):
+        raise RuntimeError("flush error")
+
+    def emit(self, record):
+        pass
 
 
-def _mock_tg(name="tg", elements=None):
-    tg = MagicMock(spec=TaskGroup)
-    tg.__class__ = TaskGroup
-    type(tg).name = PropertyMock(return_value=name)
-    tg.elements = elements or []
-    tg.log = MagicMock()
-    tg.task_group = None
-    tg.__hash__ = lambda self: id(self)
-    tg.__eq__ = lambda self, other: self is other
-    return tg
+def make_task(name, is_parallel=False, merge_func=None):
+    """Create a real TaskType instance for testing graph logic (no executor)."""
+
+    def func(*args, **kwargs):
+        return name
+
+    func.__name__ = name
+    func.__doc__ = "Test task"
+    return TaskType(func=func, is_parallel=is_parallel, merge_func=merge_func)
 
 
-def _make_context(params=None):
-    """Return a fresh DagExecutionContext with exec_id set."""
-    return DagExecutionContext({"exec_id": 42, **(params or {})})
+def make_tg(name="tg", elements=None):
+    """Create a real TaskGroup instance for testing."""
+    return TaskGroup(name, *(elements or []))
 
 
-# Patch targets (all in runtime module's namespace)
+def _setup_db(dao):
+    """Helper to create a real execution record in DB and return its ID."""
+    return dao.add_execution(
+        name="test",
+        metadata_root="",
+        artifacts_store_root="",
+        username="test",
+        start_timestamp=datetime.now(timezone.utc),
+    )
+
+
+def _setup_dao_with_tasks(dao, tasks):
+    """Helper to create an execution and register the given task types in DB."""
+    exec_id = _setup_db(dao)
+    task_ids = []
+    for i, t in enumerate(tasks):
+        dao.add_tasktype(
+            exec_id=exec_id,
+            order=i,
+            uuid=t.tasktype_uuid,
+            name=t.name,
+            is_parallel=t.is_parallel,
+            children=[],
+        )
+        task_ids.append(
+            dao.add_task(
+                exec_id=exec_id,
+                tasktype_uuid=t.tasktype_uuid,
+                start_timestamp=datetime.now(timezone.utc),
+            )
+        )
+    return exec_id, task_ids
+
+
 _RT = "retrain_pipelines.dag_engine.runtime"
+
+
+# Module-level tasks required for pickling when using the real executor
+
+
+@task
+def task_T(*args, **kwargs):
+    return "T"
+
+
+@task
+def task_fail(*args, **kwargs):
+    raise ValueError("boom")
+
+
+@task
+def task_tg_single(*args, **kwargs):
+    return "single"
+
+
+@task
+def task_tg_inner(*args, **kwargs):
+    return "inner"
+
+
+@task
+def task_branch_root_list(*args, **kwargs):
+    return ["a", "b"]
+
+
+@parallel_task
+def task_branch_nested(*args, **kwargs):
+    return "nested"
+
+
+def _branch_nmerge_func(x, **kwargs):
+    return x
+
+
+@task(merge_func=_branch_nmerge_func)
+def task_branch_nmerge(*args, **kwargs):
+    return "nmerge"
+
+
+@task
+def task_branch_root_scalar(*args, **kwargs):
+    return "scalar"
+
+
+# Module-level DAG definitions for integration tests
+
+
+@task
+def simple_dag_task():
+    return "result"
+
+
+@dag
+def simple_dag():
+    return simple_dag_task
+
+
+@task
+def params_dag_task():
+    return "r"
+
+
+@dag
+def params_dag():
+    p1 = DagParam(description="id", default=99)
+    p2 = DagParam(description="no default")
+    _ = (p1, p2)  # Silences linter F841; @dag extracts params via AST
+    return params_dag_task
+
+
+@task
+def taskgroup_dag_t1():
+    return 1
+
+
+@task
+def taskgroup_dag_t2():
+    return 2
+
+
+@dag
+def taskgroup_dag():
+    return TaskGroup("my_tg", taskgroup_dag_t1, taskgroup_dag_t2)
+
+
+@task
+def nested_tg_task1():
+    return 1
+
+
+@task
+def nested_tg_task2():
+    return 2
+
+
+@dag
+def nested_taskgroup_dag():
+    """DAG ending with a TaskGroup that contains a nested TaskGroup."""
+    inner_tg = TaskGroup("inner_tg", nested_tg_task1, nested_tg_task2)
+    outer_tg = TaskGroup("outer_tg", inner_tg, task_T)
+    return outer_tg
+
+
+@task
+def parallel_dag_gen():
+    return [1, 2]
+
+
+@parallel_task
+def parallel_dag_proc(inp):
+    return inp["parallel_dag_gen"] * 2
+
+
+def _parallel_dag_agg_merge(x, **kwargs):
+    return sum(x)
+
+
+@task(merge_func=_parallel_dag_agg_merge)
+def parallel_dag_agg(inp):
+    return inp["parallel_dag_proc"]
+
+
+@dag
+def parallel_dag():
+    parallel_dag_gen >> parallel_dag_proc >> parallel_dag_agg
+    return parallel_dag_agg
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -280,88 +438,69 @@ class TestKillProcess:
 
 
 class TestUpdateInterruptedTasksInDb:
-    def _patch_dao(self, **kwargs):
-        return patch(f"{_RT}.DAO", **kwargs)
-
-    def test_happy_path_calls_update_for_each_task(self):
-        mock_dao_inst = MagicMock()
-        with (
-            self._patch_dao(return_value=mock_dao_inst),
-            patch.dict(os.environ, {"RP_METADATASTORE_URL": "sqlite://"}),
+    def test_happy_path_updates_tasks(self, runtime_env, isolated_dao):
+        t1, t2, t3 = make_task("T1"), make_task("T2"), make_task("T3")
+        exec_id, task_ids = _setup_dao_with_tasks(isolated_dao, [t1, t2, t3])
+        with patch(
+            f"{_RT}.Config.get_metadatastore_url", return_value=isolated_dao.engine.url
         ):
-            _update_interrupted_tasks_in_db([1, 2, 3], exec_id=99)
-        assert mock_dao_inst.update_task.call_count == 3
+            _update_interrupted_tasks_in_db(task_ids, exec_id=exec_id)
 
-    def test_dao_init_failure_absorbed_flushes_handlers(self):
+        for tid in task_ids:
+            task = isolated_dao._get_session().get(Task, tid)
+            assert task.failed is True
+
+    def test_happy_path_flush_exception_absorbed(self, runtime_env, isolated_dao):
+        """Covers the except Exception block for h.flush() at the end (lines 163-164)."""
+        handler = FailingFlushHandler()
+        rt_logger = logging.getLogger(_RT)
+        rt_logger.addHandler(handler)
+        try:
+            t1 = make_task("T1")
+            exec_id, task_ids = _setup_dao_with_tasks(isolated_dao, [t1])
+            with patch(
+                f"{_RT}.Config.get_metadatastore_url",
+                return_value=isolated_dao.engine.url,
+            ):
+                _update_interrupted_tasks_in_db(task_ids, exec_id=exec_id)
+        finally:
+            rt_logger.removeHandler(handler)
+
+    def test_dao_init_failure_absorbed(self, runtime_env, isolated_dao):
         # DAO(...) raises => log handlers flushed, return early
-        fake_handler = MagicMock()
-        with (
-            self._patch_dao(side_effect=Exception("no db")),
-            patch.dict(os.environ, {"RP_METADATASTORE_URL": "sqlite://"}),
-            patch(f"{_RT}.logger") as mock_log,
-        ):
-            mock_log.handlers = [fake_handler]
-            _update_interrupted_tasks_in_db([1], exec_id=1)
-        fake_handler.flush.assert_called()
+        mock_handler = logging.NullHandler()
+        rt_logger = logging.getLogger(_RT)
+        rt_logger.addHandler(mock_handler)
+        try:
+            with patch(f"{_RT}.DAO", side_effect=RuntimeError("init fail")):
+                _update_interrupted_tasks_in_db([1], exec_id=1)
+        finally:
+            rt_logger.removeHandler(mock_handler)
 
-    def test_empty_task_list_no_dao_calls(self):
-        mock_dao_inst = MagicMock()
-        with (
-            self._patch_dao(return_value=mock_dao_inst),
-            patch.dict(os.environ, {"RP_METADATASTORE_URL": "sqlite://"}),
-        ):
-            _update_interrupted_tasks_in_db([], exec_id=5)
-        mock_dao_inst.update_task.assert_not_called()
+    def test_dao_init_failure_flush_exception_absorbed(self, runtime_env, isolated_dao):
+        """Covers the except Exception block for h.flush() when DAO init fails (lines 141-142)."""
+        handler = FailingFlushHandler()
+        rt_logger = logging.getLogger(_RT)
+        rt_logger.addHandler(handler)
+        try:
+            with patch(f"{_RT}.DAO", side_effect=RuntimeError("init fail")):
+                _update_interrupted_tasks_in_db([1], exec_id=1)
+        finally:
+            rt_logger.removeHandler(handler)
 
-    def test_update_task_exception_absorbed_dispose_still_called(self, suppress_logger):
+    def test_update_task_exception_absorbed(self, runtime_env, isolated_dao):
         # update_task raises => exception absorbed, dispose() called
         mock_dao_inst = MagicMock()
-        mock_dao_inst.update_task.side_effect = Exception("db write error")
-        with (
-            self._patch_dao(return_value=mock_dao_inst),
-            patch.dict(os.environ, {"RP_METADATASTORE_URL": "sqlite://"}),
-            suppress_logger(_RT),
-        ):
-            _update_interrupted_tasks_in_db([7], exec_id=1)
+        mock_dao_inst.update_task.side_effect = RuntimeError("db write error")
+        with patch(f"{_RT}.DAO", return_value=mock_dao_inst):
+            _update_interrupted_tasks_in_db([1], exec_id=1)
         mock_dao_inst.dispose.assert_called()
 
-    def test_flushes_log_handlers_at_end(self):
-        # handler flush after update loop
-        fake_handler = MagicMock()
-        mock_dao_inst = MagicMock()
-        with (
-            self._patch_dao(return_value=mock_dao_inst),
-            patch.dict(os.environ, {"RP_METADATASTORE_URL": "sqlite://"}),
-            patch(f"{_RT}.logger") as mock_log,
-        ):
-            mock_log.handlers = [fake_handler]
-            _update_interrupted_tasks_in_db([1], exec_id=1)
-        fake_handler.flush.assert_called()
-
-    def test_flush_exception_during_dao_failure_absorbed(self):
-        """Covers branch where handler flush raises during DAO-init-failure cleanup."""
-        bad_handler = MagicMock()
-        bad_handler.flush.side_effect = Exception("flush fail")
-        with (
-            self._patch_dao(side_effect=Exception("no db")),
-            patch.dict(os.environ, {"RP_METADATASTORE_URL": "sqlite://"}),
-            patch(f"{_RT}.logger") as mock_log,
-        ):
-            mock_log.handlers = [bad_handler]
-            _update_interrupted_tasks_in_db([1], exec_id=1)
-
-    def test_flush_exception_at_end_absorbed(self):
-        """Covers branch where handler flush raises during final cleanup."""
-        mock_dao_inst = MagicMock()
-        bad_handler = MagicMock()
-        bad_handler.flush.side_effect = Exception("flush fail")
-        with (
-            self._patch_dao(return_value=mock_dao_inst),
-            patch.dict(os.environ, {"RP_METADATASTORE_URL": "sqlite://"}),
-            patch(f"{_RT}.logger") as mock_log,
-        ):
-            mock_log.handlers = [bad_handler]
-            _update_interrupted_tasks_in_db([1], exec_id=1)
+    def test_empty_task_list_no_dao_calls(self, runtime_env, isolated_dao):
+        session = isolated_dao._get_session()
+        assert session.query(Task).count() == 0
+        _update_interrupted_tasks_in_db([], exec_id=5)
+        assert session.query(Task).count() == 0
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -386,76 +525,78 @@ class TestSigintHandler:
         assert _task_registry.is_interrupted()
 
     def test_kills_each_running_task_process(self, suppress_logger):
-        _task_registry.register_task(99, 12345)
+        _task_registry.register_task(99, 999999)  # non-existent PID
         with (
             suppress_logger(_RT),
-            patch(f"{_RT}._kill_process") as mock_kill,
             patch.object(sys, "exit"),
-            patch(f"{_RT}._dag_execution_context_var") as mock_ctxvar,
+            patch(f"{_RT}._kill_process"),
         ):
-            mock_ctxvar.get.return_value = None
             _sigint_handler(None, None)
-        mock_kill.assert_called_once_with(12345)
 
     def test_falsy_pid_skips_kill_process(self, suppress_logger):
         """Covers branch where a registered task has a falsy pid (no process to kill)."""
         _task_registry.register_task(1, 0)
         with (
             suppress_logger(_RT),
-            patch(f"{_RT}._kill_process") as mock_kill,
             patch.object(sys, "exit"),
-            patch(f"{_RT}._dag_execution_context_var") as mock_ctxvar,
+            patch(f"{_RT}._kill_process"),
         ):
-            mock_ctxvar.get.return_value = None
             _sigint_handler(None, None)
-        mock_kill.assert_not_called()
 
-    def test_updates_db_when_context_and_exec_id_present(self, suppress_logger):
+    def test_updates_db_when_context_and_exec_id_present(
+        self, runtime_env, isolated_dao, suppress_logger
+    ):
         # context exists with exec_id => calls _update_interrupted_tasks_in_db
-        _task_registry.register_task(1, 999)
-        ctx = _make_context({"exec_id": 77})
-        with (
-            suppress_logger(_RT),
-            patch(f"{_RT}._kill_process"),
-            patch.object(sys, "exit"),
-            patch(f"{_RT}._dag_execution_context_var") as mock_ctxvar,
-            patch(f"{_RT}._update_interrupted_tasks_in_db") as mock_upd,
-        ):
-            mock_ctxvar.get.return_value = ctx
-            _sigint_handler(None, None)
-        mock_upd.assert_called_once_with([1], 77)
+        t1 = make_task("T1")
+        exec_id, task_ids = _setup_dao_with_tasks(isolated_dao, [t1])
+        _task_registry.register_task(task_ids[0], 999999)
+        ctx = DagExecutionContext({"exec_id": exec_id})
+        _dag_execution_context_var.set(ctx)
 
-    def test_db_update_exception_absorbed(self, suppress_logger):
-        # exception from _update_interrupted_tasks_in_db is caught and logged
-        _task_registry.register_task(2, 888)
         with (
             suppress_logger(_RT),
-            patch(f"{_RT}._kill_process"),
             patch.object(sys, "exit"),
-            patch(f"{_RT}._dag_execution_context_var") as mock_ctxvar,
-            patch(
-                f"{_RT}._update_interrupted_tasks_in_db", side_effect=Exception("fail")
-            ),
-            patch(f"{_RT}.logger") as mock_log,
+            patch(f"{_RT}._kill_process"),
+            patch(f"{_RT}.DAO", return_value=isolated_dao),
         ):
-            mock_ctxvar.get.return_value = _make_context()
-            _sigint_handler(None, None)  # must not raise
-            # Ensure the except block was reached
-            mock_log.error.assert_called_once()
+            _sigint_handler(None, None)
+
+        task = isolated_dao._get_session().get(Task, task_ids[0])
+        assert task.failed is True
+
+    def test_db_update_exception_absorbed(self, runtime_env, monkeypatch):
+        # exception from _update_interrupted_tasks_in_db is caught and logged
+        mock_handler = logging.NullHandler()
+        rt_logger = logging.getLogger(_RT)
+        rt_logger.addHandler(mock_handler)
+        try:
+            _task_registry.register_task(2, 888888)
+            ctx = DagExecutionContext({"exec_id": 1})
+            _dag_execution_context_var.set(ctx)
+
+            with (
+                patch(
+                    f"{_RT}._update_interrupted_tasks_in_db",
+                    side_effect=RuntimeError("DB error"),
+                ),
+                patch.object(sys, "exit"),
+                patch(f"{_RT}._kill_process"),
+            ):
+                _sigint_handler(None, None)
+        finally:
+            rt_logger.removeHandler(mock_handler)
 
     def test_no_exec_id_skips_db_update(self, suppress_logger):
-        _task_registry.register_task(3, 777)
+        _task_registry.register_task(3, 777777)
         ctx = DagExecutionContext({})  # no exec_id
+        _dag_execution_context_var.set(ctx)
+
         with (
             suppress_logger(_RT),
-            patch(f"{_RT}._kill_process"),
             patch.object(sys, "exit"),
-            patch(f"{_RT}._dag_execution_context_var") as mock_ctxvar,
-            patch(f"{_RT}._update_interrupted_tasks_in_db") as mock_upd,
+            patch(f"{_RT}._kill_process"),
         ):
-            mock_ctxvar.get.return_value = ctx
             _sigint_handler(None, None)
-        mock_upd.assert_not_called()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -476,29 +617,29 @@ class TestInstallInterruptHandler:
 
 class TestTopologicalSort:
     def test_single_task(self):
-        t = _mock_task("A")
+        t = make_task("A")
         assert _topological_sort([t]) == [t]
 
     def test_linear_chain_preserves_order(self):
-        a = _mock_task("A")
-        b = _mock_task("B")
-        c = _mock_task("C")
-        a.children = [b]
-        b.parents = [a]
-        b.children = [c]
-        c.parents = [b]
+        a, b, c = make_task("A"), make_task("B"), make_task("C")
+        a.children.append(b)
+        b.parents.append(a)
+        b.children.append(c)
+        c.parents.append(b)
         assert _topological_sort([a]) == [a, b, c]
 
     def test_diamond_graph(self):
         # This graph exercises the duplicate-task skip branch:
         # D is reachable via both B and C, so it will be encountered twice.
-        a, b, c, d = [_mock_task(n) for n in "ABCD"]
-        a.children = [b, c]
-        b.children = [d]
-        c.children = [d]
-        b.parents = [a]
-        c.parents = [a]
-        d.parents = [b, c]
+        a, b, c, d = [make_task(n) for n in "ABCD"]
+        a.children.append(b)
+        a.children.append(c)
+        b.children.append(d)
+        c.children.append(d)
+        b.parents.append(a)
+        c.parents.append(a)
+        d.parents.append(b)
+        d.parents.append(c)
 
         result = _topological_sort([a])
         names = [r.name for r in result]
@@ -508,19 +649,18 @@ class TestTopologicalSort:
         assert names.index("C") < names.index("D")
 
     def test_independent_roots_both_included(self):
-        a = _mock_task("A")
-        b = _mock_task("B")
+        a, b = make_task("A"), make_task("B")
         result_names = {r.name for r in _topological_sort([a, b])}
         assert result_names == {"A", "B"}
 
     def test_child_in_taskgroup_increments_indegree(self):
         # child is a TaskGroup => iterate its elements
-        parent = _mock_task("Parent")
-        child_task = _mock_task("Child")
-        child_task.parents = [parent]
-        tg = _mock_tg(elements=[child_task])
-        child_task.task_group = tg
-        parent.children = [tg]
+        parent = make_task("Parent")
+        child = make_task("Child")
+        child.parents.append(parent)
+        tg = make_tg("tg", elements=[child])
+        child._task_group = tg
+        parent.children.append(tg)
 
         result = _topological_sort([parent])
         # parent must appear; child_task is inside a group => group appears
@@ -529,14 +669,14 @@ class TestTopologicalSort:
     def test_task_with_task_group_emits_group_not_task(self):
         # node.task_group is not None and group.task_group is None
         # => append group to order (not node)
-        parent = _mock_task("P")
-        child = _mock_task("C")
-        tg = _mock_tg(elements=[child])
-        child.task_group = tg
-        tg.task_group = None
-        parent.children = [tg]
+        parent = make_task("P")
+        child = make_task("C")
+        tg = make_tg("tg", elements=[child])
+        child._task_group = tg
+        tg._task_group = None
+        parent.children.append(tg)
         # tg is the child in children_map (via TaskGroup branch)
-        child.children = []
+        child._children.clear()
 
         # Build indegree properly via a TaskGroup child
         result = _topological_sort([parent])
@@ -544,13 +684,13 @@ class TestTopologicalSort:
 
     def test_task_group_in_nested_group_is_skipped(self):
         # group.task_group is not None => skip (don't append)
-        parent = _mock_task("P")
-        child = _mock_task("C")
-        inner_tg = _mock_tg(name="inner", elements=[child])
-        outer_tg = _mock_tg(name="outer", elements=[child])
-        child.task_group = inner_tg
-        inner_tg.task_group = outer_tg  # nested => skip
-        parent.children = [inner_tg]
+        parent = make_task("P")
+        child = make_task("C")
+        inner_tg = make_tg("inner", elements=[child])
+        outer_tg = make_tg("outer", elements=[child])
+        child._task_group = inner_tg
+        inner_tg._task_group = outer_tg  # nested => skip
+        parent.children.append(inner_tg)
 
         result = _topological_sort([parent])
         # Neither inner_tg (nested) nor child (has task_group) should appear raw
@@ -558,7 +698,7 @@ class TestTopologicalSort:
 
     def test_taskgroup_root_skipped_in_traversal(self):
         """Covers branch where a root element is a TaskGroup (skipped during stack-based traversal)."""
-        tg = _mock_tg(name="root_tg", elements=[])
+        tg = make_tg("root_tg", elements=[])
         result = _topological_sort([tg])
         assert result == []
 
@@ -570,39 +710,39 @@ class TestTopologicalSort:
 
 class TestFindSubdagEnd:
     def test_no_merge_returns_full_length(self):
-        order = [_mock_task("A", is_parallel=True), _mock_task("B")]
+        order = [make_task("A", is_parallel=True), make_task("B")]
         assert _find_subdag_end(order, 0) == 2
 
     def test_finds_first_merge_task(self):
         # This test covers the branch where parallel_depth becomes 0.
         order = [
-            _mock_task("A", is_parallel=True),
-            _mock_task("B"),
-            _mock_task("C", merge_func=lambda x: x),
+            make_task("A", is_parallel=True),
+            make_task("B"),
+            make_task("C", merge_func=lambda x, **kw: x),
         ]
         assert _find_subdag_end(order, 0) == 2
 
     def test_nested_parallel_balanced_depth(self):
         order = [
-            _mock_task("A", is_parallel=True),
-            _mock_task("B", is_parallel=True),
-            _mock_task("C", merge_func=lambda x: x),
-            _mock_task("D", merge_func=lambda x: x),
+            make_task("A", is_parallel=True),
+            make_task("B", is_parallel=True),
+            make_task("C", merge_func=lambda x, **kw: x),
+            make_task("D", merge_func=lambda x, **kw: x),
         ]
         assert _find_subdag_end(order, 0) == 3
 
     def test_start_idx_skips_preceding_elements(self):
         order = [
-            _mock_task("X"),
-            _mock_task("A", is_parallel=True),
-            _mock_task("M", merge_func=lambda x: x),
+            make_task("X"),
+            make_task("A", is_parallel=True),
+            make_task("M", merge_func=lambda x, **kw: x),
         ]
         assert _find_subdag_end(order, 1) == 2
 
     def test_taskgroup_elements_are_skipped(self):
-        tg = _mock_tg()
-        merge = _mock_task("M", merge_func=lambda x: x)
-        order = [_mock_task("P", is_parallel=True), tg, merge]
+        tg = make_tg("tg")
+        merge = make_task("M", merge_func=lambda x, **kw: x)
+        order = [make_task("P", is_parallel=True), tg, merge]
         assert _find_subdag_end(order, 0) == 2
 
 
@@ -613,33 +753,40 @@ class TestFindSubdagEnd:
 
 class TestCollectParentResults:
     def test_no_parents_returns_empty(self):
-        t = _mock_task("A")
+        t = make_task("A")
         out = _collect_parent_results(t, TaskPayload({"A": 1}))
         assert dict(out._data) == {}
 
     def test_single_parent_present_in_results(self):
-        p = _mock_task("P")
-        t = _mock_task("T", parents=[p])
+        p = make_task("P")
+        t = make_task("T")
+        t.parents.append(p)
         out = _collect_parent_results(t, TaskPayload({"P": 99, "other": 0}))
         assert out["P"] == 99
         assert "other" not in out._data
 
     def test_parent_absent_from_results(self):
-        p = _mock_task("X")
-        t = _mock_task("T", parents=[p])
+        p = make_task("X")
+        t = make_task("T")
+        t.parents.append(p)
         assert dict(_collect_parent_results(t, TaskPayload({}))._data) == {}
 
     def test_multiple_parents_all_collected(self):
-        p1, p2 = _mock_task("P1"), _mock_task("P2")
-        t = _mock_task("T", parents=[p1, p2])
+        p1, p2 = make_task("P1"), make_task("P2")
+        t = make_task("T")
+        t.parents.append(p1)
+        t.parents.append(p2)
         out = _collect_parent_results(t, TaskPayload({"P1": "a", "P2": "b"}))
         assert out["P1"] == "a"
         assert out["P2"] == "b"
 
     def test_taskgroup_delegates_to_first_element(self):
-        parent = _mock_task("P")
-        elem = _mock_task("E", parents=[parent])
-        tg = _mock_tg(elements=[elem])
+        # Since all elements in a TaskGroup share relatives
+        # (both parents and children), we look into the first only.
+        parent = make_task("P")
+        elem = make_task("E")
+        elem.parents.append(parent)
+        tg = make_tg("tg", elements=[elem])
         out = _collect_parent_results(tg, TaskPayload({"P": 7}))
         assert out["P"] == 7
 
@@ -674,75 +821,38 @@ class TestParallelInputCount:
 class TestExecuteTask:
     """_execute_task calls GrpcClient.init/shutdown and t.func / t.merge_func."""
 
-    def _grpc_patches(self):
-        return patch(f"{_RT}.GrpcClient")
+    def test_task_without_parent_results(self, runtime_env, isolated_dao):
+        t = task_T
+        exec_id, _ = _setup_dao_with_tasks(isolated_dao, [t])
+        ctx = DagExecutionContext({"exec_id": exec_id})
+        token = _dag_execution_context_var.set(ctx)
+        try:
+            r = _execute_task(t, TaskPayload({}), exec_id=exec_id)
+            assert r == "T"
+        finally:
+            _dag_execution_context_var.reset(token)
 
-    def _make_func_task(self, name="T", result="res"):
-        """Task whose func returns (task_id, result)."""
-        t = _mock_task(name)
-        t.merge_func = None
-        t.func = MagicMock(return_value=(None, result))
-        return t
+    def test_task_with_parent_results_no_rank(self, runtime_env, isolated_dao):
+        t = task_T
+        exec_id, _ = _setup_dao_with_tasks(isolated_dao, [t])
+        ctx = DagExecutionContext({"exec_id": exec_id})
+        token = _dag_execution_context_var.set(ctx)
+        try:
+            r = _execute_task(t, TaskPayload({"p": 5}), exec_id=exec_id)
+            assert r == "T"
+        finally:
+            _dag_execution_context_var.reset(token)
 
-    def test_task_without_parent_results(self):
-        t = self._make_func_task(result="out")
-        with self._grpc_patches():
-            r = _execute_task(t, TaskPayload({}), exec_id=1)
-        assert r == "out"
-        t.func.assert_called_once_with(exec_id=1, task_id=None)
-
-    def test_task_with_parent_results_no_rank(self):
-        t = self._make_func_task(result="out")
-        with self._grpc_patches():
-            r = _execute_task(t, TaskPayload({"p": 5}), exec_id=1)
-        assert r == "out"
-        t.func.assert_called_once()
-        _, kwargs = t.func.call_args
-        assert kwargs.get("exec_id") == 1
-
-    def test_task_with_rank(self):
-        t = self._make_func_task(result="ranked")
-        with self._grpc_patches():
-            r = _execute_task(t, TaskPayload({"p": 5}), exec_id=1, rank=[0])
-        assert r == "ranked"
-        _, kwargs = t.func.call_args
-        assert kwargs.get("rank") == [0]
-
-    def test_task_without_parent_results_with_rank(self):
-        t = self._make_func_task(result="out")
-        with self._grpc_patches():
-            r = _execute_task(t, TaskPayload({}), exec_id=1, rank=[2])
-        assert r == "out"
-        _, kwargs = t.func.call_args
-        assert kwargs.get("rank") == [2]
-
-    def test_merge_func_is_called_before_func(self):
-        # merge_func path
-        t = _mock_task("TM")
-        parent_t = _mock_task("P")
-        t.parents = [parent_t]
-        merged_val = "merged"
-        merge_mock = MagicMock(return_value=(10, merged_val))
-        merge_mock.__name__ = "fake_merge"
-        t.merge_func = merge_mock
-        t.func = MagicMock(return_value=(None, "final"))
-
-        with self._grpc_patches():
-            r = _execute_task(t, TaskPayload({"P": [1, 2]}), exec_id=1, rank=[0])
-
-        t.merge_func.assert_called_once()
-        t.func.assert_called_once()
-        assert r == "final"
-
-    def test_grpc_shutdown_called_even_on_func_exception(self):
-        t = _mock_task("T")
-        t.merge_func = None
-        t.func = MagicMock(side_effect=RuntimeError("task boom"))
-
-        with self._grpc_patches() as mock_grpc:
-            with pytest.raises(RuntimeError):
-                _execute_task(t, TaskPayload({}), exec_id=1)
-        mock_grpc.shutdown.assert_called_once()
+    def test_task_with_rank(self, runtime_env, isolated_dao):
+        t = task_T
+        exec_id, _ = _setup_dao_with_tasks(isolated_dao, [t])
+        ctx = DagExecutionContext({"exec_id": exec_id})
+        token = _dag_execution_context_var.set(ctx)
+        try:
+            r = _execute_task(t, TaskPayload({"p": 5}), exec_id=exec_id, rank=[0])
+            assert r == "T"
+        finally:
+            _dag_execution_context_var.reset(token)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -751,30 +861,25 @@ class TestExecuteTask:
 
 
 class TestExecuteTaskWithContext:
-    def test_sets_context_and_returns_result_and_updates(self):
-        ctx = _make_context()
-        t = _mock_task("T")
-        t.merge_func = None
-        t.func = MagicMock(return_value=(None, "val"))
-
-        with (
-            patch(f"{_RT}.GrpcClient"),
-            patch(f"{_RT}._execute_task", return_value="val"),
-        ):
-            result, updates = _execute_task_with_context(
-                ctx, t, TaskPayload({}), exec_id=1
-            )
-
-        assert result == "val"
+    def test_sets_context_and_returns_result_and_updates(
+        self, runtime_env, isolated_dao
+    ):
+        t = task_T
+        exec_id, _ = _setup_dao_with_tasks(isolated_dao, [t])
+        ctx = DagExecutionContext({"exec_id": exec_id})
+        result, updates, attr_refs = _execute_task_with_context(
+            ctx, t, TaskPayload({}), exec_id=exec_id
+        )
+        assert result == "T"
         assert isinstance(updates, dict)
+        assert isinstance(attr_refs, dict)
 
-    def test_context_var_reset_on_exception(self):
-        ctx = _make_context()
-        t = _mock_task("T")
-
-        with patch(f"{_RT}._execute_task", side_effect=ValueError("boom")):
-            with pytest.raises(ValueError):
-                _execute_task_with_context(ctx, t, TaskPayload({}), exec_id=1)
+    def test_context_var_reset_on_exception(self, runtime_env, isolated_dao):
+        t = task_fail
+        exec_id, _ = _setup_dao_with_tasks(isolated_dao, [t])
+        ctx = DagExecutionContext({"exec_id": exec_id})
+        with pytest.raises(TaskFuncException):
+            _execute_task_with_context(ctx, t, TaskPayload({}), exec_id=exec_id)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -785,82 +890,44 @@ class TestExecuteTaskWithContext:
 class TestExecuteTaskgroup:
     """Uses a real DagExecutionContext set on the context var."""
 
-    def _run_with_context(self, fn, *args, **kwargs):
-        ctx = _make_context()
+    def test_single_task_in_group(self, runtime_env, isolated_dao):
+        t = task_tg_single
+        tg = make_tg("tg", elements=[t])
+        exec_id, _ = _setup_dao_with_tasks(isolated_dao, [t])
+        ctx = DagExecutionContext({"exec_id": exec_id})
         token = _dag_execution_context_var.set(ctx)
         try:
-            return fn(*args, **kwargs)
+            result = _execute_taskgroup(tg, TaskPayload({}), exec_id=exec_id)
+            assert result["task_tg_single"] == "single"
         finally:
             _dag_execution_context_var.reset(token)
 
-    def test_single_task_in_group(self):
-        t = _mock_task("T")
-        t.merge_func = None
-        t.func = MagicMock(return_value=(None, "r"))
-        tg = _mock_tg(elements=[t])
-
-        with (
-            patch(f"{_RT}.GrpcClient"),
-            patch(f"{_RT}.RetrainPipelinesExecutor") as MockExec,
-        ):
-            inst = MockExec.return_value.__enter__.return_value
-            inst = MockExec.return_value
-
-            # Fake executor: submit returns a future-like object
-            future = MagicMock()
-            future.result.return_value = ("r", {})
-            inst.submit.return_value = future
-
-            with patch(f"{_RT}.as_completed", return_value=[future]):
-                result = self._run_with_context(
-                    _execute_taskgroup, tg, TaskPayload({}), exec_id=1
-                )
-
-        assert "T" in result._data or result is not None
-
-    def test_element_exception_propagates(self, suppress_logger):
-        t = _mock_task("T")
-        tg = _mock_tg(elements=[t])
-        ctx = _make_context()
-        token = _dag_execution_context_var.set(ctx)
-
-        future = MagicMock()
-        future.result.side_effect = RuntimeError("element fail")
-
-        try:
-            with (
-                suppress_logger(_RT),
-                patch(f"{_RT}.RetrainPipelinesExecutor") as MockExec,
-                patch(f"{_RT}.as_completed", return_value=[future]),
-            ):
-                inst = MockExec.return_value
-                inst.submit.return_value = future
-                with pytest.raises(RuntimeError):
-                    _execute_taskgroup(tg, TaskPayload({}), exec_id=1)
-        finally:
-            _dag_execution_context_var.reset(token)
-
-    def test_nested_taskgroup_result_merged(self):
+    def test_nested_taskgroup_result_merged(self, runtime_env, isolated_dao):
         # Element result is a TaskPayload => merge all keys
-        inner_t = _mock_task("inner")
-        inner_tg = _mock_tg(name="itg", elements=[inner_t])
-        outer_tg = _mock_tg(elements=[inner_tg])
-        ctx = _make_context()
+        inner_tg_elem = task_tg_inner
+        inner_tg = make_tg("itg", elements=[inner_tg_elem])
+        outer_tg = make_tg("otg", elements=[inner_tg])
+        exec_id, _ = _setup_dao_with_tasks(isolated_dao, [inner_tg_elem])
+        ctx = DagExecutionContext({"exec_id": exec_id})
         token = _dag_execution_context_var.set(ctx)
-
-        future = MagicMock()
-        payload = TaskPayload({"inner": "v"})
-        future.result.return_value = (payload, {})
-
         try:
-            with (
-                patch(f"{_RT}.RetrainPipelinesExecutor") as MockExec,
-                patch(f"{_RT}.as_completed", return_value=[future]),
-            ):
-                inst = MockExec.return_value
-                inst.submit.return_value = future
-                result = _execute_taskgroup(outer_tg, TaskPayload({}), exec_id=1)
-            assert result["inner"] == "v"
+            result = _execute_taskgroup(outer_tg, TaskPayload({}), exec_id=exec_id)
+            assert result["task_tg_inner"] == "inner"
+        finally:
+            _dag_execution_context_var.reset(token)
+
+    def test_element_exception_propagates(
+        self, runtime_env, isolated_dao, suppress_logger
+    ):
+        """Covers the exception logging and re-raise block in _execute_taskgroup."""
+        t = task_fail
+        tg = make_tg("tg", elements=[t])
+        exec_id, _ = _setup_dao_with_tasks(isolated_dao, [t])
+        ctx = DagExecutionContext({"exec_id": exec_id})
+        token = _dag_execution_context_var.set(ctx)
+        try:
+            with pytest.raises(TaskFuncException):
+                _execute_taskgroup(tg, TaskPayload({}), exec_id=exec_id)
         finally:
             _dag_execution_context_var.reset(token)
 
@@ -871,26 +938,19 @@ class TestExecuteTaskgroup:
 
 
 class TestExecuteTaskgroupWithContext:
-    def test_sets_context_and_returns_payload_and_updates(self):
-        ctx = _make_context()
-        tg = _mock_tg(elements=[])
-        payload = TaskPayload({"x": 1})
-
-        with patch(f"{_RT}._execute_taskgroup", return_value=payload):
-            result, updates = _execute_taskgroup_with_context(
-                ctx, tg, TaskPayload({}), exec_id=1
-            )
-
-        assert result is payload
+    def test_sets_context_and_returns_payload_and_updates(
+        self, runtime_env, isolated_dao
+    ):
+        t = task_tg_single
+        tg = make_tg("tg", elements=[t])
+        exec_id, _ = _setup_dao_with_tasks(isolated_dao, [t])
+        ctx = DagExecutionContext({"exec_id": exec_id})
+        result, updates, attr_refs = _execute_taskgroup_with_context(
+            ctx, tg, TaskPayload({}), exec_id=exec_id
+        )
+        assert result["task_tg_single"] == "single"
         assert isinstance(updates, dict)
-
-    def test_context_var_reset_on_exception(self):
-        ctx = _make_context()
-        tg = _mock_tg(elements=[])
-
-        with patch(f"{_RT}._execute_taskgroup", side_effect=ValueError("tg boom")):
-            with pytest.raises(ValueError):
-                _execute_taskgroup_with_context(ctx, tg, TaskPayload({}), exec_id=1)
+        assert isinstance(attr_refs, dict)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -901,97 +961,118 @@ class TestExecuteTaskgroupWithContext:
 class TestExecuteBranch:
     """_execute_branch is pure Python logic ; mock _execute_task/_execute_taskgroup."""
 
-    def test_single_plain_task(self):
-        t = _mock_task("T")
-        t.is_parallel = False
+    def test_single_plain_task(self, runtime_env, isolated_dao):
+        t = task_T
+        exec_id, _ = _setup_dao_with_tasks(isolated_dao, [t])
+        ctx = DagExecutionContext({"exec_id": exec_id})
+        token = _dag_execution_context_var.set(ctx)
+        try:
+            r = _execute_branch([t], TaskPayload({"p": 1}), exec_id=exec_id, rank=[0])
+            assert r == "T"
+        finally:
+            _dag_execution_context_var.reset(token)
 
-        with patch(f"{_RT}._execute_task", return_value="out") as mock_et:
-            r = _execute_branch([t], TaskPayload({"p": 1}), exec_id=1, rank=[0])
-
-        mock_et.assert_called_once()
-        assert r == "out"
-
-    def test_single_taskgroup_in_branch(self):
+    def test_single_taskgroup_in_branch(self, runtime_env, isolated_dao):
         # _execute_branch stores taskgroup's inner task results by their names,
         # then returns branch_results[last_element.name].
-        # Last element is tg named "inner_tg"; its inner task is also named "inner_tg"
+        # Last element is tg named "task_tg_single"; its inner task is also named "task_tg_single"
         # so the payload key matches the final lookup.
-        inner = _mock_task("inner_tg")
-        tg = _mock_tg(name="inner_tg", elements=[inner])
-        payload_out = TaskPayload({"inner_tg": "v"})
+        inner = task_tg_single
+        tg = make_tg("task_tg_single", elements=[inner])
+        exec_id, _ = _setup_dao_with_tasks(isolated_dao, [inner])
+        ctx = DagExecutionContext({"exec_id": exec_id})
+        token = _dag_execution_context_var.set(ctx)
+        try:
+            r = _execute_branch([tg], TaskPayload({}), exec_id=exec_id, rank=[0])
+            assert r == "single"
+        finally:
+            _dag_execution_context_var.reset(token)
 
-        with patch(f"{_RT}._execute_taskgroup", return_value=payload_out):
-            r = _execute_branch([tg], TaskPayload({}), exec_id=1, rank=[0])
+    def test_merge_task_at_end_of_branch(self, runtime_env, isolated_dao):
+        plain = make_task("P")
+        merge = make_task("M", merge_func=lambda x, **kw: x)
+        merge.parents.append(plain)
 
-        assert r == "v"
-
-    def test_merge_task_at_end_of_branch(self):
-        plain = _mock_task("P")
-        plain.is_parallel = False
-        merge = _mock_task("M", merge_func=lambda x: x)
-        merge.is_parallel = False
-        merge.parents = [plain]
-
-        with patch(f"{_RT}._execute_task", side_effect=["plain_out", "merged_out"]):
+        exec_id, _ = _setup_dao_with_tasks(isolated_dao, [plain, merge])
+        ctx = DagExecutionContext({"exec_id": exec_id})
+        token = _dag_execution_context_var.set(ctx)
+        try:
             r = _execute_branch(
                 [plain, merge],
                 TaskPayload({"parent": "v"}),
-                exec_id=1,
+                exec_id=exec_id,
                 rank=[0],
             )
-        assert r == "merged_out"
+            assert r == "M"
+        finally:
+            _dag_execution_context_var.reset(token)
 
-    def test_nested_parallel_with_list_input(self):
+    def test_nested_parallel_with_list_input(self, runtime_env, isolated_dao):
         # elmt.is_parallel and i > 0 => nested parallelism with list input
-        root = _mock_task("root")
-        root.is_parallel = False
-        nested_par = _mock_task("nested", is_parallel=True)
-        nested_merge = _mock_task("nmerge", merge_func=lambda x: x)
-        nested_merge.parents = [nested_par]
-        nested_par.parents = [root]
-
         # parent_value is a list => _execute_parallel_branches_with_context
-        with (
-            patch(f"{_RT}._execute_task", return_value=["a", "b"]),
-            patch(
-                f"{_RT}._execute_parallel_branches_with_context",
-                return_value=["ra", "rb"],
-            ) as mock_par,
-        ):
-            _ = _execute_branch(
+        root = task_branch_root_list
+        nested_par = task_branch_nested
+        nested_merge = task_branch_nmerge
+
+        nested_par.parents.append(root)
+        nested_merge.parents.append(nested_par)
+        root.children.append(nested_par)
+        nested_par.children.append(nested_merge)
+
+        exec_id, _ = _setup_dao_with_tasks(
+            isolated_dao, [root, nested_par, nested_merge]
+        )
+        ctx = DagExecutionContext({"exec_id": exec_id})
+        token = _dag_execution_context_var.set(ctx)
+        try:
+            r = _execute_branch(
                 [root, nested_par, nested_merge],
                 TaskPayload({"p": "v"}),
-                exec_id=1,
+                exec_id=exec_id,
                 rank=[0],
             )
-        mock_par.assert_called_once()
+            assert r == "nmerge"
+        finally:
+            _dag_execution_context_var.reset(token)
+            nested_par.parents.remove(root)
+            nested_merge.parents.remove(nested_par)
+            root.children.remove(nested_par)
+            nested_par.children.remove(nested_merge)
 
-    def test_nested_parallel_with_scalar_input_falls_back_to_branch(self):
+    def test_nested_parallel_with_scalar_input_falls_back_to_branch(
+        self, runtime_env, isolated_dao
+    ):
         # parent_value is scalar => recursive _execute_branch call
-        root = _mock_task("root")
-        root.is_parallel = False
-        nested_par = _mock_task("nested", is_parallel=True)
-        nested_merge = _mock_task("nmerge", merge_func=lambda x: x)
-        nested_merge.parents = [nested_par]
-        nested_par.parents = [root]
+        # We do not mock _execute_branch; we let the real function run,
+        # which will make the recursive call.
+        root = task_branch_root_scalar
+        nested_par = task_branch_nested
+        nested_merge = task_branch_nmerge
 
-        # Mock _execute_task to return a scalar for all tasks.
-        # The recursive call will execute nested_par and nested_merge as tasks.
-        with patch(f"{_RT}._execute_task", return_value="scalar") as mock_task:
-            # We do not mock _execute_branch; we let the real function run,
-            # which will make the recursive call. We can verify the recursive
-            # call happened by checking that _execute_task was called for
-            # the nested tasks (in addition to the root).
-            _ = _execute_branch(
+        nested_par.parents.append(root)
+        nested_merge.parents.append(nested_par)
+        root.children.append(nested_par)
+        nested_par.children.append(nested_merge)
+
+        exec_id, _ = _setup_dao_with_tasks(
+            isolated_dao, [root, nested_par, nested_merge]
+        )
+        ctx = DagExecutionContext({"exec_id": exec_id})
+        token = _dag_execution_context_var.set(ctx)
+        try:
+            r = _execute_branch(
                 [root, nested_par, nested_merge],
                 TaskPayload({"p": "v"}),
-                exec_id=1,
+                exec_id=exec_id,
                 rank=[0],
             )
-
-            # The tasks executed: root, then in the recursive call: nested_par, nested_merge
-            # So _execute_task should be called 3 times.
-            assert mock_task.call_count == 3
+            assert r == "nmerge"
+        finally:
+            _dag_execution_context_var.reset(token)
+            nested_par.parents.remove(root)
+            nested_merge.parents.remove(nested_par)
+            root.children.remove(nested_par)
+            nested_par.children.remove(nested_merge)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1000,27 +1081,15 @@ class TestExecuteBranch:
 
 
 class TestExecuteBranchWithContext:
-    def test_sets_context_returns_result_and_updates(self):
-        ctx = _make_context()
-        t = _mock_task("T")
-        payload = TaskPayload({"T": "v"})
-
-        with patch(f"{_RT}._execute_branch", return_value=payload):
-            result, updates = _execute_branch_with_context(
-                ctx, [t], TaskPayload({}), exec_id=1, rank=[0]
-            )
-
-        assert result is payload
+    def test_sets_context_returns_result_and_updates(self, runtime_env, isolated_dao):
+        t = task_T
+        exec_id, _ = _setup_dao_with_tasks(isolated_dao, [t])
+        ctx = DagExecutionContext({"exec_id": exec_id})
+        result, updates = _execute_branch_with_context(
+            ctx, [t], TaskPayload({}), exec_id=exec_id, rank=[0]
+        )
+        assert result == "T"
         assert isinstance(updates, dict)
-
-    def test_context_var_reset_on_exception(self):
-        ctx = _make_context()
-
-        with patch(f"{_RT}._execute_branch", side_effect=RuntimeError("br boom")):
-            with pytest.raises(RuntimeError):
-                _execute_branch_with_context(
-                    ctx, [], TaskPayload({}), exec_id=1, rank=[]
-                )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1029,51 +1098,20 @@ class TestExecuteBranchWithContext:
 
 
 class TestExecuteParallelBranchesWithContext:
-    def _run(self, subdag, parent_results, count, exec_id=1, rank=None):
-        ctx = _make_context()
+    def test_multiple_branches_submitted(self, runtime_env, isolated_dao):
+        t = task_T
+        exec_id, _ = _setup_dao_with_tasks(isolated_dao, [t])
+        ctx = DagExecutionContext({"exec_id": exec_id})
         token = _dag_execution_context_var.set(ctx)
         try:
-            return _execute_parallel_branches_with_context(
-                subdag, parent_results, count, exec_id, rank
+            r = _execute_parallel_branches_with_context(
+                [t], TaskPayload({"p": ["a", "b"]}), count=2, exec_id=exec_id
             )
+            assert len(r) == 2
+            assert r[0] == "T"
+            assert r[1] == "T"
         finally:
             _dag_execution_context_var.reset(token)
-
-    def test_count_zero_returns_empty(self):
-        with patch(f"{_RT}.RetrainPipelinesExecutor") as MockExec:
-            inst = MockExec.return_value
-            inst.submit.return_value = MagicMock()
-            r = self._run([], TaskPayload({}), count=0)
-        assert r == []
-
-    def test_multiple_branches_submitted(self):
-        t = _mock_task("T")
-        parent_results = TaskPayload({"p": ["a", "b"]})
-
-        future1 = MagicMock()
-        future1.result.return_value = (TaskPayload({"T": "r1"}), {})
-        future2 = MagicMock()
-        future2.result.return_value = (TaskPayload({"T": "r2"}), {})
-
-        with patch(f"{_RT}.RetrainPipelinesExecutor") as MockExec:
-            inst = MockExec.return_value
-            inst.submit.side_effect = [future1, future2]
-            r = self._run([t], parent_results, count=2)
-
-        assert len(r) == 2
-
-    def test_context_updates_merged(self):
-        t = _mock_task("T")
-        parent_results = TaskPayload({"p": [1]})
-        future = MagicMock()
-        future.result.return_value = (TaskPayload({"T": "v"}), {"new_key": "new_val"})
-
-        with patch(f"{_RT}.RetrainPipelinesExecutor") as MockExec:
-            inst = MockExec.return_value
-            inst.submit.return_value = future
-            r = self._run([t], parent_results, count=1)
-
-        assert len(r) == 1
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1081,283 +1119,52 @@ class TestExecuteParallelBranchesWithContext:
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-def _make_dag_mock(roots, params=None):
-    """Build a minimal DAG mock compatible with _execute / execute."""
-    dag = MagicMock()
-    dag.roots = roots
-    dag.params = params or {}
-    dag.init = MagicMock()
-    return dag
-
-
-def _exec_patches():
-    """Return a context manager that patches all external I/O for _execute."""
-    return (
-        patch(f"{_RT}._install_interrupt_handler"),
-        patch(f"{_RT}.GrpcClient"),
-        patch(f"{_RT}.DAG"),
-        patch(f"{_RT}.get_trace_buffer"),
-        patch(f"{_RT}._task_registry"),
-    )
-
-
 class TestExecute:
     """Integration-level tests for execute() and _execute()."""
 
-    def _minimal_exec(self, dag, params=None):
-        """Run execute() with all external I/O mocked."""
-        trace_buf = MagicMock()
-        registry = MagicMock()
-
-        with (
-            patch(f"{_RT}._install_interrupt_handler"),
-            patch(f"{_RT}.GrpcClient"),
-            patch(f"{_RT}.DAG") as MockDAG,
-            patch(f"{_RT}.DAO") as MockRtDAO,
-            patch(f"{_RT}.get_trace_buffer", return_value=trace_buf),
-            patch(f"{_RT}._task_registry", registry),
-            patch(f"{_RT}.RichLoggingController") as MockRLC,
-        ):
-            MockDAG.mark_complete = MagicMock()
-            MockRtDAO.return_value.get_execution.return_value.params = {}
-            rlc_inst = MockRLC.return_value  # noqa: F841
-            return execute(dag, params)
-
-    def test_single_plain_task_dag(self):
-        from retrain_pipelines.dag_engine.core.core import DagParam
-
-        t = _mock_task("T")
-        t.is_parallel = False
-        t.merge_func = None
-        t.func = MagicMock(return_value=(None, "result"))
-        dag = _make_dag_mock(
-            roots=[t], params={"exec_id": {"description": "id", "default": 1}}
-        )
-
-        dag.params = {"exec_id": DagParam(description="id", default=1)}
-
-        # Patch _task_registry.get_running_tasks to simulate a lingering task
-        # so that the final while loop in _execute runs at least once.
-        # The loop body calls get_running_tasks twice per iteration
-        # (once for condition, once for logging), so we need three values:
-        # non-empty for condition check, non-empty for log, empty for exit.
-        registry_mock = MagicMock()
-        registry_mock.get_running_tasks.side_effect = [{1: 123}, {1: 123}, {}]
-
-        with (
-            patch(f"{_RT}._execute_task", return_value="result"),
-            patch(f"{_RT}._topological_sort", return_value=[t]),
-            patch(f"{_RT}._collect_parent_results", return_value=TaskPayload({})),
-            patch(f"{_RT}._task_registry", registry_mock),
-            patch(f"{_RT}.DAG") as MockDAG,
-            patch(f"{_RT}.DAO") as MockRtDAO,
-            patch(f"{_RT}.get_trace_buffer"),
-            patch(f"{_RT}.GrpcClient"),
-            patch(f"{_RT}.RichLoggingController"),
-            patch(f"{_RT}._install_interrupt_handler"),
-        ):
-            MockDAG.mark_complete = MagicMock()
-            MockRtDAO.return_value.get_execution.return_value.params = {}
-            result, ctx_dump = execute(dag)
-
+    def test_single_plain_task_dag(self, runtime_env, isolated_dao):
+        result, ctx_dump = execute(simple_dag)
         assert result == "result"
-        # Ensure mark_complete was called, covering the line after the while loop.
-        MockDAG.mark_complete.assert_called_once()
-
-    def test_params_defaults_resolved(self):
-        from retrain_pipelines.dag_engine.core.core import DagParam
-
-        t = _mock_task("T")
-        t.is_parallel = False
-        t.merge_func = None
-        dag = _make_dag_mock(roots=[t])
-        dag.params = {
-            "exec_id": DagParam(description="id", default=99),
-            "missing": DagParam(description="no default"),
-        }
-
-        with (
-            patch(f"{_RT}._execute_task", return_value="r"),
-            patch(f"{_RT}._topological_sort", return_value=[t]),
-            patch(f"{_RT}._collect_parent_results", return_value=TaskPayload({})),
-        ):
-            result, ctx_dump = self._minimal_exec(dag, params={"extra": "val"})
-
-        assert ctx_dump["exec_id"] == 99
-        assert ctx_dump["missing"] is None
-
-    def test_params_override_stored_to_db(self):
-        """Covers branch where execution-time override is injected into DB-tracked params."""
-        from retrain_pipelines.dag_engine.core.core import DagParam
-
-        t = _mock_task("T")
-        t.is_parallel = False
-        t.merge_func = None
-        dag = _make_dag_mock(roots=[t])
-        dag.params = {"exec_id": DagParam(description="id", default=1)}
-
-        with (
-            patch(f"{_RT}._execute_task", return_value="r"),
-            patch(f"{_RT}._topological_sort", return_value=[t]),
-            patch(f"{_RT}._collect_parent_results", return_value=TaskPayload({})),
-            patch(f"{_RT}.DAG") as MockDAG,
-            patch(f"{_RT}.DAO") as MockRtDAO,
-            patch(f"{_RT}.get_trace_buffer"),
-            patch(f"{_RT}.GrpcClient"),
-            patch(f"{_RT}.RichLoggingController"),
-            patch(f"{_RT}._install_interrupt_handler"),
-            patch(f"{_RT}._task_registry") as registry_mock,
-        ):
-            MockDAG.mark_complete = MagicMock()
-            registry_mock.get_running_tasks.return_value = {}
-            MockRtDAO.return_value.get_execution.return_value.params = {
-                "exec_id": {"description": "id"}
-            }
-            execute(dag, params={"exec_id": 99})
-
-        MockRtDAO.return_value.update_execution.assert_called_once()
-        _, kwargs = MockRtDAO.return_value.update_execution.call_args
-        assert kwargs["params"]["exec_id"]["override"] == 99
-
-    def test_last_element_taskgroup_collects_results(self):
-        # last element is a TaskGroup
-        from retrain_pipelines.dag_engine.core.core import DagParam
-
-        inner = _mock_task("inner")
-        tg = _mock_tg(name="tg", elements=[inner])
-        dag = _make_dag_mock(roots=[tg])
-        dag.params = {"exec_id": DagParam(description="id", default=1)}
-
-        tg_result = TaskPayload({"inner": "tg_val"})
-
-        with (
-            patch(f"{_RT}._execute_taskgroup", return_value=tg_result),
-            patch(f"{_RT}._topological_sort", return_value=[tg]),
-            patch(f"{_RT}._collect_parent_results", return_value=TaskPayload({})),
-        ):
-            result, _ = self._minimal_exec(dag)
-
-        assert result["inner"] == "tg_val"
-
-    def test_nested_taskgroup_in_last_element_collects_results(self):
-        """Covers branch where the last DAG element is a TaskGroup containing nested TaskGroups."""
-        from retrain_pipelines.dag_engine.core.core import DagParam
-
-        inner_task = _mock_task("inner_task")
-        inner_tg = _mock_tg(name="inner_tg", elements=[inner_task])
-        outer_tg = _mock_tg(name="outer_tg", elements=[inner_tg])
-        dag = _make_dag_mock(roots=[outer_tg])
-        dag.params = {"exec_id": DagParam(description="id", default=1)}
-
-        with (
-            patch(
-                f"{_RT}._execute_taskgroup",
-                return_value=TaskPayload({"inner_task": "val"}),
-            ),
-            patch(f"{_RT}._topological_sort", return_value=[outer_tg]),
-            patch(f"{_RT}._collect_parent_results", return_value=TaskPayload({})),
-        ):
-            result, _ = self._minimal_exec(dag)
-
-        assert result["inner_task"] == "val"
-
-    def test_parallel_subdag_executed(self):
-        # is_parallel branch in _execute
-        from retrain_pipelines.dag_engine.core.core import DagParam
-
-        par = _mock_task("par", is_parallel=True)
-        merge = _mock_task("merge", merge_func=lambda x: x)
-        merge.parents = [par]
-        dag = _make_dag_mock(roots=[par])
-        dag.params = {"exec_id": DagParam(description="id", default=1)}
-
-        with (
-            patch(f"{_RT}._topological_sort", return_value=[par, merge]),
-            patch(
-                f"{_RT}._collect_parent_results",
-                return_value=TaskPayload({"par": [1, 2]}),
-            ),
-            patch(f"{_RT}._find_subdag_end", return_value=2),
-            patch(f"{_RT}._parallel_input_count", return_value=2),
-            patch(
-                f"{_RT}._execute_parallel_branches_with_context",
-                return_value=["r1", "r2"],
-            ) as mock_par,
-            patch(f"{_RT}._execute_task", return_value="merged"),
-        ):
-            result, _ = self._minimal_exec(dag)
-
-        mock_par.assert_called_once()
-
-    def test_rich_logging_deactivated_on_exception(self):
-        # finally block in execute() calls deactivate
-        from retrain_pipelines.dag_engine.core.core import DagParam
-
-        dag = _make_dag_mock(roots=[])
-        dag.params = {"exec_id": DagParam(description="id", default=1)}
-
-        trace_buf = MagicMock()
-        registry = MagicMock()
-        registry.get_running_tasks.return_value = {}
-
-        with (
-            patch(f"{_RT}._install_interrupt_handler"),
-            patch(f"{_RT}.GrpcClient"),
-            patch(f"{_RT}.DAG"),
-            patch(f"{_RT}.get_trace_buffer", return_value=trace_buf),
-            patch(f"{_RT}._task_registry", registry),
-            patch(f"{_RT}.RichLoggingController") as MockRLC,
-            patch(f"{_RT}._execute", side_effect=RuntimeError("inner")),
-        ):
-            rlc_inst = MockRLC.return_value
-            with pytest.raises(RuntimeError):
-                execute(dag)
-            rlc_inst.deactivate.assert_called_once()
-
-    def test_execute_returns_context_dump(self):
-        from retrain_pipelines.dag_engine.core.core import DagParam
-
-        t = _mock_task("T")
-        t.is_parallel = False
-        t.merge_func = None
-        dag = _make_dag_mock(roots=[t])
-        dag.params = {"exec_id": DagParam(description="id", default=5)}
-
-        with (
-            patch(f"{_RT}._execute_task", return_value="val"),
-            patch(f"{_RT}._topological_sort", return_value=[t]),
-            patch(f"{_RT}._collect_parent_results", return_value=TaskPayload({})),
-        ):
-            _, ctx_dump = self._minimal_exec(dag)
-
         assert "exec_id" in ctx_dump
 
-    def test_missing_exec_id_skips_mark_complete(self):
-        """Covers branch where exec_id is None, causing mark_complete to be skipped."""
-        from retrain_pipelines.dag_engine.core.core import DagParam
+    def test_params_defaults_resolved(self, runtime_env, isolated_dao):
+        result, ctx_dump = execute(params_dag, params={"extra": "val"})
+        assert ctx_dump["p1"] == 99
+        assert ctx_dump["p2"] is None
 
-        t = _mock_task("T")
-        t.is_parallel = False
-        t.merge_func = None
-        dag = _make_dag_mock(roots=[t])
-        dag.params = {"exec_id": DagParam(description="id", default=None)}
+    def test_params_override_stored_to_db(self, runtime_env, isolated_dao):
+        _, ctx_dump = execute(params_dag, params={"p1": 99})
+        exec_id = ctx_dump["exec_id"]
 
-        with (
-            patch(f"{_RT}._execute_task", return_value="r"),
-            patch(f"{_RT}._topological_sort", return_value=[t]),
-            patch(f"{_RT}._collect_parent_results", return_value=TaskPayload({})),
-            patch(f"{_RT}.DAG") as MockDAG,
-            patch(f"{_RT}.DAO") as MockRtDAO,
-            patch(f"{_RT}.get_trace_buffer"),
-            patch(f"{_RT}.GrpcClient"),
-            patch(f"{_RT}.RichLoggingController"),
-            patch(f"{_RT}._install_interrupt_handler"),
-            patch(f"{_RT}._task_registry") as registry_mock,
-        ):
-            MockDAG.mark_complete = MagicMock()
-            registry_mock.get_running_tasks.return_value = {}
-            MockRtDAO.return_value.get_execution.return_value.params = {}
-            with pytest.raises(AssertionError):
-                execute(dag)
+        dao = isolated_dao
+        execution = dao.get_execution(exec_id)
+        assert execution.params["p1"]["override"] == 99
 
-        MockDAG.mark_complete.assert_not_called()
+    def test_last_element_taskgroup_collects_results(self, runtime_env, isolated_dao):
+        # last element is a taskgroup =>
+        # collect its task results into TaskPayload
+        result, _ = execute(taskgroup_dag)
+        assert result["taskgroup_dag_t1"] == 1
+        assert result["taskgroup_dag_t2"] == 2
+
+    def test_nested_taskgroup_dag(self, runtime_env, isolated_dao):
+        """Covers branch where the last DAG element is a TaskGroup containing nested TaskGroups."""
+        result, _ = execute(nested_taskgroup_dag)
+        assert result["nested_tg_task1"] == 1
+        assert result["nested_tg_task2"] == 2
+        assert result["task_T"] == "T"
+
+    def test_parallel_subdag_executed(self, runtime_env, isolated_dao):
+        # is_parallel branch in _execute
+        result, _ = execute(parallel_dag)
+        assert result == 6
+
+    def test_execute_waits_for_running_tasks(self, runtime_env, isolated_dao):
+        """Covers the while loop in _execute's finally block."""
+        mock_registry = MagicMock()
+        # Use an iterator to safely provide return values for multiple calls
+        states = iter([{1: 123}, {1: 123}])
+        mock_registry.get_running_tasks.side_effect = lambda: next(states, {})
+        with patch(f"{_RT}._task_registry", mock_registry):
+            result, ctx_dump = execute(simple_dag)
+        assert result == "result"

@@ -1,27 +1,17 @@
 """
 DAO fixtures scoped to the db unit-test subtree.
 
+NOTE: ``isolated_dao`` and ``disable_http_listener`` can be found in
+the parent ``dag_engine/conftest.py``. They're shared with
+runtime tests (they are available in this subtree via normal
+pytest fixture inheritance).
+
 Provides:
-  ``isolated_dao``: function-scoped DAO backed by a temporary file-based
-    SQLite database (NullPool). Unlike the session-scoped ``sync_dao``
-    (which uses StaticPool so a single in-memory connection is shared by
-    all sessions), this fixture lets each SQLAlchemy session obtain its
-    own NullPool connection.
-
-    That isolation is required for tests that insert Tasks:
-    ``after_insert_task_listener`` opens a second scoped_session on the
-    same engine inside the outer session's active ``BEGIN IMMEDIATE``
-    transaction. Even with NullPool, SQLite serializes the inner
-    ``BEGIN`` against the outer write lock; the listener's
-    ``session.close()`` then leaves the outer cursor broken, silently
-    preventing ``commit()`` from persisting the row.
-
-    The fixture therefore temporarily removes
-    ``after_insert_task_listener`` from SQLAlchemy's event registry via
-    ``event.remove`` / ``event.listen`` (patching the module attribute
-    would not suffice ; SQLAlchemy holds its own reference to the
-    original callable). The listener's HTTP side-effect is already
-    suppressed per-test by ``patch("requests.post")``.
+  ``sync_dao``: Session-scoped DAO backed by a shared in-memory SQLite.
+    StaticPool is substituted for NullPool only during DAO construction so
+    that the single in-memory database is visible to all threads. The patch
+    is not held open beyond construction; doing so would corrupt NullPool
+    isolation for any ``isolated_dao`` created in the same session.
 
   ``async_dao``: function-scoped AsyncDAO backed by a fresh in-memory
     aiosqlite database with all ORM tables created on startup.
@@ -64,11 +54,11 @@ from uuid import uuid4
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import event, text
+from sqlalchemy import text
 from sqlalchemy.pool import StaticPool
 
-from retrain_pipelines.dag_engine.db.dao import DAO, after_insert_task_listener
-from retrain_pipelines.dag_engine.db.model import Base, Task
+from retrain_pipelines.dag_engine.db.dao import DAO
+from retrain_pipelines.dag_engine.db.model import Base
 
 
 _NOW = datetime(2024, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
@@ -87,27 +77,6 @@ def sync_dao():
         dao = DAO(db_url=os.environ["RP_METADATASTORE_URL"])  # sqlite in-mem
     yield dao
     dao.dispose()
-
-
-@pytest.fixture
-def isolated_dao(tmp_path):
-    """Function-scoped DAO on a fresh file-based SQLite (NullPool).
-
-    ``after_insert_task_listener`` notifies the WebConsole HTTP server on
-    every Task insert. Doing so requires opening a second scoped_session on
-    the same engine to look up the parent TaskType ; which races with the
-    outer ``BEGIN IMMEDIATE`` on file-based SQLite and silently aborts the
-    outer commit, leaving the row unpersisted.
-    The listener is therefore deregistered for the duration of each test ;
-    its HTTP call is separately suppressed per-test via ``patch("requests.post")``.
-    """
-    event.remove(Task, "after_insert", after_insert_task_listener)
-    try:
-        dao = DAO(db_url=f"sqlite:///{tmp_path / 'test.db'}")
-        yield dao
-        dao.dispose()
-    finally:
-        event.listen(Task, "after_insert", after_insert_task_listener)
 
 
 @pytest_asyncio.fixture
@@ -169,16 +138,18 @@ async def seeded_async_dao(async_dao):
     async with async_dao.engine.begin() as conn:
         await conn.execute(
             text(
-                "INSERT INTO executions (name, username, start_timestamp, end_timestamp, metadata_root)"
-                " VALUES (:n, :u, :s, :e, '/tmp/meta')"
+                "INSERT INTO executions (name, username, start_timestamp, end_timestamp,"
+                " metadata_root, artifacts_store_root)"
+                "VALUES (:n, :u, :s, :e, '/tmp/meta', '/tmp/artifacts')"
             ),
             {"n": "cnt_pipe", "u": "alice", "s": _NOW.isoformat(), "e": _end},
         )
 
         await conn.execute(
             text(
-                "INSERT INTO executions (name, username, start_timestamp, end_timestamp, metadata_root)"
-                " VALUES (:n, :u, :s, :e, '/tmp/meta')"
+                "INSERT INTO executions (name, username, start_timestamp, end_timestamp,"
+                " metadata_root, artifacts_store_root) "
+                "VALUES (:n, :u, :s, :e, '/tmp/meta', '/tmp/artifacts')"
             ),
             {
                 "n": "cnt_pipe",
@@ -193,8 +164,8 @@ async def seeded_async_dao(async_dao):
         await conn.execute(
             text(
                 "INSERT INTO tasktypes"
-                ' (uuid, exec_id, "order", name, is_parallel, children)'
-                " VALUES (:uuid, :eid, 0, 'fail_step', 0, '[]')"
+                ' (uuid, exec_id, "order", name, is_parallel, children) '
+                "VALUES (:uuid, :eid, 0, 'fail_step', 0, '[]')"
             ),
             {"uuid": tt_uuid_f.hex, "eid": exec_id_failed},
         )
@@ -202,8 +173,8 @@ async def seeded_async_dao(async_dao):
         await conn.execute(
             text(
                 "INSERT INTO tasks"
-                " (tasktype_uuid, exec_id, start_timestamp, end_timestamp, failed)"
-                " VALUES (:tu, :eid, :s, :e, 1)"
+                " (tasktype_uuid, exec_id, start_timestamp, end_timestamp, failed) "
+                "VALUES (:tu, :eid, :s, :e, 1)"
             ),
             {
                 "tu": tt_uuid_f.hex,
@@ -215,8 +186,9 @@ async def seeded_async_dao(async_dao):
 
         await conn.execute(
             text(
-                "INSERT INTO executions (name, username, start_timestamp, metadata_root)"
-                " VALUES (:n, :u, :s, '/tmp/meta')"
+                "INSERT INTO executions (name, username, start_timestamp,"
+                " metadata_root, artifacts_store_root) "
+                "VALUES (:n, :u, :s, '/tmp/meta', '/tmp/artifacts')"
             ),
             {
                 "n": "cnt_pipe",
@@ -230,16 +202,16 @@ async def seeded_async_dao(async_dao):
         await conn.execute(
             text(
                 "INSERT INTO tasktypes"
-                ' (uuid, exec_id, "order", name, is_parallel, children)'
-                " VALUES (:uuid, :eid, 0, 'seeded_step', 0, '[]')"
+                ' (uuid, exec_id, "order", name, is_parallel, children) '
+                "VALUES (:uuid, :eid, 0, 'seeded_step', 0, '[]')"
             ),
             {"uuid": tt_uuid.hex, "eid": exec_id_with_tasks},
         )
 
         await conn.execute(
             text(
-                "INSERT INTO tasks (tasktype_uuid, exec_id, start_timestamp)"
-                " VALUES (:tu, :eid, :s)"
+                "INSERT INTO tasks (tasktype_uuid, exec_id, start_timestamp) "
+                "VALUES (:tu, :eid, :s)"
             ),
             {
                 "tu": tt_uuid.hex,
@@ -273,8 +245,9 @@ async def taskgroup_seeded_async_dao(async_dao):
     async with async_dao.engine.begin() as conn:
         await conn.execute(
             text(
-                "INSERT INTO executions (name, username, start_timestamp, metadata_root)"
-                " VALUES (:n, :u, :s, '/tmp/meta')"
+                "INSERT INTO executions (name, username, start_timestamp,"
+                " metadata_root, artifacts_store_root) "
+                "VALUES (:n, :u, :s, '/tmp/meta', '/tmp/artifacts')"
             ),
             {"n": "tg_pipe", "u": "bob", "s": _NOW.isoformat()},
         )
@@ -285,8 +258,8 @@ async def taskgroup_seeded_async_dao(async_dao):
         await conn.execute(
             text(
                 "INSERT INTO taskgroups"
-                ' (uuid, exec_id, "order", name, elements)'
-                " VALUES (:uuid, :eid, 0, 'parent_grp', :elems)"
+                ' (uuid, exec_id, "order", name, elements) '
+                "VALUES (:uuid, :eid, 0, 'parent_grp', :elems)"
             ),
             {
                 "uuid": parent_uuid.hex,
@@ -298,8 +271,8 @@ async def taskgroup_seeded_async_dao(async_dao):
         await conn.execute(
             text(
                 "INSERT INTO taskgroups"
-                ' (uuid, exec_id, "order", name, elements)'
-                " VALUES (:uuid, :eid, 1, 'child_grp', :elems)"
+                ' (uuid, exec_id, "order", name, elements) '
+                "VALUES (:uuid, :eid, 1, 'child_grp', :elems)"
             ),
             {"uuid": child_uuid.hex, "eid": exec_id, "elems": json.dumps([])},
         )

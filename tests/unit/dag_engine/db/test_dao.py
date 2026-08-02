@@ -76,6 +76,7 @@ class TestDAOExecution:
                 username="user",
                 _start_timestamp=_NOW,
                 metadata_root="/tmp/meta",
+                artifacts_store_root="/tmp/artifacts",
             )
         assert isinstance(exec_id, int)
         ex = sync_dao.get_execution(exec_id)
@@ -100,6 +101,7 @@ class TestDAOExecution:
             username="u",
             _start_timestamp=_NOW,
             metadata_root="/tmp/meta",
+            artifacts_store_root="/tmp/artifacts",
         )
         result = await async_dao.get_execution(exec_id)
         assert result is not None and result.id == exec_id
@@ -114,6 +116,7 @@ class TestDAOExecution:
                 username="u",
                 _start_timestamp=_NOW,
                 metadata_root="/tmp/meta",
+                artifacts_store_root="/tmp/artifacts",
             )
             sync_dao.update_execution(exec_id, _end_timestamp=_NOW + timedelta(hours=1))
         ex = sync_dao.get_execution(exec_id)
@@ -132,12 +135,14 @@ class TestDAOExecution:
                     username="u",
                     _start_timestamp=_NOW,
                     metadata_root="/tmp/meta",
+                    artifacts_store_root="/tmp/artifacts",
                 )
             sync_dao.add_execution(
                 name="other_pipe",
                 username="u",
                 _start_timestamp=_NOW,
                 metadata_root="/tmp/meta",
+                artifacts_store_root="/tmp/artifacts",
             )
         results = sync_dao.get_executions("named_pipe")
         assert len(results) >= 3
@@ -151,7 +156,11 @@ class TestDAOTaskType:
     def _exec_id(self, dao):
         with patch("requests.post"):
             return dao.add_execution(
-                name="p", username="u", _start_timestamp=_NOW, metadata_root="/tmp/meta"
+                name="p",
+                username="u",
+                _start_timestamp=_NOW,
+                metadata_root="/tmp/meta",
+                artifacts_store_root="/tmp/artifacts",
             )
 
     def test_add_tasktype_returns_uuid_value(self, sync_dao):
@@ -178,7 +187,11 @@ class TestDAOTask:
         tt_uuid = uuid4()
         with patch("requests.post"):
             exec_id = dao.add_execution(
-                name="p", username="u", _start_timestamp=_NOW, metadata_root="/tmp/meta"
+                name="p",
+                username="u",
+                _start_timestamp=_NOW,
+                metadata_root="/tmp/meta",
+                artifacts_store_root="/tmp/artifacts",
             )
             dao.add_tasktype(
                 uuid=tt_uuid,
@@ -238,7 +251,11 @@ class TestDAOTaskGroup:
     def test_add_taskgroup(self, sync_dao):
         with patch("requests.post"):
             exec_id = sync_dao.add_execution(
-                name="p", username="u", _start_timestamp=_NOW, metadata_root="/tmp/meta"
+                name="p",
+                username="u",
+                _start_timestamp=_NOW,
+                metadata_root="/tmp/meta",
+                artifacts_store_root="/tmp/artifacts",
             )
             tg_uuid = sync_dao.add_taskgroup(
                 uuid=uuid4(),
@@ -264,6 +281,7 @@ class TestDAOTaskTrace:
                 username="u",
                 _start_timestamp=_NOW,
                 metadata_root="/tmp/meta",
+                artifacts_store_root="/tmp/artifacts",
             )
             dao.add_tasktype(
                 uuid=tt_uuid,
@@ -325,6 +343,7 @@ class TestDAOConcurrentWrites:
                         username="u",
                         _start_timestamp=_NOW,
                         metadata_root="/tmp/meta",
+                        artifacts_store_root="/tmp/artifacts",
                     )
                 results.append(eid)
             except Exception as exc:
@@ -347,6 +366,7 @@ class TestDAOConcurrentWrites:
                 username="u",
                 _start_timestamp=_NOW,
                 metadata_root="/tmp/meta",
+                artifacts_store_root="/tmp/artifacts",
             )
             isolated_dao.add_tasktype(
                 uuid=tt_uuid,
@@ -387,6 +407,7 @@ class TestDAOConcurrentWrites:
                 username="u",
                 _start_timestamp=_NOW,
                 metadata_root="/tmp/meta",
+                artifacts_store_root="/tmp/artifacts",
             )
             isolated_dao.add_tasktype(
                 uuid=tt_uuid,
@@ -437,6 +458,7 @@ class TestDAOConcurrentWrites:
                 username="u",
                 _start_timestamp=_NOW,
                 metadata_root="/tmp/meta",
+                artifacts_store_root="/tmp/artifacts",
             )
             isolated_dao.add_tasktype(
                 uuid=tt_uuid,
@@ -484,6 +506,7 @@ class TestDAOConcurrentWrites:
                 username="u",
                 _start_timestamp=_NOW,
                 metadata_root="/tmp/meta",
+                artifacts_store_root="/tmp/artifacts",
             )
 
         with (
@@ -618,6 +641,7 @@ class TestRetryPaths:
                     username="u",
                     _start_timestamp=_NOW,
                     metadata_root="/tmp/meta",
+                    artifacts_store_root="/tmp/artifacts",
                 )
 
         assert call_count["n"] == 3
@@ -645,6 +669,7 @@ class TestRetryPaths:
                     username="u",
                     _start_timestamp=_NOW,
                     metadata_root="/tmp/meta",
+                    artifacts_store_root="/tmp/artifacts",
                 )
 
     def test_batch_add_entities_retries_then_succeeds(self, isolated_dao):
@@ -663,6 +688,7 @@ class TestRetryPaths:
                 username="u",
                 _start_timestamp=_NOW,
                 metadata_root="/tmp/meta",
+                artifacts_store_root="/tmp/artifacts",
             )
             tt_uuid = uuid4()
             isolated_dao.add_tasktype(
@@ -705,6 +731,7 @@ class TestRetryPaths:
                 username="u",
                 _start_timestamp=_NOW,
                 metadata_root="/tmp/meta",
+                artifacts_store_root="/tmp/artifacts",
             )
             tt_uuid = uuid4()
             isolated_dao.add_tasktype(
@@ -749,6 +776,7 @@ class TestRetryPaths:
                 username="u",
                 _start_timestamp=_NOW,
                 metadata_root="/tmp/meta",
+                artifacts_store_root="/tmp/artifacts",
             )
 
         call_count = {"n": 0}
@@ -781,6 +809,7 @@ class TestRetryPaths:
                 username="u",
                 _start_timestamp=_NOW,
                 metadata_root="/tmp/meta",
+                artifacts_store_root="/tmp/artifacts",
             )
 
         session = isolated_dao.Session()
@@ -835,6 +864,7 @@ class TestRetryPaths:
                     username="u",
                     _start_timestamp=_NOW,
                     metadata_root="/tmp/meta",
+                    artifacts_store_root="/tmp/artifacts",
                 )
 
         assert session.rollback_called
@@ -973,7 +1003,11 @@ class TestEventListeners:
 
         with patch("requests.post"):
             exec_id = isolated_dao.add_execution(
-                name="p", username="u", _start_timestamp=_NOW, metadata_root="/tmp/meta"
+                name="p",
+                username="u",
+                _start_timestamp=_NOW,
+                metadata_root="/tmp/meta",
+                artifacts_store_root="/tmp/artifacts",
             )
             tt_uuid = uuid4()
             isolated_dao.add_tasktype(
@@ -1006,7 +1040,11 @@ class TestEventListeners:
 
         with patch("requests.post"):
             exec_id = isolated_dao.add_execution(
-                name="p", username="u", _start_timestamp=_NOW, metadata_root="/tmp/meta"
+                name="p",
+                username="u",
+                _start_timestamp=_NOW,
+                metadata_root="/tmp/meta",
+                artifacts_store_root="/tmp/artifacts",
             )
 
         target = MagicMock(spec=Task)
@@ -1092,7 +1130,11 @@ class TestEventListeners:
 
         with patch("requests.post"):
             exec_id = isolated_dao.add_execution(
-                name="p", username="u", _start_timestamp=_NOW, metadata_root="/tmp/meta"
+                name="p",
+                username="u",
+                _start_timestamp=_NOW,
+                metadata_root="/tmp/meta",
+                artifacts_store_root="/tmp/artifacts",
             )
             tt_uuid = uuid4()
             isolated_dao.add_tasktype(
@@ -1185,7 +1227,11 @@ class TestEventListeners:
 
         with patch("requests.post"):
             exec_id = isolated_dao.add_execution(
-                name="p", username="u", _start_timestamp=_NOW, metadata_root="/tmp/meta"
+                name="p",
+                username="u",
+                _start_timestamp=_NOW,
+                metadata_root="/tmp/meta",
+                artifacts_store_root="/tmp/artifacts",
             )
             tt_uuid = uuid4()
             isolated_dao.add_tasktype(
@@ -1220,7 +1266,11 @@ class TestEventListeners:
 
         with patch("requests.post"):
             exec_id = isolated_dao.add_execution(
-                name="p", username="u", _start_timestamp=_NOW, metadata_root="/tmp/meta"
+                name="p",
+                username="u",
+                _start_timestamp=_NOW,
+                metadata_root="/tmp/meta",
+                artifacts_store_root="/tmp/artifacts",
             )
             tt_uuid = uuid4()
             isolated_dao.add_tasktype(
@@ -1402,6 +1452,7 @@ class TestAsyncDAO:
             username="u",
             _start_timestamp=_NOW,
             metadata_root="/tmp/meta",
+            artifacts_store_root="/tmp/artifacts",
         )
         assert isinstance(exec_id, int)
         result = await async_dao._async_get_entity(Execution, id=exec_id)
@@ -1421,6 +1472,7 @@ class TestAsyncDAO:
                 username="u",
                 _start_timestamp=_NOW,
                 metadata_root="/tmp/meta",
+                artifacts_store_root="/tmp/artifacts",
             )
         results = await async_dao._async_get_entities(Execution, name="multi_pipe")
         assert len(results) >= 3
@@ -1433,6 +1485,7 @@ class TestAsyncDAO:
             username="u",
             _start_timestamp=_NOW,
             metadata_root="/tmp/meta",
+            artifacts_store_root="/tmp/artifacts",
         )
         updated = await async_dao._async_update_entity(
             Execution, exec_id, username="updated_user"
@@ -1456,6 +1509,7 @@ class TestAsyncDAO:
             username="u",
             _start_timestamp=_NOW,
             metadata_root="/tmp/meta",
+            artifacts_store_root="/tmp/artifacts",
         )
         tt_uuid = uuid4()
         async with async_dao.engine.begin() as conn:
@@ -1495,6 +1549,7 @@ class TestAsyncDAO:
             username="u",
             _start_timestamp=_NOW,
             metadata_root="/tmp/meta",
+            artifacts_store_root="/tmp/artifacts",
         )
         assert isinstance(result, int)
 
@@ -1508,6 +1563,7 @@ class TestAsyncDAO:
             username="u",
             _start_timestamp=_NOW,
             metadata_root="/tmp/meta",
+            artifacts_store_root="/tmp/artifacts",
         )
         tt_uuid = uuid4()
         async with async_dao.engine.begin() as conn:
@@ -1546,6 +1602,7 @@ class TestAsyncDAO:
             username="u",
             _start_timestamp=_NOW,
             metadata_root="/tmp/meta",
+            artifacts_store_root="/tmp/artifacts",
         )
         result = await async_dao._update_entity(Execution, exec_id, username="new_u")
         assert result is not None and result.username == "new_u"
@@ -1558,6 +1615,7 @@ class TestAsyncDAO:
             username="u",
             _start_timestamp=_NOW,
             metadata_root="/tmp/meta",
+            artifacts_store_root="/tmp/artifacts",
         )
         result = await async_dao._get_entity(Execution, id=exec_id)
         assert result is not None
@@ -1571,6 +1629,7 @@ class TestAsyncDAO:
                 username="u",
                 _start_timestamp=_NOW,
                 metadata_root="/tmp/meta",
+                artifacts_store_root="/tmp/artifacts",
             )
         results = await async_dao._get_entities(Execution, name="disp_gets")
         assert len(results) >= 2
@@ -1591,6 +1650,7 @@ class TestAsyncDAOExecutionExt:
             username="u",
             _start_timestamp=_NOW,
             metadata_root="/tmp/meta",
+            artifacts_store_root="/tmp/artifacts",
         )
         result = await async_dao.get_execution_ext(exec_id)
         assert result is not None
@@ -1647,6 +1707,7 @@ class TestAsyncDAOExecutionsCount:
             username="u",
             _start_timestamp=_NOW,
             metadata_root="/tmp/meta",
+            artifacts_store_root="/tmp/artifacts",
         )
         count = await async_dao.get_executions_count("scalar_pipe")
         assert count == 1
@@ -1779,6 +1840,7 @@ class TestAsyncDAOExecutionsExt:
             username="u",
             _start_timestamp=_NOW,
             metadata_root="/tmp/meta",
+            artifacts_store_root="/tmp/artifacts",
         )
         exts = await async_dao.get_executions_ext(pipeline_name="ext_loop_pipe")
         assert len(exts) >= 1
@@ -1808,6 +1870,7 @@ class TestAsyncDAOExecutionTasksList:
             username="u",
             _start_timestamp=_NOW,
             metadata_root="/tmp/meta",
+            artifacts_store_root="/tmp/artifacts",
         )
         result = await async_dao.get_execution_tasks_list(exec_id)
         assert result is None
@@ -1822,6 +1885,7 @@ class TestAsyncDAOExecutionTasksList:
             username="u",
             _start_timestamp=_NOW,
             metadata_root="/tmp/meta",
+            artifacts_store_root="/tmp/artifacts",
         )
         tt_uuid = uuid4()
         async with async_dao.engine.begin() as conn:
@@ -1854,6 +1918,7 @@ class TestAsyncDAOExecutionTasksList:
             username="u",
             _start_timestamp=_NOW,
             metadata_root="/tmp/meta",
+            artifacts_store_root="/tmp/artifacts",
         )
         tt_uuid = uuid4()
         async with async_dao.engine.begin() as conn:
@@ -1894,6 +1959,7 @@ class TestAsyncDAOExecutionTaskTypes:
             username="u",
             _start_timestamp=_NOW,
             metadata_root="/tmp/meta",
+            artifacts_store_root="/tmp/artifacts",
         )
         async with async_dao.engine.begin() as conn:
             await conn.execute(
@@ -1921,6 +1987,7 @@ class TestAsyncDAOExecutionTaskTypes:
             username="u",
             _start_timestamp=_NOW,
             metadata_root="/tmp/meta",
+            artifacts_store_root="/tmp/artifacts",
         )
         async_dao.get_execution_tasktypes_list.cache_clear()
         result = await async_dao.get_execution_tasktypes_list(exec_id)
@@ -1945,6 +2012,7 @@ class TestAsyncDAOExecutionTaskGroups:
             username="u",
             _start_timestamp=_NOW,
             metadata_root="/tmp/meta",
+            artifacts_store_root="/tmp/artifacts",
         )
         async with async_dao.engine.begin() as conn:
             await conn.execute(
@@ -1972,6 +2040,7 @@ class TestAsyncDAOExecutionTaskGroups:
             username="u",
             _start_timestamp=_NOW,
             metadata_root="/tmp/meta",
+            artifacts_store_root="/tmp/artifacts",
         )
         async_dao.get_execution_taskgroups_list.cache_clear()
         result = await async_dao.get_execution_taskgroups_list(exec_id)
@@ -2001,6 +2070,7 @@ class TestAsyncDAOExecutionTasksWithName:
             username="u",
             _start_timestamp=_NOW,
             metadata_root="/tmp/meta",
+            artifacts_store_root="/tmp/artifacts",
         )
         result = await async_dao.get_execution_tasks_with_name(exec_id, "no_such_step")
         assert result == []
@@ -2021,6 +2091,7 @@ class TestAsyncDAOExecutionInfo:
             docstring="info docstring",
             _start_timestamp=_NOW,
             metadata_root="/tmp/meta",
+            artifacts_store_root="/tmp/artifacts",
         )
         async_dao.get_execution_info.cache_clear()
         info = await async_dao.get_execution_info(exec_id)
@@ -2051,6 +2122,7 @@ class TestAsyncDAOExecutionNumber:
             username="u",
             _start_timestamp=_NOW,
             metadata_root="/tmp/meta",
+            artifacts_store_root="/tmp/artifacts",
         )
         info = await async_dao.get_execution_number(exec_id)
         assert info is not None
@@ -2080,8 +2152,8 @@ class TestAsyncDAOTaskgroupsHierarchy:
         async with async_dao.engine.begin() as conn:
             await conn.execute(
                 text(
-                    "INSERT INTO executions (name, username, start_timestamp, metadata_root) "
-                    + "VALUES ('tg_pipe', 'bob', :s, '/tmp/meta')"
+                    "INSERT INTO executions (name, username, start_timestamp, metadata_root, artifacts_store_root) "
+                    + "VALUES ('tg_pipe', 'bob', :s, '/tmp/meta', '/tmp/artifacts')"
                 ),
                 {"s": _NOW.isoformat()},
             )
@@ -2151,6 +2223,7 @@ class TestAsyncDAOTaskTypeDocstring:
             username="u",
             _start_timestamp=_NOW,
             metadata_root="/tmp/meta",
+            artifacts_store_root="/tmp/artifacts",
         )
         tt_uuid = uuid4()
         async with async_dao.engine.begin() as conn:
@@ -2232,6 +2305,7 @@ class TestDAOTaskContextAttrs:
                 username="u",
                 _start_timestamp=_NOW,
                 metadata_root="/tmp/meta",
+                artifacts_store_root="/tmp/artifacts",
             )
             dao.add_tasktype(
                 uuid=tt_uuid,
@@ -2252,6 +2326,7 @@ class TestDAOTaskContextAttrs:
             {
                 "task_id": task_id,
                 "attr_name": "x",
+                "eTAG": "etag-1",
                 "sha": "deadbeef",
                 "disk_ref": "some/path.pkl",
                 "inline_val": None,
@@ -2293,8 +2368,8 @@ class TestAsyncDAOTaskContextAttrs:
             await conn.execute(
                 text(
                     "INSERT INTO task_context_attrs"
-                    " (task_id, attr_name, sha, disk_ref, inline_val)"
-                    " VALUES (:tid, 'out', 'abc123', NULL, NULL)"
+                    " (task_id, attr_name, eTAG, sha, disk_ref, inline_val)"
+                    " VALUES (:tid, 'out', 'etag-out', 'abc123', NULL, NULL)"
                 ),
                 {"tid": task_id},
             )

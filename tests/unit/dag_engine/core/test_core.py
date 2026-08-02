@@ -312,32 +312,50 @@ class TestDagExecutionContext:
         updates["x"] = 999
         assert ctx.get_updates()["x"] == 9  # mutation didn't affect context
 
-    def test_merge_updates_applies_to_params(self):
+    def test_concat_taskgroup_updates_applies_to_params(self):
         ctx = DagExecutionContext({"a": 1})
-        # Pass attr_refs to cover the _deep_update(self._attr_refs, attr_refs) branch.
-        ctx.merge_updates({"a": 99, "z": 0}, attr_refs={"p1": {"sha": "abc"}})
+        # Pass attr_refs to cover the deep_update(self._attr_refs, attr_refs) branch.
+        ctx.concat_taskgroup_updates(
+            {"a": 99, "z": 0}, attr_refs={"p1": {"eTAG": "abc"}}
+        )
         assert ctx.a == 99 and ctx.z == 0
-        assert ctx._attr_refs["p1"] == {"sha": "abc"}
+        assert ctx._attr_refs["p1"] == {"eTAG": "abc"}
 
-    def test_merge_updates_also_recorded_in_updates(self):
+    def test_concat_taskgroup_updates_also_recorded_in_updates(self):
         ctx = DagExecutionContext({})
-        ctx.merge_updates({"k": 5})
+        ctx.concat_taskgroup_updates({"k": 5}, attr_refs={})
         assert ctx.get_updates()["k"] == 5
+
+    def test_merge_parallel_updates_applies_to_params(self):
+        ctx = DagExecutionContext({"a": 1})
+        ctx.merge_parallel_updates({"a": 99, "z": 0})
+        assert ctx.a == 99 and ctx.z == 0
+
+    def test_merge_parallel_updates_recorded_in_updates(self):
+        ctx = DagExecutionContext({})
+        ctx.merge_parallel_updates({"k": 5})
+        assert ctx.get_updates()["k"] == 5
+
+    def test_merge_parallel_updates_deep_merges_nested(self):
+        ctx = DagExecutionContext({"a": {"b": 1, "c": 2}})
+        ctx.merge_parallel_updates({"a": {"b": 99}})
+        assert ctx._params["a"]["b"] == 99
+        assert ctx._params["a"]["c"] == 2
 
     def test_deep_update_nested_dict(self):
         d = {"a": {"b": 1, "c": 2}}
-        DagExecutionContext._deep_update(d, {"a": {"b": 99}})
+        DagExecutionContext.deep_update(d, {"a": {"b": 99}})
         assert d["a"]["b"] == 99
         assert d["a"]["c"] == 2  # untouched sibling
 
     def test_deep_update_overwrites_non_dict(self):
         d = {"a": 1}
-        DagExecutionContext._deep_update(d, {"a": [1, 2]})
+        DagExecutionContext.deep_update(d, {"a": [1, 2]})
         assert d["a"] == [1, 2]
 
     def test_deep_update_adds_new_key(self):
         d = {}
-        DagExecutionContext._deep_update(d, {"new": 42})
+        DagExecutionContext.deep_update(d, {"new": 42})
         assert d["new"] == 42
 
     def test_copy_is_deep(self):
@@ -349,33 +367,27 @@ class TestDagExecutionContext:
     def test_dag_execution_context_get_attr_ref_updates(self):
         """Verify get_attr_ref_updates returns a shallow copy of the internal attribute references."""
         ctx = DagExecutionContext({})
-        ctx._attr_refs = {"p1": {"sha": "abc"}}
+        ctx._attr_refs = {"p1": {"eTAG": "abc"}}
         refs = ctx.get_attr_ref_updates()
-        assert refs == {"p1": {"sha": "abc"}}
+        assert refs == {"p1": {"eTAG": "abc"}}
 
     def test_dag_execution_context_copy(self):
         """Verify that copy performs a deep copy of both parameters and attribute references."""
         ctx = DagExecutionContext({"a": 1})
-        ctx._attr_refs = {"p1": {"sha": "abc"}}
+        ctx._attr_refs = {"p1": {"eTAG": "abc"}}
         ctx2 = ctx.copy()
         assert ctx2._params == {"a": 1}
-        assert ctx2._attr_refs == {"p1": {"sha": "abc"}}
+        assert ctx2._attr_refs == {"p1": {"eTAG": "abc"}}
 
     def test_dag_execution_context_init_attr_refs(self):
         """Verify _init_attr_refs_from_params resolves storables and populates attribute references."""
         ctx = DagExecutionContext({})
-        with (
-            patch.object(
-                core_module, "resolve_storable", return_value="resolved"
-            ) as mock_rs,
-            patch.object(
-                core_module, "attr_ref_from_param_storable", return_value={"sha": "abc"}
-            ) as mock_arf,
-        ):
+        with patch.object(
+            core_module, "attr_ref_from_param_storable", return_value={"eTAG": "abc"}
+        ) as mock_arf:
             ctx._init_attr_refs_from_params({"p1": {"default": "val1"}})
-        mock_rs.assert_called_once()
         mock_arf.assert_called_once()
-        assert ctx._attr_refs["p1"]["sha"] == "abc"
+        assert ctx._attr_refs["p1"]["eTAG"] == "abc"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -568,6 +580,16 @@ class TestContextProxy:
         finally:
             _dag_execution_context_var.reset(token)
 
+    def test_context_proxy_set_none_deletes_attr_ref(self):
+        ec = DagExecutionContext({})
+        ec._attr_refs["to_delete"] = {"eTAG": "old"}
+        token = _dag_execution_context_var.set(ec)
+        try:
+            dag_ctx.to_delete = None
+            assert "to_delete" not in ec._attr_refs
+        finally:
+            _dag_execution_context_var.reset(token)
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  StreamToDb
@@ -623,7 +645,8 @@ class TestStreamToDb:
         orig.close = MagicMock()
         s.close()
         orig.close.assert_not_called()
-        # Force garbage collection to trigger StreamToDb.__del__ for coverage.
+        # Explicitly call __del__ to ensure coverage of the GC finalizer.
+        s.__del__()
         del s
         gc.collect()
 
@@ -820,7 +843,7 @@ def _dao_and_registry():
             return_value=[{"dummy": "row"}],
         ),
         patch(
-            "retrain_pipelines.dag_engine.core.core.snapshot_context_shas",
+            "retrain_pipelines.dag_engine.core.core.snapshot_context_etags",
             return_value={},
         ),
     ):
@@ -1078,6 +1101,30 @@ class TestCaptureAndStreamTrace:
             t = TaskType(func=my_func, is_parallel=False)
             _, result = t.func(exec_id=1)
         assert result == "multiline"
+
+    def test_pipe_reader_processes_newline_delimited_output_success(
+        self, _dao_and_registry
+    ):
+        """pipe_reader splits on newlines and adds traces to buffer without raising.
+
+        Covers the non-notebook console echo branch immediately following add_trace.
+        """
+        trace_buffer_mock = MagicMock(add_trace=MagicMock(), flush=MagicMock())
+
+        def my_func():
+            # Write multiple lines to trigger pipe_reader line-splitting logic.
+            os.write(1, b"line1\nline2\n")
+            return "multiline_ok"
+
+        with patch(
+            "retrain_pipelines.dag_engine.core.core.get_trace_buffer",
+            return_value=trace_buffer_mock,
+        ):
+            t = TaskType(func=my_func, is_parallel=False)
+            _, result = t.func(exec_id=1)
+        assert result == "multiline_ok"
+        # Ensure add_trace was called for each line
+        assert trace_buffer_mock.add_trace.call_count >= 2
 
     def test_pipe_reader_flushes_partial_line_at_eof(self, _dao_and_registry):
         """pipe_reader flushes remaining buffer (no trailing newline)."""

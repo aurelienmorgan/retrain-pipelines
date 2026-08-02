@@ -217,21 +217,18 @@ def register(app, rt, prefix=""):
 
         dao = AsyncDAO(db_url=Config.get_metadatastore_async_url())
         try:
-            execution_name = (await dao.get_execution(execution_id)).name
+            execution = await dao.get_execution(execution_id)
+            execution_name = execution.name
         except AttributeError:
             raise HTTPException(status_code=500, detail=f"exec_id '{exec_id}' not valid.") from None
 
-        # TODO - make it a retrieved fullpath
-        # from a db-attr or a context-attr to be created
-        # (execution-time path is possibly not the same as
-        # current of WebConsole browsing).
         uvicorn_logger = logging.getLogger("uvicorn")
         client_info = ClientInfo(
             ip=request.client.host, port=request.client.port, url=request.url.path
         )
         try:
             html_content = read_text_file(
-                Config.get_artifacts_store_root(),
+                execution.artifacts_store_root,
                 [execution_name, str(execution_id), "pipeline_card.html"],
             )
         except FileNotFoundError as e:

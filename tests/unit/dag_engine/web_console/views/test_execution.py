@@ -352,6 +352,7 @@ class TestRegisterRoutes:
         mock_dao = AsyncMock()
         mock_exec = MagicMock()
         mock_exec.name = "test_pipeline"
+        mock_exec.artifacts_store_root = "/tmp/artifacts"
         mock_dao.get_execution.return_value = mock_exec
 
         with (
@@ -371,6 +372,7 @@ class TestRegisterRoutes:
         mock_dao = AsyncMock()
         mock_exec = MagicMock()
         mock_exec.name = "test_pipeline"
+        mock_exec.artifacts_store_root = "/tmp/artifacts"
         mock_dao.get_execution.return_value = mock_exec
 
         with (
@@ -394,6 +396,7 @@ class TestRegisterRoutes:
         mock_dao = AsyncMock()
         mock_exec = MagicMock()
         mock_exec.name = "test_pipeline"
+        mock_exec.artifacts_store_root = f"s3://{bucket_name}/"
         mock_dao.get_execution.return_value = mock_exec
 
         # Upload a mock pipeline card to the session-scoped MinIO bucket

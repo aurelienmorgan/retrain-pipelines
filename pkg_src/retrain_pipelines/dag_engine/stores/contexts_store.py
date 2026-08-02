@@ -17,7 +17,7 @@ import os
 from typing import Any
 
 from ...utils.file_utils import write_binary_file
-from .commons import compute_sha, metadata_root, try_json_serialize
+from .commons import compute_sha, generate_etag, metadata_root, try_json_serialize
 
 # Context attrs injected by dag.init() that must never be serialized as serialized user context
 # (since they each already are available as other db metadata fields).
@@ -42,13 +42,14 @@ def context_attr_disk_path(exec_id: int, task_id: int, attr_name: str) -> str:
 
 
 def _serialize_attr(
-    exec_id: int, task_id: int, attr_name: str, value: Any, current_sha: str
+    exec_id: int, task_id: int, attr_name: str, value: Any, etag: str
 ) -> tuple[dict, dict]:
     """Serialize value ; return (row_dict, new_ref).
 
     Tries JSON-safe inline first ; falls back to cloudpickle on disk.
-    Uses the pre-computed current_sha for both branches to avoid
-    double-serialization.
+    Disk-pickled values additionally compute a content-based SHA via
+    compute_sha() for SDK value-equality comparisons.
+    Inline values carry no SHA. The SDK compares them directly by value.
 
     Parameters
     ----------
@@ -58,8 +59,9 @@ def _serialize_attr(
         Attribute name (artifact filename stem when pickling).
     value : Any
         Current Python value (must not be None; callers filter None out).
-    current_sha : str
-        Pre-computed sha256(cloudpickle.dumps(value)).
+    etag : str
+        eTAG generated at serialization time for this attr ; used for
+        internal change detection, not SDK comparisons.
 
     Returns
     -------
@@ -68,11 +70,12 @@ def _serialize_attr(
     """
     try:
         json_val = try_json_serialize(value)
-        ref = {"sha": current_sha, "disk_ref": None, "inline": json_val}
+        ref = {"eTAG": etag, "disk_ref": None, "inline": json_val}
         row = {
             "task_id": task_id,
             "attr_name": attr_name,
-            "sha": current_sha,
+            "eTAG": etag,
+            "sha": None,
             "disk_ref": None,
             "inline_val": json_val,
         }
@@ -80,27 +83,28 @@ def _serialize_attr(
         import cloudpickle
 
         raw_bytes = cloudpickle.dumps(value)
+        sha = compute_sha(value)
         rel_path = context_attr_disk_path(exec_id, task_id, attr_name)
         write_binary_file(metadata_root(), [rel_path], raw_bytes)
-        ref = {"sha": current_sha, "disk_ref": rel_path, "inline": None}
+        ref = {"eTAG": etag, "sha": sha, "disk_ref": rel_path, "inline": None}
         row = {
             "task_id": task_id,
             "attr_name": attr_name,
-            "sha": current_sha,
+            "eTAG": etag,
+            "sha": sha,
             "disk_ref": rel_path,
             "inline_val": None,
         }
     return row, ref
 
 
-def snapshot_context_shas(context: Any, exclude: frozenset) -> dict:
-    """Return {attr_name: sha} for all non-excluded, non-None attrs in context._params.
+def snapshot_context_etags(context: Any, exclude: frozenset) -> dict:
+    """Return {attr_name: eTAG} for all non-excluded, non-None attrs in context._params.
 
-    For attrs already tracked in _attr_refs the stored SHA is reused directly ;
-    this is the stable SHA computed at the time the value was last written, which
-    avoids false-positive change detection caused by cloudpickle non-determinism
-    across repeated calls on the same object.
-    A fresh SHA is computed only for attrs not yet tracked (new this task).
+    For attrs already tracked in _attr_refs the stored eTAG is reused directly ;
+    the eTAG is assigned once at value-assignment time .
+    A fresh eTAG is generated only for attrs not yet tracked
+    (created in sub-DAGs, merged / deep-updated).
 
     Parameters
     ----------
@@ -118,7 +122,7 @@ def snapshot_context_shas(context: Any, exclude: frozenset) -> dict:
         if attr_name in exclude or value is None:
             continue
         ref = context._attr_refs.get(attr_name)
-        result[attr_name] = ref["sha"] if ref is not None else compute_sha(value)
+        result[attr_name] = ref["eTAG"] if ref is not None else generate_etag()
     return result
 
 
@@ -126,15 +130,14 @@ def compute_context_diff(
     exec_id: int,
     task_id: int,
     context: Any,
-    entry_shas: dict,
+    entry_etags: dict,
     exclude: frozenset,
 ) -> list:
     """Snapshot all surviving non-None context attrs at task exit.
 
     For each attr in the exit context (skipping excluded and None-valued attrs):
-      - SHA is computed fresh from the current Python value and compared against
-        the entry SHA (which for tracked attrs is the stable stored SHA from
-        _attr_refs, preventing false-positive re-serialization).
+      - eTAG is read from context._attr_refs (assigned at value-assignment time)
+        and compared against the entry eTAG.
       - New or modified attrs: serialized via JSON-safe inline when possible,
         cloudpickle to disk otherwise. context._attr_refs updated in-place.
       - Unchanged attrs: existing ref carried forward as-is ; no new file written,
@@ -150,8 +153,8 @@ def compute_context_diff(
         Task id (disk artifact subdirectory for non-JSON-safe new/modified attrs).
     context : DagExecutionContext
         The execution context at task exit (duck-typed to avoid circular import).
-    entry_shas : dict[str, str]
-        Snapshot of {attr_name: sha} taken at task entry via snapshot_context_shas().
+    entry_etags : dict[str, str]
+        Snapshot of {attr_name: eTAG} taken at task entry via snapshot_context_etags().
     exclude : frozenset[str]
         Attr names to skip.
 
@@ -159,7 +162,8 @@ def compute_context_diff(
     -------
     list[dict]
         Rows ready for bulk-insert into task_context_attrs.
-        Each dict: {task_id, attr_name, sha, disk_ref, inline_val}.
+        Each dict: {task_id, attr_name, eTAG, sha, disk_ref, inline_val}.
+        sha is None for inline attrs ; non-null only for disk-pickled attrs.
     """
     rows = []
 
@@ -167,32 +171,27 @@ def compute_context_diff(
         if attr_name in exclude or value is None:
             continue
 
-        current_sha = compute_sha(value)
-        entry_sha = entry_shas.get(attr_name)
+        ref = context._attr_refs.get(attr_name)
+        current_etag = ref["eTAG"] if ref is not None else None
+        entry_etag = entry_etags.get(attr_name)
 
-        if entry_sha is None or current_sha != entry_sha:
-            # New or modified: serialize.
-            row, ref = _serialize_attr(exec_id, task_id, attr_name, value, current_sha)
+        if entry_etag is None or current_etag != entry_etag:
+            # New or modified: ensure eTAG is set.
+            if current_etag is None:
+                current_etag = generate_etag()
+            row, ref = _serialize_attr(exec_id, task_id, attr_name, value, current_etag)
             context._attr_refs[attr_name] = ref
             rows.append(row)
         else:
             # Unchanged: carry forward the existing ref ; no new file, same disk path.
-            ref = context._attr_refs.get(attr_name)
-
-            if ref is not None:
-                rows.append({
-                    "task_id": task_id,
-                    "attr_name": attr_name,
-                    "sha": current_sha,
-                    "disk_ref": ref["disk_ref"],
-                    "inline_val": ref["inline"],
-                })
-            else:
-                # ref missing (e.g. type mismatch between DB round-trip and Python object
-                # caused entry_sha to be computed on a different representation).
-                # Serialize now to establish the ref; will be stable from next task onward.
-                row, ref = _serialize_attr(exec_id, task_id, attr_name, value, current_sha)
-                context._attr_refs[attr_name] = ref
-                rows.append(row)
+            ref = context._attr_refs[attr_name]
+            rows.append({
+                "task_id": task_id,
+                "attr_name": attr_name,
+                "eTAG": current_etag,
+                "sha": ref.get("sha"),  # None for inline attrs
+                "disk_ref": ref["disk_ref"],
+                "inline_val": ref["inline"],
+            })
 
     return rows
