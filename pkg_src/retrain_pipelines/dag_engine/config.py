@@ -104,9 +104,9 @@ class Config:
         Config._ensure_dir(path)
         return path.rstrip(os.sep) + os.sep
 
-    ################################################################
-    # RP_WEB_SERVER_URL / RP_WEB_SERVER_PORT / RP_GRPC_SERVER_PORT #
-    ################################################################
+    ##########################################
+    # RP_WEB_SERVER_URL / RP_WEB_SERVER_PORT #
+    ##########################################
     @staticmethod
     def get_web_server_port() -> int:
         """
@@ -116,16 +116,6 @@ class Config:
         otherwise defaults to "5001".
         """
         return int(os.environ.get("RP_WEB_SERVER_PORT", "5001"))
-
-    @staticmethod
-    def get_grpc_server_port() -> int:
-        """
-        Return the gRPC server port.
-
-        The value is taken from the environment variable RP_GRPC_SERVER_PORT if set,
-        otherwise defaults to "50051".
-        """
-        return int(os.environ.get("RP_GRPC_SERVER_PORT", "50051"))
 
     @staticmethod
     def get_web_server_url() -> str:

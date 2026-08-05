@@ -407,3 +407,56 @@ async def test_multiplexed_event_generator_task_trace_real():
             await task
 
         assert len(events.task_trace_subscribers) == 0
+
+
+@pytest.mark.asyncio
+async def test_multiplexed_event_generator_unknown_event():
+    client_info = ClientInfo(ip="127.0.0.1", port=8000, url="/sse")
+    gen = events.multiplexed_event_generator(client_info)
+
+    async def run_gen():
+        async for _ in gen:
+            pass
+
+    task = asyncio.create_task(run_gen())
+    await asyncio.sleep(0.05)
+
+    q = events.new_exec_subscribers[0][0]
+    await q.put({"id": 1})
+
+    # Patch builtins.next to return an unhandled event key, forcing
+    # the generator to hit the branch that raises an exception for
+    # unimplemented SSE event types.
+    with patch("builtins.next", return_value="unknownEvent"):
+        await asyncio.sleep(0.1)
+
+    assert task.done()
+    with pytest.raises(
+        Exception, match="handling of SSE event 'unknownEvent' not implemented."
+    ):
+        await task
+
+
+@pytest.mark.asyncio
+async def test_multiplexed_event_generator_exec_subscriber_removal_failure():
+    client_info = ClientInfo(ip="127.0.0.1", port=8000, url="/sse")
+    gen = events.multiplexed_event_generator(client_info)
+
+    async def run_gen():
+        async for _ in gen:
+            pass
+
+    task = asyncio.create_task(run_gen())
+    await asyncio.sleep(0.05)
+
+    # Manually clear execution subscribers to force the exception handling
+    # branch in the generator's finally block when it is cancelled.
+    events.new_exec_subscribers.clear()
+    events.exec_end_subscribers.clear()
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert len(events.new_exec_subscribers) == 0
+    assert len(events.exec_end_subscribers) == 0

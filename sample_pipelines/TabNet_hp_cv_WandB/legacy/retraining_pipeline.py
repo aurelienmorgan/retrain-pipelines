@@ -345,7 +345,7 @@ class TabNetHpCvWandbFlow(FlowSpec):
             buckets,
             grouped_features,
             is_training=True,
-            local_path=self.serving_artifacts_local_folder,
+            path=self.serving_artifacts_local_folder,
         )
         self.scaler = scaler  # <= to artifact store
         self.encoder = encoder  # <= to artifact store
@@ -1014,12 +1014,20 @@ class TabNetHpCvWandbFlow(FlowSpec):
             create_requirements(
                 self.serving_artifacts_local_folder,
                 exclude=[
-                    "matplotlib",
-                    "pillow",  # version conflict
-                    # quick fix
-                    "torch",  # already present
-                    # in the torchserve
-                    # Docker base image
+                    "alembic", "apsw", "click", "contourpy",
+                    "fastcore", "fastlite", "fonttools",
+                    "greenlet", "ipy.*",
+                    "jsonschema", "jupyter_.*", "kiwisolver",
+                    "markdown-it-py", "matplotlib",
+                    "pillow", "platformdirs",
+                    "python-.*", "referencing", "regex",
+                    "rpds-py", "scipy", "starlette",
+                    "tenacity", "uvicorn", "websockets",
+                    "wsproto", "urllib3",
+                    ".*retrain_pipelines.*",  # version conflicts
+                    #                           quick fixes (for all of the above)
+                    "torch",  # already present in the torchserve
+                    #           Docker base image
                 ],
             )
 

@@ -163,7 +163,7 @@ def _wait_for_server(url, timeout=30, interval=0.25):
     return False
 
 
-def _webconsole_start_notebook(port: int, grpc_port: int) -> None:
+def _webconsole_start_notebook(port: int) -> None:
     """Start a Notebook-friendly WebConsole instance.
 
     also :
@@ -177,8 +177,6 @@ def _webconsole_start_notebook(port: int, grpc_port: int) -> None:
     ----------
     port : int
         port to bind the web server on
-    grpc_port : int
-        port to bind to the grpc server
     """
     from . import main as _main
     from .utils.execution.events import reset_for_restart as exec_reset_for_restart
@@ -232,7 +230,7 @@ def _webconsole_start_notebook(port: int, grpc_port: int) -> None:
         logging.getLogger().addHandler(_live_handler)
 
     # start server (_logger_controller.activate() runs inside here)
-    _main._webconsole_start(port=port, grpc_port=grpc_port)
+    _main._webconsole_start(port=port)
 
     # wait for uvicorn dictConfig to finish (it wipes handlers)
     time.sleep(1.5)
@@ -352,8 +350,6 @@ def _webconsole_start_notebook(port: int, grpc_port: int) -> None:
         def _cleanup_on_shutdown():
             if _main._server_thread:
                 _main._server_thread.join()
-            if _main._grpc_thread:
-                _main._grpc_thread.join()
             _write_termination_line()
             logging.getLogger().removeHandler(_live_handler)
             _live_handler.close()
@@ -402,23 +398,6 @@ def _webconsole_shutdown_notebook():
             ctypes.c_ulong(_main._server_thread.ident), ctypes.py_object(SystemExit)
         )
         _main._server_thread.join(timeout=5)
-
-    # uvicorn's shutdown_event never fires
-    # in the force-kill path above,
-    # so the gRPC server must be stopped explicitly
-    if _main._grpc_server:
-        _main._grpc_server.stop(grace=5.0)
-
-    if _main._grpc_thread and _main._grpc_thread.is_alive():
-        _main._grpc_thread.join(timeout=5)
-        if _main._grpc_thread.is_alive():
-            import ctypes
-
-            ctypes.pythonapi.PyThreadState_SetAsyncExc(
-                ctypes.c_ulong(_main._grpc_thread.ident), ctypes.py_object(SystemExit)
-            )
-            _main._grpc_thread.join(timeout=5)
-    _main._grpc_server = None
 
     _main.release_server_lock()
     _main._process_has_server = False

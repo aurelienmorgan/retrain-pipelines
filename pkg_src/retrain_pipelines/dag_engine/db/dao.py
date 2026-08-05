@@ -6,16 +6,12 @@ from datetime import date, datetime
 from functools import lru_cache
 from uuid import UUID
 
-import grpc
 import requests
-from google.protobuf.timestamp_pb2 import Timestamp
 from sqlalchemy import QueuePool, Uuid, and_, case, create_engine, desc, event, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import aliased, object_session, scoped_session, sessionmaker
 
 from ..config import Config
-from ..grpc_client import GrpcClient
-from .grpc import task_trace_pb2
 from .model import (
     Base,
     Execution,
@@ -1207,45 +1203,41 @@ def after_task_update(mapper, connection, target):
 
 # ------
 
-""" task-traces with gRPC streaming
+""" task-traces with SSE streaming
 
-Each trace individual-streams immediately
-to WebConsole via gRPC.
+Each trace individual-streams immediately :
+    internal DAG-engine => DB listeners => SSE streaming server
+        => WebConsole server => WebConsole web clients
 """
 
 
 @event.listens_for(TaskTrace, "after_insert")
 def after_insert_task_trace_listener(mapper, connection, target):
-    """Notify WebConsole server via gRPC from DAG-engine.
+    """Notify WebConsole server via SSE from DAG-engine.
 
     Each trace is sent immediately as it arrives.
     """
-    if GrpcClient.initiated():
-        # Convert timestamp to protobuf Timestamp
-        ts = Timestamp()
-        if isinstance(target.timestamp, datetime):
-            ts.FromDatetime(target.timestamp)
+    # Inline import: avoids circular dependency
+    # (sse_streaming_server.server => dao would form a cycle at module level).
+    from ..sse_streaming_server import server as _sse_server
+    from ..sse_streaming_server.model import TraceData
 
-        # Create protobuf message with proper types
-        trace = task_trace_pb2.TaskTrace(
+    if _sse_server.was_started():
+        trace_data = TraceData(
             id=target.id,
             task_id=target.task_id,
-            timestamp=ts,
+            timestamp=int(target.timestamp.timestamp() * 1_000)
+            if isinstance(target.timestamp, datetime)
+            else int(target.timestamp),
             microsec=target.microsec,
             microsec_idx=target.microsec_idx,
             content=target.content,
             is_err=target.is_err,
         )
-
-        try:
-            GrpcClient.stub().SendTrace(trace)
-        except grpc.RpcError as e:
-            logger.error(f"gRPC error: '{target.content}' - {e.code()} - {e.details()}")
-        except Exception as ex:
-            logger.error(f"Error sending trace: {ex}")
+        _sse_server.publish_trace(trace_data)
     else:
-        # logger.info(
-        # "WebConsole apparently not running " +
-        # f"({Config.get_web_server_url()})"
-        # )
+        # typically, if WebConsole was down
+        # when the ongoing execution was launched,
+        # runtime didn't  request for
+        # the herein sse streaming server to be started.
         pass

@@ -170,7 +170,6 @@ def webconsole_start_cli():
 
     parser = argparse.ArgumentParser(prog="webconsole_start")
     parser.add_argument("-p", "--port", type=int, default=None)
-    parser.add_argument("-gp", "--grpc-port", type=int, default=None, dest="grpc_port")
     parser.add_argument(
         "-f",
         "--foreground",
@@ -183,7 +182,6 @@ def webconsole_start_cli():
     from . import main as _main
 
     port = args.port or Config.get_web_server_port()
-    grpc_port = args.port or Config.get_grpc_server_port()
 
     pid_file = _pid_file()
     if os.path.exists(pid_file):
@@ -201,20 +199,18 @@ def webconsole_start_cli():
 
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as _s:
         _s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        ports_list = [port, grpc_port]
-        for verify_port in ports_list:
-            if _s.connect_ex(("127.0.0.1", verify_port)) == 0:
-                print(
-                    f"\N{CROSS MARK} Can't start a WebConsole instance on ports "
-                    f"{ports_list}, port {verify_port} is not available."
-                )
-                return
+        if _s.connect_ex(("127.0.0.1", port)) == 0:
+            print(
+                f"\N{CROSS MARK} Can't start a WebConsole instance on port "
+                f"{port}, it is not available."
+            )
+            return
 
     if args.foreground:
         with open(pid_file, "w") as f:
             f.write(f"{os.getpid()}:{port}")
         atexit.register(lambda: os.unlink(pid_file) if os.path.exists(pid_file) else None)
-        _main.webconsole_start(port=port, grpc_port=grpc_port)
+        _main.webconsole_start(port=port)
         print(f"\N{WHITE HEAVY CHECK MARK} WebConsole successfully started on port {port}.")
         try:
             while True:

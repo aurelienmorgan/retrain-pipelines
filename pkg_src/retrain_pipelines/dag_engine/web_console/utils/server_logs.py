@@ -327,8 +327,6 @@ class AccessLogEntry(BaseModel):
             "ws": "\N{ELECTRIC PLUG}",
             # server-side event, one-way, server-to-client streaming
             "sse": "\N{SATELLITE ANTENNA}",
-            # gRPC, bidirectional RPC communication
-            "grpc": "\N{UP DOWN ARROW}",
         }.get(
             self.method,
             "\N{TWISTED RIGHTWARDS ARROWS}",
@@ -420,8 +418,6 @@ class AccessLogEntry(BaseModel):
             if self.method == "ws"
             else "Server-Side Event"
             if self.method == "sse"
-            else "gRPC"
-            if self.method == "grpc"
             else f"{self.status_code} - {HTTPStatus(self.status_code).phrase}",
         )
 

@@ -45,13 +45,30 @@ class TestExecution:
         ex.__dict__["_start_timestamp"] = datetime(2024, 1, 1)
         assert ex.start_timestamp.tzinfo == timezone.utc
 
+    def test_start_timestamp_setter(self):
+        ex = self._make()
+        new_start = datetime(2024, 6, 2, 12, 0, 0, tzinfo=timezone.utc)
+        ex.start_timestamp = new_start
+        assert ex.start_timestamp == new_start
+
     def test_end_timestamp_none_by_default(self):
         assert self._make().end_timestamp is None
+
+    def test_end_timestamp_aware_preserved(self):
+        end = _NOW + timedelta(hours=1)
+        ex = self._make(_end_timestamp=end)
+        assert ex.end_timestamp == end
 
     def test_end_timestamp_naive_gets_utc(self):
         ex = self._make(_end_timestamp=datetime(2024, 6, 1, 15))
         # Exercise the end_timestamp setter
         new_end = datetime(2024, 6, 1, 16, tzinfo=timezone.utc)
+        ex.end_timestamp = new_end
+        assert ex.end_timestamp == new_end
+
+    def test_end_timestamp_setter(self):
+        ex = self._make()
+        new_end = datetime(2024, 6, 2, 13, 0, 0, tzinfo=timezone.utc)
         ex.end_timestamp = new_end
         assert ex.end_timestamp == new_end
 
@@ -110,6 +127,17 @@ class TestExecutionExt:
     def test_success_defaults_none(self):
         assert self._make().success is None
 
+    def test_init_with_datetime_objects(self):
+        # Pass datetime objects directly to exercise the non-string branch
+        # in ExecutionExt.__init__ property handling.
+        ex = self._make(
+            success=True,
+            start_timestamp=_NOW,
+            end_timestamp=_NOW + timedelta(hours=1),
+        )
+        assert ex.start_timestamp == _NOW
+        assert ex.end_timestamp == _NOW + timedelta(hours=1)
+
     def test_to_dict_has_name(self):
         ex = self._make(end_timestamp=None)
         # Set the private attribute to a string to exercise the datetime‑string
@@ -118,6 +146,14 @@ class TestExecutionExt:
         d = ex.to_dict()
         assert d["name"] == "p"
         assert d["end_timestamp"] is None
+
+    def test_to_dict_non_underscore_datetime(self):
+        # Dynamically add a non-underscore attribute with a datetime value
+        # to cover the branch in to_dict that serializes non-underscore datetimes
+        ex = self._make()
+        ex.my_date = _NOW
+        d = ex.to_dict()
+        assert d["my_date"] == _NOW.isoformat()
 
     def test_to_dict_timestamps_serialised_as_str(self):
         d = self._make().to_dict()
@@ -135,6 +171,25 @@ class TestExecutionExt:
             assert d["my_prop"] is None
         finally:
             del Execution.my_prop
+
+    def test_to_dict_no_column_info_with_value(self):
+        ex = self._make()
+        # Add a property with no corresponding DB column and a non-None value
+        Execution.my_prop = property(lambda self: self._my_prop)
+        ex._my_prop = "custom_value"
+        try:
+            d = ex.to_dict()
+            assert d["my_prop"] == "custom_value"
+        finally:
+            del Execution.my_prop
+
+    def test_to_dict_non_datetime_value(self):
+        # Set the private attribute to a non-datetime, non-string value
+        # to cover the branch in to_dict that assigns the value directly
+        ex = self._make()
+        ex._start_timestamp = 12345
+        d = ex.to_dict()
+        assert d["start_timestamp"] == 12345
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -191,6 +246,10 @@ class TestTask:
             **{"tasktype_uuid": _UUID, "exec_id": 1, "_start_timestamp": _NOW, **kw}
         )
 
+    def test_start_timestamp_aware_preserved(self):
+        t = self._make()
+        assert t.start_timestamp == _NOW
+
     def test_start_timestamp_naive_gets_utc(self):
         t = self._make(_start_timestamp=datetime(2024, 1, 1))
         assert t.start_timestamp.tzinfo == timezone.utc
@@ -240,16 +299,15 @@ class TestTask:
 
 class TestTaskExt:
     def _make(self, **kw):
-        return TaskExt(
-            **{
-                "tasktype_uuid": _UUID,
-                "exec_id": 1,
-                "_start_timestamp": _NOW,
-                "name": "step",
-                "is_parallel": False,
-                **kw,
-            }
-        )
+        defaults = {
+            "tasktype_uuid": _UUID,
+            "exec_id": 1,
+            "_start_timestamp": _NOW,
+            "name": "step",
+            "is_parallel": False,
+        }
+        defaults.update(kw)
+        return TaskExt(**defaults)
 
     def test_name_propagated(self):
         # Include all optional fields to exercise every pop in TaskExt.__init__,
@@ -286,6 +344,32 @@ class TestTaskExt:
     def test_rejects_multiple_positional(self):
         with pytest.raises(TypeError):
             TaskExt("a", "b")
+
+    def test_dict_constructor(self):
+        te = TaskExt(
+            {
+                "id": "5",
+                "tasktype_uuid": str(_UUID),
+                "exec_id": 1,
+                "start_timestamp": "2024-06-01T12:00:00+00:00",
+                "end_timestamp": "2024-06-01T13:00:00+00:00",
+                "failed": False,
+                "name": "my_task",
+                "order": 5,
+                "docstring": "docs",
+                "ui_css": {"color": "blue"},
+                "is_parallel": True,
+                "merge_func": {"type": "concat"},
+                "taskgroup_uuid": _UUID,
+            }
+        )
+        assert te.name == "my_task"
+        assert te.order == 5
+        assert te.docstring == "docs"
+        assert te.ui_css == {"color": "blue"}
+        assert te.is_parallel is True
+        assert te.merge_func == {"type": "concat"}
+        assert te.taskgroup_uuid == _UUID
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -370,6 +454,12 @@ class TestTaskTrace:
         tt = self._make(timestamp="2024-06-01T12:00:00Z")
         assert tt.timestamp.tzinfo is not None
 
+    def test_accepts_naive_iso_string(self):
+        # Covers the branch where a naive ISO string is parsed and
+        # explicitly assigned UTC tzinfo.
+        tt = self._make(timestamp="2024-06-01T12:00:00")
+        assert tt.timestamp.tzinfo == timezone.utc
+
     def test_rejects_malformed_string(self):
         with pytest.raises(ValueError):
             self._make(timestamp="not-a-date")
@@ -396,7 +486,7 @@ class TestTaskTrace:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TaskContextAttr
+#  TaskContextAttr
 # ══════════════════════════════════════════════════════════════════════════════
 class TestTaskContextAttr:
     def test_inline_repr(self):

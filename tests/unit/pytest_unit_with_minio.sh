@@ -24,4 +24,4 @@ until curl -sf http://localhost:9000/minio/health/live >/dev/null; do
   sleep 1
 done
 
-pytest tests/unit --cov=pkg_src/retrain_pipelines/dag_engine --cov-report=term-missing --cov-config=pkg_src/pyproject.toml
+pytest tests/unit --timeout=120 --cov=pkg_src/retrain_pipelines/dag_engine --cov-report=term-missing --cov-config=pkg_src/pyproject.toml

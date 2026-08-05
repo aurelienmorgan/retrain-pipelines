@@ -11,6 +11,8 @@ from concurrent.futures import as_completed
 from datetime import datetime, timezone
 from typing import Any
 
+import requests
+
 from .config import Config
 from .core import (
     DAG,
@@ -26,9 +28,9 @@ from .db.dao import DAO
 # from concurrent.futures import ThreadPoolExecutor as RetrainPipelinesExecutor
 # from .hybrid_pool_executor import CloudpickleProcessPoolExecutor as RetrainPipelinesExecutor
 # from concurrent.futures import ProcessPoolExecutor as RetrainPipelinesExecutor
-from .grpc_client import GrpcClient
 from .hybrid_pool_executor import HybridPoolExecutor as RetrainPipelinesExecutor
 from .rp_logging import RichLoggingController
+from .sse_streaming_server import server as sse_streaming_server
 from .stores.params_store import value_to_storable
 
 logger = logging.getLogger(__name__)
@@ -562,38 +564,30 @@ def _execute_task(
     # time.sleep(1)  # Wait before checking again
     # print("Subprocess count is now under or equal to CPU cores.")
 
-    # within the task process, init gRPC connection
-    # (for task-traces streaming to WebConsole server)
-    GrpcClient.init()
-    try:
-        task_id = None
-        if t.merge_func:
-            task_id, merged = t.merge_func(
-                list(parent_results.values())[0], rank=rank, exec_id=exec_id
-            )
-            parent_results = TaskPayload({t.parents[0].name: merged})
+    task_id = None
+    if t.merge_func:
+        task_id, merged = t.merge_func(list(parent_results.values())[0], rank=rank, exec_id=exec_id)
+        parent_results = TaskPayload({t.parents[0].name: merged})
 
-            t.log.info(
-                f"[#FFFFE0]`{t.name}{rank if rank else ''} merged "
-                f" {t.merge_func.__name__}(parent_results) :\n"
-                f"Inputs :\n"
-                f"  \N{BULLET} {str(parent_results)}[/]"
-            )
+        t.log.info(
+            f"[#FFFFE0]`{t.name}{rank if rank else ''} merged "
+            f" {t.merge_func.__name__}(parent_results) :\n"
+            f"Inputs :\n"
+            f"  \N{BULLET} {str(parent_results)}[/]"
+        )
 
-        if parent_results._data:
-            _, result = (
-                t.func(parent_results, rank=rank, exec_id=exec_id, task_id=task_id)
-                if rank
-                else t.func(parent_results, exec_id=exec_id, task_id=task_id)
-            )
-        else:
-            _, result = (
-                t.func(rank=rank, exec_id=exec_id, task_id=task_id)
-                if rank
-                else t.func(exec_id=exec_id, task_id=task_id)
-            )
-    finally:
-        GrpcClient.shutdown()
+    if parent_results._data:
+        _, result = (
+            t.func(parent_results, rank=rank, exec_id=exec_id, task_id=task_id)
+            if rank
+            else t.func(parent_results, exec_id=exec_id, task_id=task_id)
+        )
+    else:
+        _, result = (
+            t.func(rank=rank, exec_id=exec_id, task_id=task_id)
+            if rank
+            else t.func(exec_id=exec_id, task_id=task_id)
+        )
 
     return result
 
@@ -768,10 +762,30 @@ def _execute(dag: DAG, params: dict[str, Any] | None = None) -> tuple[TaskPayloa
     assert context is not None
 
     # actual DAG execution
+    _sse_started = False
     try:
         dag.init()
         exec_id = context._params.get("exec_id")
         assert exec_id is not None
+
+        # Start SSE-streaming only if WebConsole is reachable.
+        # The HEAD probe is intentionally fire-and-forget on failure:
+        # traces are still written by tasks workers to DB, regardless.
+        try:
+            requests.head(Config.get_web_server_url(), timeout=0.5)
+        except requests.exceptions.RequestException:
+            logger.info(
+                "WebConsole not reachable at "
+                f"{Config.get_web_server_url()} - task-trace streaming disabled."
+            )
+        else:
+            sse_server_url = sse_streaming_server.start()
+            _sse_started = True
+            requests.post(
+                f"{Config.get_web_server_url()}/register_sse_subscriber",
+                json={"sse_server_url": sse_server_url},
+                timeout=2.0,
+            ).raise_for_status()
 
         # Serialize execution-time overrides and inject each as an "override" key
         # inside its param's dict in the executions.params JSON column.
@@ -878,6 +892,8 @@ def _execute(dag: DAG, params: dict[str, Any] | None = None) -> tuple[TaskPayloa
 
         # Flush all pending traces before marking complete
         get_trace_buffer().stop()
+        if _sse_started:
+            sse_streaming_server.stop()
 
         if exec_id is not None:
             DAG.mark_complete(exec_id)

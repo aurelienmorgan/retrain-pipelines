@@ -1,8 +1,10 @@
 import asyncio
+import json
 import logging
 import os
 from uuid import UUID
 
+import httpx
 from fasthtml.common import (
     H1,
     H2,
@@ -35,9 +37,12 @@ from ...config import Config
 from ...db.dao import AsyncDAO
 from ...db.model import TaskExt, TaskGroup
 from ..utils import ClientInfo
+from ..utils.execution import events as execution_events
 from ..utils.execution.events import execution_number, multiplexed_event_generator
 from ..utils.execution.gantt_chart import draw_chart
 from .page_template import page_layout
+
+logger = logging.getLogger(__name__)
 
 
 async def get_execution_dag_elements_lists(
@@ -125,7 +130,49 @@ async def get_execution_elements_lists(
     return execution_tasks_list, execution_taskgroups_list
 
 
+async def _consume_sse_traces(sse_server_url: str):
+    """Connect to DAG-engine SSE server and relay task traces to browser subscribers.
+
+    Runs as a background asyncio task for the lifetime of one DAG execution.
+    Exits naturally when the DAG-engine closes its SSE server.
+    """
+    url = f"{sse_server_url}/tasktraces"
+    try:
+        async with httpx.AsyncClient() as client:
+            async with client.stream("GET", url, timeout=None) as response:
+                async for line in response.aiter_lines():
+                    if not line.startswith("data: "):
+                        continue
+                    try:
+                        trace_dict = json.loads(line[6:])
+                    except Exception:
+                        continue
+                    for q, _ in list(execution_events.task_trace_subscribers):
+                        q.put_nowait(trace_dict)
+    except httpx.RemoteProtocolError:
+        # Expected: SSE server closed the connection when the execution ended.
+        logger.debug(f"SSE consumer: server closed stream at {url}")
+    except Exception as ex:
+        logger.warning(f"SSE consumer disconnected unexpectedly from {url}: {ex}")
+
+
 def register(app, rt, prefix=""):
+    @rt(f"{prefix}/register_sse_subscriber", methods=["POST"])
+    async def register_sse_subscriber(request: Request):
+        """Register WebConsole as a subscriber to the DAG-engine SSE trace stream.
+
+        Called by the DAG-engine at execution start.
+        Spawns a background task that consumes the SSE stream
+        and fans out each trace to all active browser subscribers.
+        """
+        body = await request.json()
+        sse_server_url = body.get("sse_server_url")
+        if not sse_server_url:
+            return JSONResponse({"error": "missing sse_server_url"}, status_code=400)
+
+        asyncio.create_task(_consume_sse_traces(sse_server_url))
+        return JSONResponse({"ok": True})
+
     @rt(f"{prefix}/dag_rendering", methods=["GET"])
     async def dag_rendering(request: Request):
         execution_id = request.query_params.get("id")

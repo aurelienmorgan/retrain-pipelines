@@ -42,6 +42,23 @@ def _null_session():
     return mock_session
 
 
+@pytest.fixture
+def started_sse_server():
+    """Start the real SSE streaming server for the test scope.
+
+    Relies on the session-scoped MinIO bucket provided by conftest
+    for any persistence the server performs.  Teardown stops the
+    server so that subsequent tests see ``was_started() == False``.
+    """
+    from retrain_pipelines.dag_engine.sse_streaming_server import server as sse_server
+
+    sse_server.start()
+    try:
+        yield
+    finally:
+        sse_server.stop()
+
+
 # ==============================================================================
 # _truncate_to_millis
 # ==============================================================================
@@ -1298,144 +1315,75 @@ class TestEventListeners:
                 after_task_update(None, conn_mock, task_orm)
         session.close()
 
-    def test_after_insert_task_trace_grpc_sends_when_initiated(self):
-        from retrain_pipelines.dag_engine.db.dao import after_insert_task_trace_listener
+    def test_after_insert_task_trace_skips_when_sse_server_not_started(self):
+        """Cover the no-op branch: SSE server has not been started.
 
-        target = MagicMock(spec=TaskTrace)
-        target.id = 1
-        target.task_id = 1
-        target.timestamp = _NOW
-        target.microsec = 0
-        target.microsec_idx = 1
-        target.content = "msg"
-        target.is_err = False
-
-        stub_mock = MagicMock()
-        with (
-            patch(
-                "retrain_pipelines.dag_engine.db.dao.GrpcClient.initiated",
-                return_value=True,
-            ),
-            patch(
-                "retrain_pipelines.dag_engine.db.dao.GrpcClient.stub",
-                return_value=stub_mock,
-            ),
-        ):
-            after_insert_task_trace_listener(None, None, target)
-        stub_mock.SendTrace.assert_called_once()
-
-    def test_after_insert_task_trace_skips_when_not_initiated(self):
-        from retrain_pipelines.dag_engine.db.dao import after_insert_task_trace_listener
-
-        target = MagicMock(spec=TaskTrace)
-        target.timestamp = _NOW
-
-        with patch(
-            "retrain_pipelines.dag_engine.db.dao.GrpcClient.initiated",
-            return_value=False,
-        ):
-            after_insert_task_trace_listener(None, None, target)
-
-    def test_after_insert_task_trace_handles_grpc_error(self):
-        import grpc
-        from retrain_pipelines.dag_engine.db.dao import after_insert_task_trace_listener
-
-        target = MagicMock(spec=TaskTrace)
-        target.id = 1
-        target.task_id = 1
-        target.timestamp = _NOW
-        target.microsec = 0
-        target.microsec_idx = 1
-        target.content = "msg"
-        target.is_err = False
-
-        stub_mock = MagicMock()
-        rpc_error = MagicMock()
-        rpc_error.code.return_value = grpc.StatusCode.UNAVAILABLE
-        rpc_error.details.return_value = "unavailable"
-        stub_mock.SendTrace.side_effect = rpc_error
-
-        with (
-            patch(
-                "retrain_pipelines.dag_engine.db.dao.GrpcClient.initiated",
-                return_value=True,
-            ),
-            patch(
-                "retrain_pipelines.dag_engine.db.dao.GrpcClient.stub",
-                return_value=stub_mock,
-            ),
-        ):
-            after_insert_task_trace_listener(None, None, target)
-
-    def test_after_insert_task_trace_handles_generic_exception(self):
-        from retrain_pipelines.dag_engine.db.dao import after_insert_task_trace_listener
-
-        target = MagicMock(spec=TaskTrace)
-        target.id = 1
-        target.task_id = 1
-        target.timestamp = _NOW
-        target.microsec = 0
-        target.microsec_idx = 1
-        target.content = "msg"
-        target.is_err = False
-
-        stub_mock = MagicMock()
-        stub_mock.SendTrace.side_effect = RuntimeError("unexpected")
-
-        with (
-            patch(
-                "retrain_pipelines.dag_engine.db.dao.GrpcClient.initiated",
-                return_value=True,
-            ),
-            patch(
-                "retrain_pipelines.dag_engine.db.dao.GrpcClient.stub",
-                return_value=stub_mock,
-            ),
-        ):
-            after_insert_task_trace_listener(None, None, target)
-
-    def test_after_insert_task_trace_grpc_error_logs_details(self, capture_log):
-        import grpc
-        from retrain_pipelines.dag_engine.db.dao import after_insert_task_trace_listener
-
-        target = MagicMock(spec=TaskTrace)
-        target.id = 1
-        target.task_id = 1
-        target.timestamp = _NOW
-        target.microsec = 0
-        target.microsec_idx = 1
-        target.content = "boom_msg"
-        target.is_err = True
-
-        class FakeRpcError(grpc.RpcError):
-            def code(self):
-                return grpc.StatusCode.UNAVAILABLE
-
-            def details(self):
-                return "server down"
-
-        stub_mock = MagicMock()
-        stub_mock.SendTrace.side_effect = FakeRpcError()
-
-        with capture_log(
-            "retrain_pipelines.dag_engine.db.dao", level=logging.ERROR
-        ) as captured:
-            with (
-                patch(
-                    "retrain_pipelines.dag_engine.db.dao.GrpcClient.initiated",
-                    return_value=True,
-                ),
-                patch(
-                    "retrain_pipelines.dag_engine.db.dao.GrpcClient.stub",
-                    return_value=stub_mock,
-                ),
-            ):
-                after_insert_task_trace_listener(None, None, target)
-
-        assert any(
-            "boom_msg" in line and "server down" in line
-            for line in captured.getvalue().splitlines()
+        The listener imports the SSE server module, sees that
+        ``was_started()`` is False, and returns without building
+        a TraceData or calling ``publish_trace``.
+        """
+        from retrain_pipelines.dag_engine.db.dao import (
+            after_insert_task_trace_listener,
         )
+
+        target = MagicMock(spec=TaskTrace)
+        target.id = 1
+        target.task_id = 1
+        target.timestamp = _NOW
+        target.microsec = 0
+        target.microsec_idx = 1
+        target.content = "msg"
+        target.is_err = False
+
+        after_insert_task_trace_listener(None, None, target)
+
+    def test_after_insert_task_trace_publishes_when_sse_server_started(
+        self, started_sse_server
+    ):
+        """Cover the publish branch: SSE server is started.
+
+        The target carries a datetime timestamp, exercising the
+        datetime-to-epoch-millis conversion path inside TraceData
+        construction, followed by ``publish_trace``.
+        """
+        from retrain_pipelines.dag_engine.db.dao import (
+            after_insert_task_trace_listener,
+        )
+
+        target = MagicMock(spec=TaskTrace)
+        target.id = 2
+        target.task_id = 1
+        target.timestamp = _NOW
+        target.microsec = 0
+        target.microsec_idx = 1
+        target.content = "sse msg"
+        target.is_err = False
+
+        after_insert_task_trace_listener(None, None, target)
+
+    def test_after_insert_task_trace_with_non_datetime_timestamp(
+        self, started_sse_server
+    ):
+        """Cover the non-datetime timestamp branch inside the publish path.
+
+        When ``target.timestamp`` is not a datetime instance the listener
+        takes the ``int(target.timestamp)`` branch of the conditional
+        expression instead of the ``timestamp() * 1_000`` branch.
+        """
+        from retrain_pipelines.dag_engine.db.dao import (
+            after_insert_task_trace_listener,
+        )
+
+        target = MagicMock(spec=TaskTrace)
+        target.id = 3
+        target.task_id = 1
+        target.timestamp = 1717243200
+        target.microsec = 0
+        target.microsec_idx = 1
+        target.content = "int ts msg"
+        target.is_err = False
+
+        after_insert_task_trace_listener(None, None, target)
 
 
 # ==============================================================================
@@ -2132,7 +2080,7 @@ class TestAsyncDAOExecutionNumber:
 
     @pytest.mark.asyncio
     async def test_get_execution_number_not_found(self, async_dao, _null_session):
-        """Line 807: row is None => return None."""
+        """row is None => return None."""
         with patch.object(async_dao, "_get_session", return_value=_null_session):
             result = await async_dao.get_execution_number(99999)
         assert result is None

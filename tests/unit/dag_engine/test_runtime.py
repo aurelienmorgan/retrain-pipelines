@@ -1,3 +1,4 @@
+# test_runtime_1.py
 """
 Unit tests for retrain_pipelines.dag_engine.runtime.
 """
@@ -451,7 +452,7 @@ class TestUpdateInterruptedTasksInDb:
             assert task.failed is True
 
     def test_happy_path_flush_exception_absorbed(self, runtime_env, isolated_dao):
-        """Covers the except Exception block for h.flush() at the end (lines 163-164)."""
+        """Covers the except Exception block for h.flush() at the end of _update_interrupted_tasks_in_db."""
         handler = FailingFlushHandler()
         rt_logger = logging.getLogger(_RT)
         rt_logger.addHandler(handler)
@@ -478,7 +479,7 @@ class TestUpdateInterruptedTasksInDb:
             rt_logger.removeHandler(mock_handler)
 
     def test_dao_init_failure_flush_exception_absorbed(self, runtime_env, isolated_dao):
-        """Covers the except Exception block for h.flush() when DAO init fails (lines 141-142)."""
+        """Covers the except Exception block for h.flush() when DAO init fails."""
         handler = FailingFlushHandler()
         rt_logger = logging.getLogger(_RT)
         rt_logger.addHandler(handler)
@@ -819,7 +820,7 @@ class TestParallelInputCount:
 
 
 class TestExecuteTask:
-    """_execute_task calls GrpcClient.init/shutdown and t.func / t.merge_func."""
+    """_execute_task calls t.func / t.merge_func."""
 
     def test_task_without_parent_results(self, runtime_env, isolated_dao):
         t = task_T
@@ -1167,4 +1168,21 @@ class TestExecute:
         mock_registry.get_running_tasks.side_effect = lambda: next(states, {})
         with patch(f"{_RT}._task_registry", mock_registry):
             result, ctx_dump = execute(simple_dag)
+        assert result == "result"
+
+    def test_sse_started_when_webconsole_reachable(self, runtime_env, isolated_dao):
+        """Covers the branch where the WebConsole HEAD probe succeeds,
+        causing the real SSE streaming server to be started, registered
+        via POST, and later stopped in the finally block.
+
+        Only third-party ``requests`` is patched; the retrain_pipelines
+        SSE server runs for real to exercise its start/stop lifecycle.
+        """
+        fake_post_response = MagicMock()
+        fake_post_response.raise_for_status.return_value = None
+        with (
+            patch(f"{_RT}.requests.head", return_value=MagicMock()),
+            patch(f"{_RT}.requests.post", return_value=fake_post_response),
+        ):
+            result, _ = execute(simple_dag)
         assert result == "result"

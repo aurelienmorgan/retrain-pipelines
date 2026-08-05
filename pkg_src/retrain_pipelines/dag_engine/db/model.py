@@ -68,7 +68,7 @@ class Execution(Base):
 
     ui_css: Mapped[dict | None] = mapped_column(JSON)
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         # Support dict as the ONLY positional argument
         data = None
         if len(args) == 1 and isinstance(args[0], dict):
@@ -80,9 +80,9 @@ class Execution(Base):
             kwargs = {**data, **kwargs}
             kwargs["id"] = int(kwargs["id"])
             kwargs["docstring"] = str(kwargs["docstring"]) if "docstring" in kwargs else None
-            kwargs["_start_timestamp"] = parse_datetime(kwargs["start_timestamp"])
+            kwargs["_start_timestamp"] = parse_datetime(str(kwargs["start_timestamp"]))
             kwargs["_end_timestamp"] = (
-                parse_datetime(kwargs.get("end_timestamp"))
+                parse_datetime(str(kwargs.get("end_timestamp")))
                 if ("end_timestamp" in kwargs and kwargs.get("end_timestamp") is not None)
                 else None
             )
@@ -118,7 +118,7 @@ class ExecutionExt(Execution):
     """ NOT AN SQLALCHEMY CLASS """
     __mapper_args__ = {"polymorphic_identity": "task_ext"}
 
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs: Any) -> None:
         success = kwargs.pop("success", None)
 
         # Add underscore prefix for attributes with names
@@ -213,7 +213,7 @@ class TaskType(Base):
     taskgroup_uuid: Mapped[UUID | None] = mapped_column(Uuid)
     children: Mapped[list] = mapped_column(JSON)  # ARRAY(str(Uuid))
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         # Support dict as the ONLY positional argument
         data = None
         if len(args) == 1 and isinstance(args[0], dict):
@@ -291,7 +291,7 @@ class Task(Base):
         ),
     )
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         # Support dict as the ONLY positional argument
         data = None
         if len(args) == 1 and isinstance(args[0], dict):
@@ -302,9 +302,9 @@ class Task(Base):
         if data:
             kwargs = {**data, **kwargs}
             kwargs["id"] = int(kwargs["id"])
-            kwargs["_start_timestamp"] = parse_datetime(kwargs["start_timestamp"])
+            kwargs["_start_timestamp"] = parse_datetime(str(kwargs["start_timestamp"]))
             kwargs["_end_timestamp"] = (
-                parse_datetime(kwargs.get("end_timestamp"))
+                parse_datetime(str(kwargs.get("end_timestamp")))
                 if ("end_timestamp" in kwargs and kwargs.get("end_timestamp") is not None)
                 else None
             )
@@ -373,7 +373,7 @@ class TaskContextAttr(Base):
     # is the signal that the value lives on disk.
     inline_val: Mapped[Any] = mapped_column(JSON(none_as_null=True), nullable=True)
 
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs: Any) -> None:
         kwargs.pop("_sa_instance_state", None)
         super().__init__(**kwargs)
 
@@ -400,7 +400,7 @@ class TaskTrace(Base):
 
     task = relationship("Task", backref="traces")
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         # Support dict as the ONLY positional argument
         data = None
         if len(args) == 1 and isinstance(args[0], dict):
@@ -450,7 +450,18 @@ class TaskExt(Task):
     """ NOT AN SQLALCHEMY CLASS """
     __mapper_args__ = {"polymorphic_identity": "task_ext"}
 
-    def __init__(self, *args, **kwargs):
+    def __init__(
+        self,
+        *args: Any,
+        name: str | None = None,
+        order: int | None = None,
+        docstring: str | None = None,
+        ui_css: dict | None = None,
+        is_parallel: bool | None = None,
+        merge_func: dict | None = None,
+        taskgroup_uuid: UUID | None = None,
+        **kwargs: Any,
+    ) -> None:
         # Support dict as the ONLY positional argument
         data = None
         if len(args) == 1 and isinstance(args[0], dict):
@@ -461,13 +472,14 @@ class TaskExt(Task):
         if data:
             kwargs = {**data, **kwargs}
 
-        name = kwargs.pop("name", None)
-        order = kwargs.pop("order", None)
-        docstring = kwargs.pop("docstring", None)
-        ui_css = kwargs.pop("ui_css", None)
-        is_parallel = kwargs.pop("is_parallel", None)
-        merge_func = kwargs.pop("merge_func", None)
-        taskgroup_uuid = kwargs.pop("taskgroup_uuid", None)
+        # Use explicit arguments if provided, else pop from kwargs (for dict constructor)
+        name = kwargs.pop("name", name)
+        order = kwargs.pop("order", order)
+        docstring = kwargs.pop("docstring", docstring)
+        ui_css = kwargs.pop("ui_css", ui_css)
+        is_parallel = kwargs.pop("is_parallel", is_parallel)
+        merge_func = kwargs.pop("merge_func", merge_func)
+        taskgroup_uuid = kwargs.pop("taskgroup_uuid", taskgroup_uuid)
         # Remove SQLAlchemy internal attributes
         kwargs.pop("_sa_instance_state", None)
 
@@ -505,7 +517,7 @@ class TaskGroup(Base):
 
     elements: Mapped[list[str]] = mapped_column(JSON)  # ARRAY(str(Uuid))
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         # Support dict as the ONLY positional argument
         data = None
         if len(args) == 1 and isinstance(args[0], dict):

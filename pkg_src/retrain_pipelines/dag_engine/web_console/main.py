@@ -17,7 +17,6 @@ from ...utils.rich_logging import framed_rich_log_str
 from ..config import Config
 from ..rp_logging import RichLoggingController
 from . import api
-from .grpc_server import serve_grpc
 from .main_cli_utility import webconsole_shutdown_cli, webconsole_start_cli  # noqa: F401
 from .utils.server_logs import get_log_config, get_log_websocket_endpoint
 from .views import execution, home, server
@@ -33,9 +32,6 @@ _lock_socket = None
 _process_has_server = False
 _running_port = None
 _shutdown_event = threading.Event()
-
-_grpc_server = None
-_grpc_thread = None
 
 _logger_controller = RichLoggingController()
 
@@ -72,7 +68,7 @@ def release_server_lock():
             _lock_socket = None
 
 
-def _webconsole_start(port: int, grpc_port: int):
+def _webconsole_start(port: int):
     """Start a webconsole instance on the calling process.
 
     We disallow several webconsole instances
@@ -112,18 +108,16 @@ def _webconsole_start(port: int, grpc_port: int):
         )
         _logger_controller.deactivate()
         return
-    # check ports availability
+    # check port availability
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as _s:
         _s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        ports_list = [port, grpc_port]
-        for verify_port in ports_list:
-            if _s.connect_ex(("127.0.0.1", verify_port)) == 0:
-                logger.warning(
-                    f"\N{CROSS MARK} Can't start a WebConsole instance on ports "
-                    f"{ports_list}, port {verify_port} is not available."
-                )
-                _logger_controller.deactivate()
-                return
+        if _s.connect_ex(("127.0.0.1", port)) == 0:
+            logger.warning(
+                f"\N{CROSS MARK} Can't start a WebConsole instance on port "
+                f"{port}, it is not available."
+            )
+            _logger_controller.deactivate()
+            return
     ##################
 
     logger.info("\N{ROCKET} Starting server...")
@@ -144,35 +138,6 @@ def _webconsole_start(port: int, grpc_port: int):
     # Create FastHTML app and route
     app = FastHTML(exception_handlers=exception_handlers, exts="ws")
     ##############
-
-    # ########### #
-    # gRPC server #
-    # ########### #
-    @app.on_event("startup")
-    async def startup_event():
-        global _grpc_thread, _grpc_server
-
-        # Start gRPC server in background
-        def run_grpc():
-            global _grpc_server
-            _grpc_server = serve_grpc(grpc_port=grpc_port)
-            _grpc_server.wait_for_termination()
-
-        _grpc_thread = threading.Thread(target=run_grpc, daemon=True)
-        _grpc_thread.start()
-
-        server_url = f"http://{display_host}:{grpc_port}"
-        logger.info(f"\N{GLOWING STAR} gRPC server thread started at {server_url}")
-
-    @app.on_event("shutdown")
-    async def shutdown_event():
-        global _grpc_server
-
-        if _grpc_server:
-            _grpc_server.stop(grace=5.0)
-        logger.info("\N{WHITE HEAVY CHECK MARK} gRPC server stopped")
-
-    ###############
 
     # ################### #
     # routes registration #
@@ -313,7 +278,7 @@ def _webconsole_shutdown():
     _server = None
 
 
-def webconsole_start(port=None, grpc_port=None):
+def webconsole_start(port=None):
     """Start a WebConsole instance on the calling process.
 
     We disallow several webconsole instances
@@ -323,15 +288,12 @@ def webconsole_start(port=None, grpc_port=None):
     if port is None:
         port = Config.get_web_server_port()
 
-    if grpc_port is None:
-        grpc_port = Config.get_grpc_server_port()
-
     if in_notebook():
         from .main_notebook import _webconsole_start_notebook
 
-        _webconsole_start_notebook(port, grpc_port)
+        _webconsole_start_notebook(port)
     else:
-        _webconsole_start(port, grpc_port)
+        _webconsole_start(port)
 
 
 def webconsole_shutdown():
@@ -347,21 +309,15 @@ def webconsole_shutdown():
 
 
 if __name__ == "__main__":  # pragma: no cover
-    # override port via command line: python main.py 5002 50052
+    # override port via command line: python main.py 5002
     if len(sys.argv) > 1:
         try:
             port = int(sys.argv[1])
         except ValueError:
             logger.error(f"\N{CROSS MARK} Invalid port: {sys.argv[1]}")
             sys.exit(1)
-        if len(sys.argv) > 2:
-            try:
-                grpc_port = int(sys.argv[2])
-            except ValueError:
-                logger.error(f"\N{CROSS MARK} Invalid port: {sys.argv[1]}")
-                sys.exit(1)
 
-    webconsole_start(port=port, grpc_port=grpc_port)
+    webconsole_start(port=port)
     logger.info(
         f"\N{GLOBE WITH MERIDIANS} Visit http://localhost:{port}/web_server to view server logs"
     )

@@ -1,6 +1,8 @@
+import asyncio
 import boto3
-import os
+import httpx
 import json
+import os
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock, mock_open
 from uuid import uuid4
@@ -13,6 +15,7 @@ from fasthtml.common import (
     StreamingResponse,
 )
 
+from retrain_pipelines.dag_engine.web_console.utils import ClientInfo
 from retrain_pipelines.dag_engine.web_console.views import execution as exec_module
 from retrain_pipelines.dag_engine.web_console.views.execution import (
     get_execution_dag_elements_lists,
@@ -151,9 +154,155 @@ class TestGetExecutionElementsLists:
 
 
 # =============================================================================
+# Tests for _consume_sse_traces
+# =============================================================================
+class TestConsumeSseTraces:
+    """Tests for the SSE trace consumer background task."""
+
+    @pytest.mark.asyncio
+    async def test_consume_sse_traces_distributes_valid_and_skips_invalid(
+        self, mock_env
+    ):
+        """Covers the branch where valid SSE data lines are received and
+        distributed to all registered browser subscribers. Also covers the
+        branches where non-data lines and lines with invalid JSON payloads
+        are skipped."""
+        client_info = ClientInfo(ip="127.0.0.1", port=8000, url="/test")
+        gen = exec_module.multiplexed_event_generator(client_info)
+        gen_task = asyncio.create_task(gen.__anext__())
+        await asyncio.sleep(0.1)  # Let the generator start and subscribe
+
+        async def mock_aiter_lines():
+            yield "event: ping"
+            yield "data: {invalid json}"
+            yield 'data: {"task": "task_a"}'
+
+        mock_response = MagicMock()
+        mock_response.aiter_lines = mock_aiter_lines
+
+        mock_stream_cm = AsyncMock()
+        mock_stream_cm.__aenter__.return_value = mock_response
+
+        mock_client_instance = MagicMock()
+        mock_client_instance.stream.return_value = mock_stream_cm
+
+        mock_client_cm = AsyncMock()
+        mock_client_cm.__aenter__.return_value = mock_client_instance
+
+        with patch.object(httpx, "AsyncClient", return_value=mock_client_cm):
+            await exec_module._consume_sse_traces("http://localhost:9999")
+
+        sse_event = await asyncio.wait_for(gen_task, timeout=5.0)
+        assert sse_event == 'event: taskTrace\ndata: {"task": "task_a"}\n\n'
+        gen_task.cancel()
+        try:
+            await gen_task
+        except asyncio.CancelledError:
+            pass
+
+    @pytest.mark.asyncio
+    async def test_consume_sse_traces_remote_protocol_error(self, mock_env):
+        """Covers the branch where the SSE server closes the connection
+        unexpectedly, raising a RemoteProtocolError that is caught and
+        logged at debug level."""
+
+        async def mock_aiter_lines():
+            raise httpx.RemoteProtocolError("connection closed")
+            yield ""
+
+        mock_response = MagicMock()
+        mock_response.aiter_lines = mock_aiter_lines
+
+        mock_stream_cm = AsyncMock()
+        mock_stream_cm.__aenter__.return_value = mock_response
+
+        mock_client_instance = MagicMock()
+        mock_client_instance.stream.return_value = mock_stream_cm
+
+        mock_client_cm = AsyncMock()
+        mock_client_cm.__aenter__.return_value = mock_client_instance
+
+        with patch.object(httpx, "AsyncClient", return_value=mock_client_cm):
+            await exec_module._consume_sse_traces("http://localhost:9999")
+
+    @pytest.mark.asyncio
+    async def test_consume_sse_traces_generic_exception(self, mock_env):
+        """Covers the branch where an unexpected exception occurs during SSE
+        consumption, caught and logged at warning level."""
+
+        async def mock_aiter_lines():
+            raise RuntimeError("unexpected failure")
+            yield ""
+
+        mock_response = MagicMock()
+        mock_response.aiter_lines = mock_aiter_lines
+
+        mock_stream_cm = AsyncMock()
+        mock_stream_cm.__aenter__.return_value = mock_response
+
+        mock_client_instance = MagicMock()
+        mock_client_instance.stream.return_value = mock_stream_cm
+
+        mock_client_cm = AsyncMock()
+        mock_client_cm.__aenter__.return_value = mock_client_instance
+
+        with patch.object(httpx, "AsyncClient", return_value=mock_client_cm):
+            await exec_module._consume_sse_traces("http://localhost:9999")
+
+
+# =============================================================================
 # Tests for register routes
 # =============================================================================
 class TestRegisterRoutes:
+    @pytest.mark.asyncio
+    async def test_register_sse_subscriber_missing_url(
+        self, route_capturer, mock_request
+    ):
+        """Covers the branch where the request body lacks an sse_server_url,
+        returning a 400 error response."""
+        routes, mock_rt = route_capturer
+        mock_request.json = AsyncMock(return_value={})
+        register(MagicMock(), mock_rt)
+        response = await routes["/register_sse_subscriber"](mock_request)
+        assert isinstance(response, JSONResponse)
+        assert response.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_register_sse_subscriber_success(
+        self, route_capturer, mock_request, mock_env
+    ):
+        """Covers the branch where a valid sse_server_url is provided,
+        spawning the SSE consumer background task and returning ok."""
+
+        async def mock_aiter_lines():
+            raise httpx.RemoteProtocolError("test")
+            yield ""
+
+        mock_response = MagicMock()
+        mock_response.aiter_lines = mock_aiter_lines
+
+        mock_stream_cm = AsyncMock()
+        mock_stream_cm.__aenter__.return_value = mock_response
+
+        mock_client_instance = MagicMock()
+        mock_client_instance.stream.return_value = mock_stream_cm
+
+        mock_client_cm = AsyncMock()
+        mock_client_cm.__aenter__.return_value = mock_client_instance
+
+        routes, mock_rt = route_capturer
+        mock_request.json = AsyncMock(
+            return_value={"sse_server_url": "http://localhost:9999"}
+        )
+
+        with patch.object(httpx, "AsyncClient", return_value=mock_client_cm):
+            register(MagicMock(), mock_rt)
+            response = await routes["/register_sse_subscriber"](mock_request)
+            assert isinstance(response, JSONResponse)
+            assert response.status_code == 200
+            # Yield to the event loop so the spawned background task can finish.
+            await asyncio.sleep(0.1)
+
     @pytest.mark.asyncio
     async def test_dag_rendering_invalid_id(self, route_capturer, mock_request):
         routes, mock_rt = route_capturer

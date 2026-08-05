@@ -140,7 +140,6 @@ class TestAccessLogEntry:
         [
             ("ws", "WebSocket"),
             ("sse", "Server-Side Event"),
-            ("grpc", "gRPC"),
         ],
     )
     def test_to_fasthtml_div_special_titles(self, method, expected_title):

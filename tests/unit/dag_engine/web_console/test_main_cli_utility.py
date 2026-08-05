@@ -254,7 +254,7 @@ class TestWebconsoleStartCli:
         return mock_sock
 
     def _base_env(self):
-        return {"RP_WEB_SERVER_PORT": "8000", "RP_GRPC_SERVER_PORT": "50051"}
+        return {"RP_WEB_SERVER_PORT": "8000"}
 
     def test_daemonizes_by_default(self, tmp_path):
         pid_path = str(tmp_path / "webconsole.pid")
@@ -314,35 +314,15 @@ class TestWebconsoleStartCli:
 
         assert not os.path.exists(pid_path)
 
-    def test_refuses_when_first_port_in_use(self, tmp_path, capsys):
-        """port check fires on the first port in ports_list."""
+    def test_refuses_when_port_in_use(self, tmp_path, capsys):
+        """port check fires on the port."""
         pid_path = str(tmp_path / "webconsole.pid")
 
-        # connect_ex returns 0 (in-use) on the first call (web port), 1 on grpc
+        # connect_ex returns 0 (in-use)
         mock_sock = MagicMock()
         mock_sock.__enter__ = lambda s: s
         mock_sock.__exit__ = MagicMock(return_value=False)
-        mock_sock.connect_ex.side_effect = [0, 1]
-
-        with (
-            patch("sys.argv", ["webconsole_start"]),
-            patch.dict("os.environ", self._base_env()),
-            patch.object(cli, "_pid_file", return_value=pid_path),
-            patch("socket.socket", return_value=mock_sock),
-        ):
-            cli.webconsole_start_cli()
-
-        assert "not available" in capsys.readouterr().out.lower()
-
-    def test_refuses_when_second_port_in_use(self, tmp_path, capsys):
-        """port check fires on the second port in ports_list."""
-        pid_path = str(tmp_path / "webconsole.pid")
-
-        # connect_ex returns 1 (free) for web port, 0 (in-use) for grpc port
-        mock_sock = MagicMock()
-        mock_sock.__enter__ = lambda s: s
-        mock_sock.__exit__ = MagicMock(return_value=False)
-        mock_sock.connect_ex.side_effect = [1, 0]
+        mock_sock.connect_ex.return_value = 0
 
         with (
             patch("sys.argv", ["webconsole_start"]),

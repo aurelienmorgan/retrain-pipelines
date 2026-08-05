@@ -1651,7 +1651,6 @@ def infra_validator(_) -> None:
                     "rmm-.*",
                     "litserve",
                     "protobuf",
-                    "grpc.*",
                     "tensorboard",
                     ".*retrain-pipelines.*",
                 ],

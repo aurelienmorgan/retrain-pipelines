@@ -83,7 +83,7 @@ class TestWebconsoleStartGuards:
             patch.object(main._logger_controller, "activate"),
             patch.object(main._logger_controller, "deactivate"),
         ):
-            main._webconsole_start(port=8001, grpc_port=50051)
+            main._webconsole_start(port=8001)
         # state must be unchanged ; no second server was started
         assert main._process_has_server is True
         assert main._running_port == 8000
@@ -92,7 +92,7 @@ class TestWebconsoleStartGuards:
         main._server_thread = MagicMock()
         main._server_thread.is_alive.return_value = True
         with patch.object(main._logger_controller, "activate"):
-            main._webconsole_start(port=8001, grpc_port=50051)
+            main._webconsole_start(port=8001)
         assert main._process_has_server is False
 
     def test_refuses_when_lock_not_acquired(self):
@@ -101,7 +101,7 @@ class TestWebconsoleStartGuards:
             patch.object(main._logger_controller, "activate"),
             patch.object(main._logger_controller, "deactivate"),
         ):
-            main._webconsole_start(port=8001, grpc_port=50051)
+            main._webconsole_start(port=8001)
         assert main._process_has_server is False
 
     def test_refuses_when_port_in_use(self):
@@ -116,7 +116,7 @@ class TestWebconsoleStartGuards:
             patch.object(main._logger_controller, "activate"),
             patch.object(main._logger_controller, "deactivate"),
         ):
-            main._webconsole_start(port=8001, grpc_port=50051)
+            main._webconsole_start(port=8001)
         assert main._process_has_server is False
 
 
@@ -156,7 +156,7 @@ def _make_mock_routes():
     return [http_route, ws_route]
 
 
-def _stub_webconsole_start(port=8001, grpc_port=50051):
+def _stub_webconsole_start(port=8001):
     """
     Drive _webconsole_start past all guards with a stubbed uvicorn server
     whose serve() coroutine returns immediately.
@@ -205,7 +205,7 @@ def _stub_webconsole_start(port=8001, grpc_port=50051):
         mock_uvicorn.Config.return_value = mock_config
         mock_uvicorn.Server.return_value = mock_uvicorn_server
 
-        main._webconsole_start(port=port, grpc_port=grpc_port)
+        main._webconsole_start(port=port)
 
     return mock_uvicorn_server
 
@@ -291,178 +291,13 @@ class TestWebconsoleStartHappyPath:
             mock_uvicorn.Config.return_value = mock_config
             mock_uvicorn.Server.return_value = MagicMock()
 
-            main._webconsole_start(port=8001, grpc_port=50051)
+            main._webconsole_start(port=8001)
 
             mock_uvicorn.Config.assert_called_once()
             call_kwargs = mock_uvicorn.Config.call_args
             assert call_kwargs.kwargs.get("port") == 8001 or (
                 call_kwargs.args and call_kwargs.args[1] == 8001
             )
-
-
-# ---------------------------------------------------------------------------
-# startup_event / shutdown_event closures
-# ---------------------------------------------------------------------------
-
-
-class TestAppEventCallbacks:
-    """
-    Extract the startup_event and shutdown_event async closures registered
-    via app.on_event() and call them directly.
-    """
-
-    def _capture_event_callbacks(self):
-        """
-        Run _webconsole_start with on_event() patched to capture the registered
-        async callables rather than discarding them.
-        Returns {'startup': fn, 'shutdown': fn}.
-        """
-        captured = {}
-
-        def fake_on_event(event_name):
-            def decorator(fn):
-                captured[event_name] = fn
-                return fn
-
-            return decorator
-
-        mock_app = MagicMock()
-        mock_app.routes = _make_mock_routes()
-        mock_app.router = MagicMock()
-        mock_app.router.routes = []
-        mock_app.on_event = fake_on_event
-
-        mock_config = MagicMock()
-        mock_config.host = "0.0.0.0"
-        mock_config.port = 8001
-
-        with (
-            patch.object(main, "acquire_server_lock", return_value=True),
-            patch("socket.socket", return_value=_make_port_free_sock()),
-            patch(
-                "retrain_pipelines.dag_engine.web_console.main.FastHTML",
-                return_value=mock_app,
-            ),
-            patch(
-                "retrain_pipelines.dag_engine.web_console.main.get_log_websocket_endpoint",
-                return_value=MagicMock(),
-            ),
-            patch(
-                "retrain_pipelines.dag_engine.web_console.main.get_log_config",
-                return_value={},
-            ),
-            patch(
-                "retrain_pipelines.dag_engine.web_console.main.framed_rich_log_str",
-                return_value="",
-            ),
-            patch(
-                "retrain_pipelines.dag_engine.web_console.main.uvicorn"
-            ) as mock_uvicorn,
-            patch(
-                "retrain_pipelines.dag_engine.web_console.main.in_notebook",
-                return_value=False,
-            ),
-            patch("threading.Thread.start", lambda self_t: None),
-            patch.object(main._logger_controller, "activate"),
-            patch.object(main._logger_controller, "deactivate"),
-        ):
-            mock_uvicorn.Config.return_value = mock_config
-            mock_uvicorn.Server.return_value = MagicMock()
-            main._webconsole_start(port=8001, grpc_port=50051)
-
-        return captured
-
-    def test_startup_event_starts_grpc_thread(self):
-        """startup_event: spawns grpc thread and calls serve_grpc."""
-        import asyncio as _asyncio
-
-        callbacks = self._capture_event_callbacks()
-        startup_fn = callbacks.get("startup")
-        assert startup_fn is not None, "startup_event was not registered"
-
-        spawned = {}
-        real_thread_init = threading.Thread.__init__
-
-        def fake_thread_init(self_t, target=None, **kwargs):
-            spawned["target"] = target
-            real_thread_init(self_t, target=target, **kwargs)
-
-        with (
-            patch("threading.Thread.__init__", fake_thread_init),
-            patch("threading.Thread.start", lambda self_t: None),
-        ):
-            _asyncio.get_event_loop().run_until_complete(startup_fn())
-
-        # startup_event must have created a thread whose target is run_grpc
-        assert "target" in spawned and spawned["target"] is not None
-        assert main._grpc_thread is not None
-
-    def test_startup_event_run_grpc_body(self):
-        """run_grpc() inner closure: sets _grpc_server and calls wait_for_termination."""
-        import asyncio as _asyncio
-
-        captured_thread = {}
-        real_thread_init = threading.Thread.__init__
-
-        def fake_thread_init(self_t, target=None, **kwargs):
-            captured_thread["target"] = target
-            real_thread_init(self_t, target=target, **kwargs)
-
-        callbacks = self._capture_event_callbacks()
-        startup_fn = callbacks.get("startup")
-        assert startup_fn is not None
-
-        mock_grpc_srv = MagicMock()
-
-        with (
-            patch(
-                "retrain_pipelines.dag_engine.web_console.main.serve_grpc",
-                return_value=mock_grpc_srv,
-            ),
-            patch("threading.Thread.__init__", fake_thread_init),
-            patch("threading.Thread.start", lambda self_t: None),
-        ):
-            _asyncio.get_event_loop().run_until_complete(startup_fn())
-
-        # Now invoke run_grpc() directly
-        run_grpc_fn = captured_thread.get("target")
-        assert run_grpc_fn is not None
-
-        with patch(
-            "retrain_pipelines.dag_engine.web_console.main.serve_grpc",
-            return_value=mock_grpc_srv,
-        ):
-            run_grpc_fn()
-
-        mock_grpc_srv.wait_for_termination.assert_called_once()
-        assert main._grpc_server is mock_grpc_srv
-
-    def test_shutdown_event_stops_grpc_server(self):
-        """shutdown_event: calls _grpc_server.stop when server exists."""
-        import asyncio as _asyncio
-
-        callbacks = self._capture_event_callbacks()
-        shutdown_fn = callbacks.get("shutdown")
-        assert shutdown_fn is not None, "shutdown_event was not registered"
-
-        mock_grpc_srv = MagicMock()
-        main._grpc_server = mock_grpc_srv
-
-        _asyncio.get_event_loop().run_until_complete(shutdown_fn())
-
-        mock_grpc_srv.stop.assert_called_once_with(grace=5.0)
-
-    def test_shutdown_event_no_server_does_not_raise(self):
-        """shutdown_event: skips stop() when _grpc_server is None."""
-        import asyncio as _asyncio
-
-        callbacks = self._capture_event_callbacks()
-        shutdown_fn = callbacks.get("shutdown")
-        assert shutdown_fn is not None
-
-        main._grpc_server = None
-        # Must not raise
-        _asyncio.get_event_loop().run_until_complete(shutdown_fn())
 
 
 # ---------------------------------------------------------------------------
@@ -537,7 +372,7 @@ class TestRunThreadInternals:
             mock_uvicorn.Config.return_value = mock_config
             mock_uvicorn.Server.return_value = mock_uvicorn_server
 
-            main._webconsole_start(port=8001, grpc_port=50051)
+            main._webconsole_start(port=8001)
 
         return captured.get("target"), mock_uvicorn_server
 
@@ -777,8 +612,8 @@ class TestWebconsoleDispatch:
             ),
             patch.object(main, "_webconsole_start") as mock_start,
         ):
-            main.webconsole_start(port=8000, grpc_port=50051)
-        mock_start.assert_called_once_with(8000, 50051)
+            main.webconsole_start(port=8000)
+        mock_start.assert_called_once_with(8000)
 
     def test_start_calls_notebook_when_in_notebook(self):
         with (
@@ -791,8 +626,8 @@ class TestWebconsoleDispatch:
                 ".main_notebook._webconsole_start_notebook"
             ) as mock_nb,
         ):
-            main.webconsole_start(port=8000, grpc_port=50051)
-        mock_nb.assert_called_once_with(8000, 50051)
+            main.webconsole_start(port=8000)
+        mock_nb.assert_called_once_with(8000)
 
     def test_start_reads_env_when_ports_not_given(self):
         with (
@@ -805,12 +640,11 @@ class TestWebconsoleDispatch:
                 "os.environ",
                 {
                     "RP_WEB_SERVER_PORT": "9001",
-                    "RP_GRPC_SERVER_PORT": "50061",
                 },
             ),
         ):
             main.webconsole_start()
-        mock_start.assert_called_once_with(9001, 50061)
+        mock_start.assert_called_once_with(9001)
 
     def test_shutdown_calls_plain_when_not_notebook(self):
         with (

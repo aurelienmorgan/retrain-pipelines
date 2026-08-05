@@ -310,7 +310,7 @@ class LightGbmHpCvWandbFlow(FlowSpec):
             encoder,
             buckets,
             is_training=True,
-            local_path=self.serving_artifacts_local_folder,
+            path=self.serving_artifacts_local_folder,
         )
         self.encoder = encoder  # <= to artifact store
         self.buckets = buckets  # <= to artifact store

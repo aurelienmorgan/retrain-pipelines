@@ -409,7 +409,7 @@ class TestWebconsoleStartNotebook:
                 "retrain_pipelines.dag_engine.web_console.main_notebook.display"
             ) as mock_display,
         ):
-            nb._webconsole_start_notebook(port=8000, grpc_port=50051)
+            nb._webconsole_start_notebook(port=8000)
 
         displayed = " ".join(str(c) for c in mock_display.call_args_list)
         assert "iframe" not in displayed.lower()
@@ -428,7 +428,7 @@ class TestWebconsoleStartNotebook:
                 "retrain_pipelines.dag_engine.web_console.main_notebook.display"
             ) as mock_display,
         ):
-            nb._webconsole_start_notebook(port=8000, grpc_port=50051)
+            nb._webconsole_start_notebook(port=8000)
 
         displayed = " ".join(
             a.data if hasattr(a, "data") else str(a)
@@ -452,7 +452,7 @@ class TestWebconsoleStartNotebook:
                 "retrain_pipelines.dag_engine.web_console.main_notebook.clear_output"
             ),
         ):
-            nb._webconsole_start_notebook(port=8000, grpc_port=50051)
+            nb._webconsole_start_notebook(port=8000)
 
         mock_ngrok.assert_called_once_with(8000)
 
@@ -468,7 +468,7 @@ class TestWebconsoleStartNotebook:
                 "retrain_pipelines.dag_engine.web_console.main_notebook.display"
             ) as mock_display,
         ):
-            nb._webconsole_start_notebook(port=8000, grpc_port=50051)
+            nb._webconsole_start_notebook(port=8000)
 
         # webconsole_shutdown must have been called (via main._main)
         displayed = " ".join(str(c) for c in mock_display.call_args_list)
@@ -487,7 +487,7 @@ class TestWebconsoleStartNotebook:
             ),
             patch.object(main_mod._logger_controller, "deactivate") as mock_deact,
         ):
-            nb._webconsole_start_notebook(port=8000, grpc_port=50051)
+            nb._webconsole_start_notebook(port=8000)
 
         mock_deact.assert_called()
 
@@ -507,7 +507,7 @@ class TestWebconsoleStartNotebook:
                 "retrain_pipelines.dag_engine.web_console.main_notebook.clear_output"
             ),
         ):
-            nb._webconsole_start_notebook(port=8000, grpc_port=50051)
+            nb._webconsole_start_notebook(port=8000)
 
         displayed = " ".join(
             a.data if hasattr(a, "data") else str(a)
@@ -546,7 +546,7 @@ class TestWebconsoleStartNotebook:
             patch("logging.handlers.TimedRotatingFileHandler.emit"),
             patch("os.makedirs"),
         ):
-            nb._webconsole_start_notebook(port=8000, grpc_port=50051)
+            nb._webconsole_start_notebook(port=8000)
 
         # restore handlers added during the call
         root_logger.handlers = handlers_before
@@ -584,7 +584,7 @@ class TestWebconsoleStartNotebook:
             mock_thread_instance = MagicMock()
             mock_thread_cls.return_value = mock_thread_instance
 
-            nb._webconsole_start_notebook(port=8000, grpc_port=50051)
+            nb._webconsole_start_notebook(port=8000)
 
         mock_thread_cls.assert_called()
         mock_thread_instance.start.assert_called()
@@ -601,8 +601,6 @@ class TestWebconsoleShutdownNotebook:
         nb._notebook_env.cache_clear()
         main_mod._server = None
         main_mod._server_thread = None
-        main_mod._grpc_thread = None
-        main_mod._grpc_server = None
 
     def teardown_method(self):
         nb._notebook_env.cache_clear()
@@ -629,8 +627,6 @@ class TestWebconsoleShutdownNotebook:
         t = MagicMock()
         t.is_alive.return_value = False
         main_mod._server_thread = t
-        main_mod._grpc_thread = t
-        main_mod._grpc_server = None
 
         with patch("retrain_pipelines.dag_engine.web_console.main_notebook.display"):
             nb._webconsole_shutdown_notebook()
@@ -638,36 +634,15 @@ class TestWebconsoleShutdownNotebook:
         assert srv.should_exit is True
         assert srv.force_exit is True
 
-    def test_stops_grpc_server(self):
-        srv = MagicMock(spec=["should_exit", "force_exit"])
-        srv.should_exit = False
-        srv.force_exit = False
-        main_mod._server = srv
-
-        grpc_srv = MagicMock()
-        main_mod._grpc_server = grpc_srv
-
-        t = MagicMock()
-        t.is_alive.return_value = False
-        main_mod._server_thread = t
-        main_mod._grpc_thread = t
-
-        with patch("retrain_pipelines.dag_engine.web_console.main_notebook.display"):
-            nb._webconsole_shutdown_notebook()
-
-        grpc_srv.stop.assert_called_once()
-
     def test_calls_ngrok_stop_on_colab(self):
         srv = MagicMock(spec=["should_exit", "force_exit"])
         srv.should_exit = False
         srv.force_exit = False
         main_mod._server = srv
-        main_mod._grpc_server = None
 
         t = MagicMock()
         t.is_alive.return_value = False
         main_mod._server_thread = t
-        main_mod._grpc_thread = t
 
         with (
             patch.object(nb, "_notebook_env", return_value="colab"),
@@ -683,12 +658,10 @@ class TestWebconsoleShutdownNotebook:
         srv.should_exit = False
         srv.force_exit = False
         main_mod._server = srv
-        main_mod._grpc_server = None
 
         t = MagicMock()
         t.is_alive.return_value = False
         main_mod._server_thread = t
-        main_mod._grpc_thread = t
 
         with patch(
             "retrain_pipelines.dag_engine.web_console.main_notebook.display"
@@ -708,46 +681,11 @@ class TestWebconsoleShutdownNotebook:
         srv.should_exit = False
         srv.force_exit = False
         main_mod._server = srv
-        main_mod._grpc_server = None
 
         alive_thread = MagicMock()
         alive_thread.is_alive.return_value = True
         alive_thread.ident = 12345
         main_mod._server_thread = alive_thread
-
-        dead_grpc = MagicMock()
-        dead_grpc.is_alive.return_value = False
-        main_mod._grpc_thread = dead_grpc
-
-        mock_pythonapi = MagicMock()
-        mock_pythonapi.PyThreadState_SetAsyncExc.return_value = 1
-
-        with (
-            patch("retrain_pipelines.dag_engine.web_console.main_notebook.display"),
-            patch("ctypes.pythonapi", mock_pythonapi),
-        ):
-            nb._webconsole_shutdown_notebook()
-
-        mock_pythonapi.PyThreadState_SetAsyncExc.assert_called()
-
-    def test_ctypes_kill_when_grpc_thread_stays_alive(self):
-        """gRPC thread remains alive after its join => ctypes async exc is raised."""
-        srv = MagicMock(spec=["should_exit", "force_exit"])
-        srv.should_exit = False
-        srv.force_exit = False
-        main_mod._server = srv
-        main_mod._grpc_server = None
-
-        dead_server_thread = MagicMock()
-        dead_server_thread.is_alive.return_value = False
-        main_mod._server_thread = dead_server_thread
-
-        # grpc thread: first is_alive() True (enters block), second is_alive() True
-        # (enters nested ctypes block), join() no-ops
-        alive_grpc = MagicMock()
-        alive_grpc.is_alive.return_value = True
-        alive_grpc.ident = 99999
-        main_mod._grpc_thread = alive_grpc
 
         mock_pythonapi = MagicMock()
         mock_pythonapi.PyThreadState_SetAsyncExc.return_value = 1
@@ -765,12 +703,10 @@ class TestWebconsoleShutdownNotebook:
         srv.should_exit = False
         srv.force_exit = False
         main_mod._server = srv
-        main_mod._grpc_server = None
 
         t = MagicMock()
         t.is_alive.return_value = False
         main_mod._server_thread = t
-        main_mod._grpc_thread = t
 
         with (
             patch.object(nb, "_notebook_env", return_value="kaggle"),
@@ -786,12 +722,10 @@ class TestWebconsoleShutdownNotebook:
         srv.should_exit = False
         srv.force_exit = False
         main_mod._server = srv
-        main_mod._grpc_server = None
 
         t = MagicMock()
         t.is_alive.return_value = False
         main_mod._server_thread = t
-        main_mod._grpc_thread = t
 
         with (
             patch("retrain_pipelines.dag_engine.web_console.main_notebook.display"),
@@ -863,7 +797,7 @@ def _run_start_with_live_log():
         patch("atexit.register", side_effect=_capture_atexit),
         patch("threading.Thread", side_effect=_capture_thread),
     ):
-        nb._webconsole_start_notebook(port=8000, grpc_port=50051)
+        nb._webconsole_start_notebook(port=8000)
         # Find the handler we just added – it's the only TimedRotatingFileHandler
         for h in logging.getLogger().handlers:
             if isinstance(h, _lh.TimedRotatingFileHandler):
@@ -1053,18 +987,13 @@ class TestInnerHelpersLiveLogPath:
 
     # -- _cleanup_on_shutdown (real closure via threading.Thread target capture) --
 
-    def test_cleanup_on_shutdown_joins_server_and_grpc_threads(self):
-        """_cleanup_on_shutdown() (real closure): joins _server_thread and _grpc_thread."""
+    def test_cleanup_on_shutdown_joins_server_thread(self):
+        """_cleanup_on_shutdown() (real closure): joins _server_thread."""
         captured = _run_start_with_live_log()
         mock_server_t = MagicMock()
-        mock_grpc_t = MagicMock()
-        with (
-            patch.object(main_mod, "_server_thread", mock_server_t),
-            patch.object(main_mod, "_grpc_thread", mock_grpc_t),
-        ):
+        with patch.object(main_mod, "_server_thread", mock_server_t):
             captured["cleanup_fn"]()
         mock_server_t.join.assert_called_once()
-        mock_grpc_t.join.assert_called_once()
 
     # -- _ServerThreadFilter --
 

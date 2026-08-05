@@ -131,7 +131,7 @@ class TestWebServerLogsRoot:
 
 
 class TestPorts:
-    """Tests for port getters: `get_web_server_port` and `get_grpc_server_port`."""
+    """Tests for port getters: `get_web_server_port`."""
 
     def test_web_server_port_default(self, monkeypatch):
         """Default web server port should be 5001."""
@@ -142,16 +142,6 @@ class TestPorts:
         """Web server port should be taken from RP_WEB_SERVER_PORT env var."""
         monkeypatch.setenv("RP_WEB_SERVER_PORT", "8080")
         assert Config.get_web_server_port() == 8080
-
-    def test_grpc_server_port_default(self, monkeypatch):
-        """Default gRPC server port should be 50051."""
-        monkeypatch.delenv("RP_GRPC_SERVER_PORT", raising=False)
-        assert Config.get_grpc_server_port() == 50051
-
-    def test_grpc_server_port_env_var(self, monkeypatch):
-        """gRPC server port should be taken from RP_GRPC_SERVER_PORT env var."""
-        monkeypatch.setenv("RP_GRPC_SERVER_PORT", "50052")
-        assert Config.get_grpc_server_port() == 50052
 
 
 class TestWebServerURL:

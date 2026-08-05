@@ -58,7 +58,6 @@ dependencies = [
     "pydantic>=2",
     "matplotlib>=3.4",
     "metaflow>=2.9",
-    "wandb>=0.21.1",
     "plotly>=4",
     "jinja2>=3",
     "scikit-learn>=1",
@@ -70,8 +69,7 @@ dependencies = [
     "alembic>=1.16.2",
     "cloudpickle>=3.0.0",
     "aiosqlite>=0.21.0",
-    "grpcio>=1.67.1",
-    "grpcio-health-checking>=1.67.1"
+    "httpx>=0.28.1"
 ]
 dynamic = ["version"]
 
@@ -89,6 +87,7 @@ dev = [
     "pytest-env>=1.1.5",
     "pytest-cov>=7.1.0",
     "pytest-asyncio>=1.4.0",
+    "pytest-timeout>=2.4.0",
     "ruff>=0.15.12",
     "mypy>=2.0.0",
     "pre-commit>=4.6.0"
@@ -115,7 +114,6 @@ include-package-data = true
 "retrain_pipelines.dag_engine.web_console.static" = ["*.*"]
 "retrain_pipelines.dag_engine.web_console.utils.execution" = ["svg_template.html"]
 "retrain_pipelines.dag_engine.db.alembic" = ["script.py.mako"]
-"retrain_pipelines.dag_engine.db.grpc" = ["README.txt", "*.proto"]
 "retrain_pipelines.model" = ["**/Dockerfile.*", "**/.dockerignore", "**/*template.*"]
 "retrain_pipelines.pipeline_card" = ["**/*template.*"]
 
@@ -136,8 +134,6 @@ exclude = [
     "*.ipynb",
     "**/*.ipynb",
     "pkg_src/retrain_pipelines/dag_engine/db/alembic/versions/",
-    "pkg_src/retrain_pipelines/dag_engine/db/grpc/task_trace_pb2_grpc.py",
-    "pkg_src/retrain_pipelines/dag_engine/db/grpc/task_trace_pb2.py",
 ]
 
 [tool.ruff.lint]
@@ -178,15 +174,11 @@ mypy_path = ["pkg_src", "pkg_src/.mypy_stubs"]
 source = ["pkg_src/retrain_pipelines/dag_engine"]
 omit = [
   "pkg_src/retrain_pipelines/dag_engine/db/alembic/versions/*",
-  "pkg_src/retrain_pipelines/dag_engine/db/grpc/*_pb2.py",
-  "pkg_src/retrain_pipelines/dag_engine/db/grpc/*_pb2_grpc.py",
 ]
 
 [tool.coverage.report]
 omit = [
   "pkg_src/retrain_pipelines/dag_engine/db/alembic/versions/*",
-  "pkg_src/retrain_pipelines/dag_engine/db/grpc/*_pb2.py",
-  "pkg_src/retrain_pipelines/dag_engine/db/grpc/*_pb2_grpc.py",
 ]
 
 # alias / entrypoint for CLI utility

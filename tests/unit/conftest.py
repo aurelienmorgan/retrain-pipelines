@@ -90,7 +90,7 @@ def suppress_logger():
 
 
 #######################################################################################
-#     create a local s3 bucket dedicated unit-test (with a test-session lifespan)    #
+#     create a local s3 bucket dedicated unit-test (with a test-session lifespan)     #
 #######################################################################################
 
 MINIO_ENDPOINT = os.environ.get("MINIO_ENDPOINT", "http://localhost:9000")

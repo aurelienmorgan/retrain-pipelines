@@ -18,5 +18,3 @@ def reset_main_globals():
     main._process_has_server = False
     main._running_port = None
     main._shutdown_event = threading.Event()
-    main._grpc_server = None
-    main._grpc_thread = None

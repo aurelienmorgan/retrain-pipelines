@@ -1722,7 +1722,6 @@ class UnslothFuncCallFlow(FlowSpec):
                         "rmm-.*",
                         "litserve",
                         "protobuf",
-                        "grpc.*",
                         "tensorboard",
                         ".*retrain-pipelines.*",
                     ],
