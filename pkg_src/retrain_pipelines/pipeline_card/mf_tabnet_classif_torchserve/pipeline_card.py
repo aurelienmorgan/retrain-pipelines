@@ -256,7 +256,11 @@ def get_html(params: Mapping[str, Any]) -> str:
         wandb_project_ui_url=params["wandb_project_ui_url"],
         wandb_filter_run_id=params["wandb_filter_run_id"],
         wandb_need_sync_dir=params["wandb_need_sync_dir"],
-        task_obj_python_cmd=apply_args_color_format(params["task_obj_python_cmd"]),
+        exec_obj_python_cmd=(  # LEGACY  -  keep else clause only ##
+            apply_args_color_format(params["task_obj_python_cmd"])
+            if "task_obj_python_cmd" in params
+            else apply_args_color_format(params["exec_obj_python_cmd"])
+        ),
         dag_svg=indent(params["dag_svg"], " " * 40),
         __version__=__version__,
     )

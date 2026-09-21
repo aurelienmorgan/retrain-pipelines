@@ -82,5 +82,5 @@ def run_alembic_upgrade_once():
         _alembic_upgraded = True
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     run_alembic_upgrade_once()

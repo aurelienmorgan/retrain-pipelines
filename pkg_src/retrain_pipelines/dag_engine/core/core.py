@@ -41,6 +41,7 @@ from ..stores.params_store import (
     temp_dir_id,
     value_to_storable,
 )
+from ..stores.payloads_store import serialize_task_payload
 from .trace_buffer import get_trace_buffer
 
 logger = logging.getLogger(__name__)
@@ -353,6 +354,14 @@ class TaskType(BaseModel):
                 )
             )
 
+            # Snapshot entry context eTAGs before the user merge_func runs.
+            _context = _dag_execution_context_var.get()
+            entry_etags = (
+                snapshot_context_etags(_context, _CONTEXT_EXCLUDE_ATTRS)
+                if _context is not None
+                else {}
+            )
+
             try:
                 with TaskType._capture_and_stream_trace(task_id):
                     try:
@@ -368,6 +377,10 @@ class TaskType(BaseModel):
                     f"merge `{merge_func.__name__}` " + f"of task `{self.name}` failed"
                 ) from ex
             finally:
+                # Flag context changes for the subsequent func wrapper to detect,
+                # since they share the same task_id and func wrapper handles DB writes.
+                if _context is not None:
+                    _context._pending_merge_entry_etags = entry_etags
                 dao.dispose()
                 # Unregister task from registry
                 _task_registry.unregister_task(task_id)
@@ -449,11 +462,17 @@ class TaskType(BaseModel):
 
             # Snapshot entry context eTAGs before the user func runs.
             _context = _dag_execution_context_var.get()
-            entry_etags = (
-                snapshot_context_etags(_context, _CONTEXT_EXCLUDE_ATTRS)
-                if _context is not None
-                else {}
-            )
+            # If a merge_func ran just before us and altered the context,
+            # use its entry eTAGs so changes made by the merge_func are detected.
+            entry_etags = getattr(_context, "_pending_merge_entry_etags", None)
+            if entry_etags is not None:
+                del _context._pending_merge_entry_etags
+            else:
+                entry_etags = (
+                    snapshot_context_etags(_context, _CONTEXT_EXCLUDE_ATTRS)
+                    if _context is not None
+                    else {}
+                )
 
             task_failed = False
             try:
@@ -492,6 +511,17 @@ class TaskType(BaseModel):
                         logger.exception(
                             f"Failed to serialize exit context for task {task_id} ; "
                             f"context attrs for this task will be unavailable : {ex}"
+                        )
+                # Serialize exit payload on success only.
+                # Guarded so that a serialization error does not mask
+                # an otherwise-successful "task failed" recording.
+                if not task_failed:
+                    try:
+                        dao.set_task_exit_payload(serialize_task_payload(exec_id, task_id, result))
+                    except Exception as ex:
+                        logger.exception(
+                            f"Failed to serialize exit payload for task {task_id} ; "
+                            f"payload for this task will be unavailable : {ex}"
                         )
                 dao.update_task(id=task_id, end_timestamp=end_timestamp, failed=task_failed)
                 dao.dispose()
@@ -914,21 +944,29 @@ class DAG(BaseModel):
                     "children": [str(c.tasktype_uuid) for c in task.children],
                 })
 
-                if task.task_group and task.task_group.uuid not in taskgroups_dict:
-                    taskgroups_dict[task.task_group.uuid] = {
-                        "uuid": str(task.task_group.uuid) if serializable else task.task_group.uuid,
-                        "name": task.task_group.name,
-                        "docstring": task.task_group.docstring,
-                        "ui_css": task.task_group.ui_css.to_dict()
-                        if task.task_group.ui_css
-                        else None,
-                        "elements": [
-                            str(e.tasktype_uuid)
-                            if isinstance(e, TaskType)
-                            else str(e.uuid)  # inner TaskGroup
-                            for e in task.task_group.elements
-                        ],
-                    }
+                current_tg: TaskGroup | None
+                if task.task_group:
+                    # Walk up the taskgroup hierarchy to ensure all ancestor
+                    # taskgroups are included, even those containing only
+                    # nested taskgroups (no direct standalone tasks).
+                    current_tg = task.task_group
+                    while current_tg is not None:
+                        if current_tg.uuid not in taskgroups_dict:
+                            taskgroups_dict[current_tg.uuid] = {
+                                "uuid": str(current_tg.uuid) if serializable else current_tg.uuid,
+                                "name": current_tg.name,
+                                "docstring": current_tg.docstring,
+                                "ui_css": current_tg.ui_css.to_dict()
+                                if current_tg.ui_css
+                                else None,
+                                "elements": [
+                                    str(e.tasktype_uuid)
+                                    if isinstance(e, TaskType)
+                                    else str(e.uuid)  # inner TaskGroup
+                                    for e in current_tg.elements
+                                ],
+                            }
+                        current_tg = current_tg.task_group
 
                 # Enqueue children to process in next level
                 for child in task.children:

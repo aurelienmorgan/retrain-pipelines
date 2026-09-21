@@ -2,10 +2,11 @@
 Shared fixtures for the dag_engine unit-test subtree.
 
 Provides:
-  ``disable_http_listener``: Deregisters the HTTP notification listener
-    to prevent it from racing with file-based SQLite or making real HTTP
-    calls. Moved here from db/conftest.py so both db and runtime tests
-    can recycle it.
+  ``disable_all_dao_listeners``: Dynamically retrieves all functions from the
+    ``dao`` module, checks if they are registered as event listeners on
+    any ORM model or mapped attribute, and removes them. This prevents
+    any DAO listener from racing with file-based SQLite or making real
+    HTTP calls, without needing to hardcode listener names.
 
   ``isolated_dao``: function-scoped DAO backed by a temporary file-based
     SQLite database (NullPool). Unlike the session-scoped ``sync_dao``
@@ -13,51 +14,107 @@ Provides:
     all sessions), this fixture lets each SQLAlchemy session obtain its
     own NullPool connection.
 
-    That isolation is required for tests that insert Tasks:
-    ``after_insert_task_listener`` opens a second scoped_session on the
-    same engine inside the outer session's active ``BEGIN IMMEDIATE``
-    transaction. Even with NullPool, SQLite serializes the inner
-    ``BEGIN`` against the outer write lock; the listener's
-    ``session.close()`` then leaves the outer cursor broken, silently
-    preventing ``commit()`` from persisting the row.
-
-    The fixture therefore temporarily removes
-    ``after_insert_task_listener`` from SQLAlchemy's event registry via
-    ``event.remove`` / ``event.listen`` (patching the module attribute
-    would not suffice ; SQLAlchemy holds its own reference to the
-    original callable). The listener's HTTP side-effect is already
-    suppressed per-test by ``patch("requests.post")``.
-
     It is shared with runtime tests.
     Additionally sets ``RP_METADATASTORE_URL`` and creates the
     schema so that runtime.py can connect to the same isolated DB.
 
-  ``runtime_env``: Isolated environment variables (``RP_ARTIFACTS_STORE_ROOT``,
-    ``RP_ASSETS_CACHE``) and resets the DAG execution context variable
-    for runtime tests. NOT autouse; tests must explicitly request it.
-    Relies on isolated_dao for DB setup if DB is needed.
+  Also imports parametrized filesystem and S3 fixtures from
+  ``conftest_storage`` so they are discoverable by pytest.
 """
 
+import inspect
 import pytest
 from sqlalchemy import create_engine, event
 
-from retrain_pipelines.dag_engine.core.core import _dag_execution_context_var
-from retrain_pipelines.dag_engine.db.dao import DAO, after_insert_task_listener
-from retrain_pipelines.dag_engine.db.model import Base, Task
+from retrain_pipelines.dag_engine.db import dao
+from retrain_pipelines.dag_engine.db.dao import DAO
+from retrain_pipelines.dag_engine.db.model import (
+    Base,
+    Task,
+    Execution,
+    TaskType,
+    TaskContextAttr,
+    TaskPayloadAttr,
+    TaskGroup,
+    TaskTrace,
+)
+
+# Expose parametrized filesystem and S3 fixtures so they are discoverable
+# by pytest as if they were defined directly in conftest.py.
+from conftest_storage import (  # noqa: F401
+    metadata_root,
+    artifacts_store_root,
+    assets_cache,
+    web_server_logs_root,
+    runtime_env,
+)
+
+
+def _retrieve_and_disable_all_listeners():
+    """Retrieve all listeners from the dao module and disable them."""
+    listener_funcs = [
+        obj
+        for name, obj in inspect.getmembers(dao, inspect.isfunction)
+        if obj.__module__ == dao.__name__
+    ]
+    targets = [
+        Execution,
+        Task,
+        TaskType,
+        TaskContextAttr,
+        TaskPayloadAttr,
+        TaskGroup,
+        TaskTrace,
+    ]
+    attrs = []
+    for target in targets:
+        if hasattr(target, "__mapper__"):
+            for attr_name in target.__mapper__.attrs.keys():
+                attr = getattr(target, attr_name, None)
+                if attr is not None and hasattr(attr, "dispatch"):
+                    attrs.append(attr)
+    all_targets = targets + attrs
+    events = [
+        "after_insert",
+        "before_insert",
+        "after_update",
+        "before_update",
+        "after_delete",
+        "before_delete",
+        "set",
+    ]
+    disabled = []
+    for target in all_targets:
+        for evt in events:
+            for fn in listener_funcs:
+                try:
+                    if event.contains(target, evt, fn):
+                        event.remove(target, evt, fn)
+                        disabled.append((target, evt, fn))
+                except Exception:
+                    pass
+    return disabled
 
 
 @pytest.fixture
-def disable_http_listener():
-    """Deregister the HTTP notification listener to prevent it
-    from racing with file-based SQLite or making real HTTP calls.
+def disable_all_dao_listeners():
+    """Deregister all DAO listeners to prevent them from racing with
+    file-based SQLite or making real HTTP calls.
+
+    Retrieves all functions from the ``dao`` module and disables any that
+    are registered as event listeners on the ORM models or their mapped
+    attributes. This ensures no HTTP requests or side effects occur during
+    tests.
     """
-    event.remove(Task, "after_insert", after_insert_task_listener)
+    disabled = _retrieve_and_disable_all_listeners()
     yield
-    event.listen(Task, "after_insert", after_insert_task_listener)
+    for target, evt, fn in disabled:
+        if not event.contains(target, evt, fn):
+            event.listen(target, evt, fn)
 
 
 @pytest.fixture
-def isolated_dao(tmp_path, monkeypatch, disable_http_listener):
+def isolated_dao(tmp_path, monkeypatch, disable_all_dao_listeners):
     """Function-scoped DAO on a fresh file-based SQLite (NullPool)."""
     db_path = tmp_path / "test.db"
     url = f"sqlite:///{db_path}"
@@ -66,24 +123,7 @@ def isolated_dao(tmp_path, monkeypatch, disable_http_listener):
     engine = create_engine(url)
     Base.metadata.create_all(engine)
 
-    dao = DAO(db_url=url)
-    yield dao
-    dao.dispose()
+    dao_instance = DAO(db_url=url)
+    yield dao_instance
+    dao_instance.dispose()
     engine.dispose()
-
-
-@pytest.fixture
-def runtime_env(tmp_path, monkeypatch):
-    """Isolated environment variables for runtime tests.
-
-    NOT autouse; tests must explicitly request it.
-    Relies on isolated_dao for DB setup if DB is needed.
-    """
-    monkeypatch.setenv("RP_ARTIFACTS_STORE_ROOT", str(tmp_path / "artifacts"))
-    monkeypatch.setenv("RP_ASSETS_CACHE", str(tmp_path / "metadata"))
-
-    _dag_execution_context_var.set(None)
-
-    yield
-
-    _dag_execution_context_var.set(None)

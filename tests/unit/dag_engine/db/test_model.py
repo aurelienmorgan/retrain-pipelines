@@ -15,6 +15,7 @@ from retrain_pipelines.dag_engine.db.model import (
     TaskTrace,
     TaskType,
     TaskContextAttr,
+    TaskPayloadAttr,
 )
 
 _NOW = datetime(2024, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
@@ -502,3 +503,20 @@ class TestTaskContextAttr:
         assert "disk" in repr(attr)
         assert attr.disk_ref == "path/to/file"
         assert attr.inline_val is None
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  TaskPayloadAttr
+# ══════════════════════════════════════════════════════════════════════════════
+class TestTaskPayloadAttr:
+    def test_inline_repr(self):
+        payload = TaskPayloadAttr(task_id=1, inline_val="bar")
+        assert "inline" in repr(payload)
+        assert payload.inline_val == "bar"
+        assert payload.disk_ref is None
+
+    def test_disk_repr(self):
+        payload = TaskPayloadAttr(task_id=1, disk_ref="path/to/file")
+        assert "disk" in repr(payload)
+        assert payload.disk_ref == "path/to/file"
+        assert payload.inline_val is None

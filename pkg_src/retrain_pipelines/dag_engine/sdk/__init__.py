@@ -45,7 +45,7 @@ class ExecutionsIterator(BaseModel):
 
     Parameters
     ----------
-    exec_name : str
+    pipeline_name : str
         name of the execution pipeline to iterate over
     success_only : bool
         if True, only iterates over successful executions
@@ -53,7 +53,7 @@ class ExecutionsIterator(BaseModel):
         number of executions to fetch per page (default: 10)
     """
 
-    exec_name: str = Field(..., description="Name of the execution pipeline")
+    pipeline_name: str = Field(..., description="Name of the execution pipeline")
     success_only: bool | None = Field(False, description="Filter for successful executions only")
     page_size: int = Field(10, description="Number of executions to fetch per page")
 
@@ -64,6 +64,54 @@ class ExecutionsIterator(BaseModel):
     _index: int = PrivateAttr(default=0)  # current position in buffer
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    def __init__(
+        self,
+        pipeline_name: str,
+        success_only: bool | None = False,
+        page_size: int = 10,
+        _before_datetime: datetime | None = None,
+        **kwargs,
+    ) -> None:
+        """Initialize the iterator.
+
+        Accepts both positional and named arguments,
+        in any combination.
+
+        Parameters
+        ----------
+        pipeline_name : str
+            name of the execution pipeline to iterate over
+        success_only : bool, optional
+            if True, only iterates over successful executions
+            (default: False)
+        page_size : int, optional
+            number of executions to fetch per page (default: 10)
+        _before_datetime : datetime, optional
+            internal marker for iteration position (default: None)
+        **kwargs
+            additional keyword fields forwarded to pydantic's
+            BaseModel initializer (useful for subclasses)
+
+        Examples
+        --------
+        >>> # positional
+        >>> ExecutionsIterator("my_pipeline")
+        >>> ExecutionsIterator("my_pipeline", True, 20)
+        >>> # named
+        >>> ExecutionsIterator(pipeline_name="my_pipeline", page_size=20)
+        >>> # mixed
+        >>> ExecutionsIterator("my_pipeline", page_size=20)
+        """
+        super().__init__(
+            pipeline_name=str(pipeline_name),
+            success_only=bool(success_only),
+            page_size=int(page_size),
+            **kwargs,
+        )
+        # Pydantic resets PrivateAttrs to their defaults after super().__init__,
+        # so we must explicitly set it here to preserve the passed value.
+        self._before_datetime = _before_datetime
 
     async def _previous(self) -> Execution | None:
         """Get the previous (older) execution in the sequence.
@@ -84,7 +132,7 @@ class ExecutionsIterator(BaseModel):
         if not self._buffer or self._index >= len(self._buffer):
             dao = AsyncDAO(db_url=Config.get_metadatastore_async_url())
             execs = await dao.get_executions_ext(
-                pipeline_name=self.exec_name,
+                pipeline_name=self.pipeline_name,
                 execs_status="success" if self.success_only else None,
                 before_datetime=self._before_datetime,
                 n=self.page_size,
@@ -99,8 +147,10 @@ class ExecutionsIterator(BaseModel):
                 Execution(
                     id=exec_ext.id,
                     name=exec_ext.name,
+                    docstring=exec_ext.docstring,
                     metadata_root=exec_ext.metadata_root,
                     artifacts_store_root=exec_ext.artifacts_store_root,
+                    username=exec_ext.username,
                     start_timestamp=exec_ext.start_timestamp,
                     end_timestamp=exec_ext.end_timestamp,
                     success=exec_ext.success,
@@ -157,7 +207,8 @@ class ExecutionsIterator(BaseModel):
         logger.debug(f"{self}  - length")
         return _run_async(
             dao.get_executions_count(
-                pipeline_name=self.exec_name, execs_status="success" if self.success_only else None
+                pipeline_name=self.pipeline_name,
+                execs_status="success" if self.success_only else None,
             )
         )
 

@@ -6,14 +6,18 @@ import os
 import re
 import platform
 import boto3
-import botocore
+import cloudpickle
 import pytest
 from unittest.mock import MagicMock
 
-
 from retrain_pipelines.dag_engine.stores import params_store
 from retrain_pipelines.dag_engine.stores.commons import DISK_REF_KEY, metadata_root
-from retrain_pipelines.utils.s3_utils import parse_s3_uri
+from retrain_pipelines.utils.file_utils import read_binary_file
+from retrain_pipelines.utils.s3_utils import (
+    is_s3_path,
+    parse_s3_uri,
+    s3_prefix_has_objects,
+)
 
 
 class TestTempDirId:
@@ -30,23 +34,16 @@ class TestTempDirId:
 class TestParamsSubdirPath:
     """Tests for _params_subdir_path resolution."""
 
-    def test_absolute_path_construction(self, tmp_path, monkeypatch):
+    def test_absolute_path_construction(self, assets_cache):
         """Ensure it correctly joins metadata_root with dir_id and subdir."""
-        monkeypatch.setenv("RP_ASSETS_CACHE", str(tmp_path))
         path = params_store._params_subdir_path("123", "defaults")
-        expected = os.path.join(metadata_root(), "123", "params", "defaults")
+        if is_s3_path(metadata_root()):
+            # S3 paths always use '/' and do not have trailing slashes in build_path
+            expected = metadata_root().rstrip("/") + "/123/params/defaults"
+        else:
+            expected = os.path.join(metadata_root(), "123", "params", "defaults")
 
         assert path == expected
-
-
-class TestParamDiskPath:
-    """Tests for param_disk_path resolution."""
-
-    def test_relative_path_construction(self):
-        """Ensure it returns a relative path suitable for DB disk_ref storage."""
-        path = params_store.param_disk_path("123", "defaults", "my_param")
-
-        assert path == os.path.join("123", "params", "defaults", "my_param.pkl")
 
 
 class TestLinkParamsDefaultsToExec:
@@ -73,34 +70,63 @@ class TestLinkParamsDefaultsToExec:
         if hasattr(params_store.is_windows_path, "cache_clear"):
             params_store.is_windows_path.cache_clear()
 
-    def test_skips_if_src_not_exists(self, tmp_path, monkeypatch):
+    def test_skips_if_src_not_exists(self, assets_cache, monkeypatch):
         """If the source defaults dir doesn't exist, no linking should occur."""
-        monkeypatch.setenv("RP_ASSETS_CACHE", str(tmp_path))
         self._force_non_wsl(monkeypatch)
 
         params_store.link_params_defaults_to_exec("temp1", 1)
         dst = params_store._params_subdir_path(1, "defaults")
 
-        assert not os.path.exists(dst)
+        if is_s3_path(metadata_root()):
+            # For S3, verify no marker object was created under the dst prefix.
+            bucket, prefix = parse_s3_uri(dst)
+            assert not s3_prefix_has_objects(bucket, prefix)
+        else:
+            assert not os.path.exists(dst)
 
-    def test_posix_symlink(self, tmp_path, monkeypatch):
-        """On POSIX, should use os.symlink for linking directories."""
-        monkeypatch.setenv("RP_ASSETS_CACHE", str(tmp_path))
+    def test_link_creation(self, assets_cache, monkeypatch):
+        """Covers local symlink and S3 marker object creation branches."""
         self._force_non_wsl(monkeypatch)
-        # Force platform.system to return Linux to trigger POSIX branch
+        # Force platform.system to return Linux to trigger POSIX branch on local.
+        # Harmless for S3 as the S3 branch returns early.
         monkeypatch.setattr(platform, "system", lambda: "Linux")
 
         temp_id = "temp1"
         exec_id = 1
-        src = params_store._params_subdir_path(temp_id, "defaults")
-        os.makedirs(src)
 
-        params_store.link_params_defaults_to_exec(temp_id, exec_id)
+        if is_s3_path(metadata_root()):
+            # S3 marker creation logic
+            s3 = boto3.client("s3")
+            bucket, meta_prefix = parse_s3_uri(metadata_root())
+            src_prefix = f"{meta_prefix}{temp_id}/params/defaults/"
+            # Put a dummy object in src_prefix so the real s3_prefix_has_objects()
+            # returns True and the marker object creation branch is exercised.
+            s3.put_object(Bucket=bucket, Key=f"{src_prefix}dummy.pkl", Body=b"")
 
-        dst = params_store._params_subdir_path(exec_id, "defaults")
+            params_store.link_params_defaults_to_exec(temp_id, exec_id)
 
-        assert os.path.islink(dst)
-        assert os.readlink(dst) == src
+            # Verify the zero-byte marker object was created at the expected key.
+            readable_src_prefix = src_prefix.replace("/", "／")
+            expected_key = (
+                f"{meta_prefix}{exec_id}/params/defaults/{readable_src_prefix}"
+            )
+
+            try:
+                resp = s3.head_object(Bucket=bucket, Key=expected_key)
+                assert resp["ContentLength"] == 0
+            finally:
+                s3.delete_object(Bucket=bucket, Key=expected_key)
+                s3.delete_object(Bucket=bucket, Key=f"{src_prefix}dummy.pkl")
+        else:
+            # Local symlink creation logic
+            src = params_store._params_subdir_path(temp_id, "defaults")
+            os.makedirs(src)
+
+            params_store.link_params_defaults_to_exec(temp_id, exec_id)
+
+            dst = params_store._params_subdir_path(exec_id, "defaults")
+            assert os.path.islink(dst)
+            assert os.readlink(dst) == src
 
     def test_windows_junction(self, monkeypatch):
         """On Windows/WSL DrvFs, should use cmd.exe mklink /J.
@@ -160,9 +186,11 @@ class TestLinkParamsDefaultsToExec:
         assert args[4] == "C:\\\\fake_cache\\metadata\\1\\params\\defaults"
         assert args[5] == "C:\\\\fake_cache\\metadata\\temp1\\params\\defaults"
 
-    def test_windows_junction_skips_if_exists(self, tmp_path, monkeypatch):
+    def test_windows_junction_skips_if_exists(self, assets_cache, monkeypatch):
         """If dst already exists, the function should return early without linking."""
-        monkeypatch.setenv("RP_ASSETS_CACHE", str(tmp_path))
+        if is_s3_path(metadata_root()):
+            pytest.skip("Windows junctions are only applicable to local filesystems")
+
         self._force_non_wsl(monkeypatch)
         monkeypatch.setattr(platform, "system", lambda: "Linux")
 
@@ -186,87 +214,19 @@ class TestLinkParamsDefaultsToExec:
         # Ensure no link was created
         mock_symlink.assert_not_called()
 
-    def test_s3_marker_object_created(self, bucket_name, monkeypatch):
-        """When metadata_root() resolves to an S3 URI, the function places a
-        zero-byte marker object at the exec_id prefix whose key name encodes
-        the src_prefix.
-
-        Uses the session-scoped MinIO bucket provided by conftest.
-        The real S3 client and create_s3_prefix_symlink implementation
-        exercise the branch end-to-end.
-        """
-        prefix = "test-params-store-s3/"
-        monkeypatch.setenv("RP_ASSETS_CACHE", f"s3://{bucket_name}/{prefix}")
-
-        temp_id = "temp_s3_1"
-        exec_id = 42
-
-        s3 = boto3.client("s3")
-        bucket, meta_prefix = parse_s3_uri(metadata_root())
-        src_prefix = f"{meta_prefix}{temp_id}/params/defaults/"
-
-        # Put a dummy object in src_prefix so the real s3_prefix_has_objects()
-        # returns True and the marker object creation branch is exercised.
-        s3.put_object(Bucket=bucket, Key=f"{src_prefix}dummy.pkl", Body=b"")
-
-        params_store.link_params_defaults_to_exec(temp_id, exec_id)
-
-        # Verify the zero-byte marker object was created at the expected key.
-        # The marker's key is {dst_prefix}{readable_src_prefix}, where
-        # readable_src_prefix replaces '/' with '／' (full-width solidus).
-        readable_src_prefix = src_prefix.replace("/", "／")
-        expected_key = f"{meta_prefix}{exec_id}/params/defaults/{readable_src_prefix}"
-
-        try:
-            resp = s3.head_object(Bucket=bucket, Key=expected_key)
-            assert resp["ContentLength"] == 0
-        finally:
-            s3.delete_object(Bucket=bucket, Key=expected_key)
-            s3.delete_object(Bucket=bucket, Key=f"{src_prefix}dummy.pkl")
-
-    def test_s3_marker_object_skipped_when_src_empty(self, bucket_name, monkeypatch):
-        """When metadata_root() resolves to an S3 URI but no defaults were
-        cloudpickled under src_prefix, the function should skip marker creation.
-
-        Covers the early-return guard branch in the S3 path.
-        """
-        prefix = "test-params-store-s3-empty/"
-        monkeypatch.setenv("RP_ASSETS_CACHE", f"s3://{bucket_name}/{prefix}")
-
-        temp_id = "temp_s3_empty"
-        exec_id = 43
-
-        s3 = boto3.client("s3")
-        bucket, meta_prefix = parse_s3_uri(metadata_root())
-
-        # Call function without creating any objects in src_prefix.
-        # The real s3_prefix_has_objects() will return False.
-        params_store.link_params_defaults_to_exec(temp_id, exec_id)
-
-        src_prefix = f"{meta_prefix}{temp_id}/params/defaults/"
-        readable_src_prefix = src_prefix.replace("/", "／")
-        expected_key = f"{meta_prefix}{exec_id}/params/defaults/{readable_src_prefix}"
-
-        # Assert marker object was NOT created
-        with pytest.raises(botocore.exceptions.ClientError) as exc_info:
-            s3.head_object(Bucket=bucket, Key=expected_key)
-        assert exc_info.value.response["Error"]["Code"] == "404"
-
 
 class TestValueToStorable:
     """Tests for value_to_storable serialization logic."""
 
-    def test_json_safe_value(self, tmp_path, monkeypatch):
+    def test_json_safe_value(self, assets_cache):
         """Natively JSON-serializable values should be returned as-is."""
-        monkeypatch.setenv("RP_ASSETS_CACHE", str(tmp_path))
         obj = {"a": 1, "b": [2, 3]}
         res = params_store.value_to_storable("1", "defaults", "p1", obj)
 
         assert res == obj
 
-    def test_cloudpickle_fallback(self, tmp_path, monkeypatch):
+    def test_cloudpickle_fallback(self, assets_cache):
         """Non-JSON-serializable objects should be cloudpickled to disk."""
-        monkeypatch.setenv("RP_ASSETS_CACHE", str(tmp_path))
         obj = object()
         res = params_store.value_to_storable("1", "defaults", "p1", obj)
 
@@ -274,10 +234,14 @@ class TestValueToStorable:
         assert DISK_REF_KEY in res
 
         rel_path = res[DISK_REF_KEY]
-        assert rel_path == os.path.join("1", "params", "defaults", "p1.pkl")
+        if is_s3_path(metadata_root()):
+            assert rel_path == "1/params/defaults/p1.pkl"
+        else:
+            assert rel_path == os.path.join("1", "params", "defaults", "p1.pkl")
 
-        abs_path = os.path.join(metadata_root(), rel_path)
-        assert os.path.exists(abs_path)
+        # Verify the artifact was written to the configured backend.
+        data = read_binary_file(metadata_root(), [rel_path])
+        assert cloudpickle.loads(data) is not None
 
 
 class TestAttrRefFromParamStorable:
@@ -299,9 +263,8 @@ class TestAttrRefFromParamStorable:
             "inline": None,
         }
 
-    def test_inline_storable(self, tmp_path, monkeypatch):
+    def test_inline_storable(self, assets_cache):
         """Inline JSON-safe values should compute SHA on the resolved object."""
-        monkeypatch.setenv("RP_ASSETS_CACHE", str(tmp_path))
         storable = 42
         res = params_store.attr_ref_from_param_storable(storable)
 

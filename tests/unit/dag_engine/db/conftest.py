@@ -99,8 +99,8 @@ async def async_dao():
     engine = create_async_engine(
         os.environ["RP_METADATASTORE_ASYNC_URL"],  # sqlite in-mem
         future=True,
-        # poolclass=StaticPool,
-        # connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+        connect_args={"check_same_thread": False},
     )
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

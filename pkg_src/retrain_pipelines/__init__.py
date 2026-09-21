@@ -22,6 +22,11 @@ from .dag_engine import run_alembic_upgrade_once  # noqa: E402
 ################################################################
 
 
+################################################################
+#                      package wave effect                     #
+################################################################
+
+
 if (
     not os.getenv("RP_LAUNCHER_SUPPRESS_WAVE", None)
     and not os.getenv("RP_LAUNCHER_SUBPROCESS", None)
@@ -38,6 +43,43 @@ else:
 ################################################################
 
 
+################################################################
+#                           DB schema                          #
+################################################################
+
+
 logging.getLogger().debug(f"cache root directory : {Config.get_assets_cache_root()}")
 if not bool(os.getenv("ALEMBIC_REV_AUTOGEN", False)):
     run_alembic_upgrade_once()
+
+
+################################################################
+
+
+################################################################
+#                        SDK convenience                       #
+################################################################
+
+from .dag_engine import sdk  # noqa: E402
+
+
+def get_latest_execution(
+    pipeline_name: str,
+    success_only: bool = False,
+) -> sdk.core.Execution:
+    return sdk.core.Execution.get_latest(pipeline_name, success_only)
+
+
+def get_execution_by_id(id: int) -> sdk.core.Execution:
+    return sdk.core.Execution.get_by_id(id)
+
+
+def get_executions_iterator(
+    pipeline_name: str,
+    success_only: bool = False,
+    page_size: int = 10,
+) -> sdk.ExecutionsIterator:
+    return sdk.ExecutionsIterator(pipeline_name, success_only, page_size)
+
+
+################################################################

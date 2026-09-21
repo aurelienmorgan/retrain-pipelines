@@ -20,6 +20,7 @@ from .model import (
     TaskContextAttr,
     TaskExt,
     TaskGroup,
+    TaskPayloadAttr,
     TaskTrace,
     TaskType,
 )
@@ -356,11 +357,11 @@ class DAO(DAOBase):
         return self._add_entity(TaskGroup, **kwargs)
 
     def update_execution(self, id, **kwargs) -> Execution:
-        """Update execution row’s fields by its id."""
+        """Update execution row's fields by its id."""
         return self._update_entity(Execution, entity_id=id, **kwargs)
 
     def update_task(self, id, **kwargs) -> Task:
-        """Update task row’s fields by its id."""
+        """Update task row's fields by its id."""
         return self._update_entity(Task, entity_id=id, **kwargs)
 
     def get_executions(self, exec_name) -> list[Execution]:
@@ -392,6 +393,16 @@ class DAO(DAOBase):
         """
         if rows:
             self._batch_add_entities(TaskContextAttr, items=rows)
+
+    def set_task_exit_payload(self, row: dict) -> None:
+        """Insert a task_exit_payloads row for a single task.
+
+        Parameters
+        ----------
+        row : dict
+            Must contain: task_id, sha, disk_ref, inline_val.
+        """
+        self._add_entity(TaskPayloadAttr, **row)
 
 
 class AsyncDAO(DAOBase):
@@ -935,6 +946,13 @@ class AsyncDAO(DAOBase):
 
         A single query fully reconstructs the task's exit context in O(1).
 
+        Note
+        ----
+        We do case-insensitive sorting to ensure cross-DB drivers compatibility,
+        necessary for class instances comparisons, where list elements ordering
+        matters. One use-case being for unit-testing and assertions against
+        hard-coded values.
+
         Parameters
         ----------
         task_id : int
@@ -943,13 +961,327 @@ class AsyncDAO(DAOBase):
         Returns
         -------
         list[TaskContextAttr]
-            All rows for this task (surviving and deleted attrs).
+            All rows for this task (surviving and deleted attrs), sorted.
             Empty list if none found.
         """
-        statement = select(TaskContextAttr).where(TaskContextAttr.task_id == task_id)
+        statement = (
+            select(TaskContextAttr)
+            .where(TaskContextAttr.task_id == task_id)
+            .order_by(func.lower(TaskContextAttr.attr_name))
+        )
         async with self._get_session() as session:
             result = await session.execute(statement)
             return list(result.scalars().all())
+
+    async def get_execution_latest_context_attrs(
+        self, execution_id: int
+    ) -> list[TaskContextAttr] | None:
+        """Return the exit-context attrs of the last non-parallel task of an execution.
+
+        The contexts store's diff mechanism carries every surviving attr forward
+        at each task exit (unchanged attrs are re-recorded verbatim in table).
+        The last non-parallel task's exit context therefore IS the full
+        execution-level context: any attr absent from it was explicitly removed
+        by a preceding task and is no longer part of the execution context.
+
+        See :meth:`retrain_pipelines.dag_engine.sdk.core.Execution.get_exit_context()`
+        for further details.
+
+        Parameters
+        ----------
+        execution_id : int
+            Execution id.
+
+        Returns
+        -------
+        list[TaskContextAttr] or None
+            All rows written at the last non-parallel task's exit, sorted.
+            Empty list if no context attrs have been recorded.
+            None if the execution did not complete successfully (still running
+            or completed with at least one failed task).
+        """
+        # "Last" is the task with the highest id among ``rank IS NULL`` tasks for
+        # this execution. ``task_id`` is an auto-increment integer, so ``MAX(id)`` is
+        # unambiguously the latest task to have run on the main DAG spine.
+
+        # Single query: LEFT JOIN execution (success check) with task_context_attrs.
+        # The succeeded flag is always present (from the execution row).
+        # The attr columns are NULL when no attrs exist (outerjoin).
+        failed_exists = (
+            select(Task.id)
+            .where(and_(Task.exec_id == execution_id, Task.failed.is_(True)))
+            .exists()
+        )
+        last_task_id_subq = (
+            select(func.max(Task.id))
+            .where(and_(Task.exec_id == execution_id, Task.rank.is_(None)))
+            .scalar_subquery()
+        )
+        stmt = (
+            select(
+                case(
+                    (and_(Execution._end_timestamp.is_not(None), ~failed_exists), 1), else_=0
+                ).label("succeeded"),
+                TaskContextAttr.task_id,
+                TaskContextAttr.attr_name,
+                TaskContextAttr.eTAG,
+                TaskContextAttr.sha,
+                TaskContextAttr.disk_ref,
+                TaskContextAttr.inline_val,
+            )
+            .select_from(Execution)
+            .outerjoin(TaskContextAttr, TaskContextAttr.task_id == last_task_id_subq)
+            .where(Execution.id == execution_id)
+            .order_by(func.lower(TaskContextAttr.attr_name))
+        )
+        async with self._get_session() as session:
+            result = await session.execute(stmt)
+            rows = result.all()
+
+        if not rows:
+            return None  # execution not found
+        if not rows[0].succeeded:
+            return None
+        return [
+            TaskContextAttr(
+                task_id=row.task_id,
+                attr_name=row.attr_name,
+                eTAG=row.eTAG,
+                sha=row.sha,
+                disk_ref=row.disk_ref,
+                inline_val=row.inline_val,
+            )
+            for row in rows
+            if row.task_id is not None  # outerjoin yields NULL attr cols when no attrs exist
+        ]
+
+    async def get_task_context_attrs_bulk(
+        self, task_ids: list[int]
+    ) -> dict[int, list[TaskContextAttr]]:
+        """Return task_context_attrs rows for multiple task_ids in one query.
+
+        Parameters
+        ----------
+        task_ids : list[int]
+            Task IDs to fetch context attrs for.
+
+        Returns
+        -------
+        dict[int, list[TaskContextAttr]]
+            Mapping of task_id => list of TaskContextAttr rows (sorted by attr-name
+            for each task-id).
+            Task IDs with no recorded attrs are absent from the result.
+        """
+        if not task_ids:
+            return {}
+        statement = (
+            select(TaskContextAttr)
+            .where(TaskContextAttr.task_id.in_(task_ids))
+            .order_by(TaskContextAttr.task_id, func.lower(TaskContextAttr.attr_name))
+        )
+        async with self._get_session() as session:
+            result = await session.execute(statement)
+            rows = result.scalars().all()
+        out: dict[int, list[TaskContextAttr]] = {}
+        for row in rows:
+            out.setdefault(row.task_id, []).append(row)
+        return out
+
+    async def get_task_exit_payload(self, task_id: int) -> TaskPayloadAttr | None:
+        """Return the task_exit_payloads row for the given task_id.
+
+        Parameters
+        ----------
+        task_id : int
+            The Task.id to fetch the exit payload for.
+
+        Returns
+        -------
+        TaskPayloadAttr, optional
+            None if no payload was recorded (e.g. task failed before serialization).
+        """
+        statement = select(TaskPayloadAttr).where(TaskPayloadAttr.task_id == task_id)
+        async with self._get_session() as session:
+            result = await session.execute(statement)
+            return result.scalar_one_or_none()
+
+    async def get_task_exit_payloads_bulk(self, task_ids: list[int]) -> dict[int, TaskPayloadAttr]:
+        """Return task_exit_payloads rows for multiple task_ids in one query.
+
+        Parameters
+        ----------
+        task_ids : list[int]
+            Task IDs to fetch payloads for.
+
+        Returns
+        -------
+        dict[int, TaskPayloadAttr]
+            Mapping of task_id => payload row.
+            Task IDs with no recorded payload are absent from the result.
+        """
+        if not task_ids:
+            return {}
+        statement = select(TaskPayloadAttr).where(TaskPayloadAttr.task_id.in_(task_ids))
+        async with self._get_session() as session:
+            result = await session.execute(statement)
+            return {row.task_id: row for row in result.scalars().all()}
+
+    async def get_execution_taskgroup_ranks(
+        self, execution_id: int, taskgroup_name: str
+    ) -> tuple[TaskGroup, list] | None:
+        """Return a TaskGroup and its associated aggregated task ranks.
+
+        Parameters
+        ----------
+        execution_id : int
+            The Execution.id to filter tasks on.
+        taskgroup_name : str
+            The name of the taskgroup to retrieve.
+
+        Returns
+        -------
+        tuple[TaskGroup, list] | None
+            A tuple containing the TaskGroup ORM object and
+            a sorted list of ranks.
+            None if the taskgroup is not found.
+        """
+        # ---------------------------------------------------------
+        # `tasks.rank` is stored as a JSON array (e.g. `[1, 2]`).
+        # We intentionally DO NOT use SQL `DISTINCT` or `ORDER BY` on
+        # `Task.rank` here.
+        # PostgreSQL's native `json` type lacks a default ordering operator.
+        # Attempting `ORDER BY rank` or `DISTINCT rank` in SQL raises:
+        # `asyncpg.exceptions.UndefinedFunctionError: could not identify an
+        # ordering operator for type json`.
+        # SQLite allows it (treating JSON as text), but to guarantee
+        # cross-database compatibility and prevent runtime crashes on
+        # Postgres, we fetch the raw matched rows and perform the
+        # deduplication and sorting safely in Python.
+        # ---------------------------------------------------------
+        stmt = (
+            select(TaskGroup, Task.rank)
+            .select_from(TaskGroup)
+            .join(TaskType, TaskType.taskgroup_uuid == TaskGroup.uuid)
+            .join(Task, and_(Task.tasktype_uuid == TaskType.uuid, Task.exec_id == execution_id))
+            .where(
+                and_(
+                    TaskGroup.exec_id == execution_id,
+                    TaskGroup.name == taskgroup_name,
+                )
+            )
+        )
+
+        async with self._get_session() as session:
+            result = await session.execute(stmt)
+            rows = result.all()
+
+            if not rows:
+                return None
+
+            taskgroup = rows[0][0]
+            unique_ranks = []
+            seen = set()
+            for _, rank in rows:
+                # Convert list ranks to tuples so they are hashable
+                # and can be added to the `seen` set for deduplication.
+                rank_key = tuple(rank) if isinstance(rank, list) else rank
+                if rank_key not in seen:
+                    seen.add(rank_key)
+                    unique_ranks.append(rank)
+
+            # Sort the ranks in Python to compensate for the inability to
+            # sort JSON arrays in PostgreSQL.
+            # We use a custom key to safely handle `None` values (placing
+            # them at the beginning) and to ensure lists of integers are
+            # sorted numerically.
+            unique_ranks.sort(key=lambda r: (r is None, r))
+
+            return taskgroup, unique_ranks
+
+    async def get_taskgroup_nested_tasks(
+        self, execution_id: int, taskgroup_name: str, rank: str
+    ) -> list[TaskExt] | None:
+        """Return all task instances in a named taskgroup for a given execution rank.
+
+        Includes tasks from nested taskgroups, resolved recursively (BFS).
+
+        Parameters
+        ----------
+        execution_id : int
+            Execution id.
+        taskgroup_name : str
+            Name of the taskgroup.
+        rank : str
+            rank of the DAG sub-branch if applicable.
+
+        Returns
+        -------
+        list[TaskExt], optional
+            Sorted by ``TaskType.name``. One TaskExt per task instance
+            (Task + TaskType extension fields).
+            None if the named taskgroup does not exist in this execution.
+            Empty list if the taskgroup has no member tasks.
+        """
+        all_tgs = await self.get_execution_taskgroups_list(execution_id)
+        if not all_tgs:
+            return None
+
+        tg_by_uuid: dict[str, TaskGroup] = {str(tg.uuid): tg for tg in all_tgs}
+        root_tg = next((tg for tg in all_tgs if tg.name == taskgroup_name), None)
+        if root_tg is None:
+            return None
+
+        # BFS: collect all descendant taskgroup UUIDs (including root).
+        # tg.elements stores UUID strings with dashes (as stored at DAG declaration time).
+        # tg_by_uuid is keyed the same way via str(tg.uuid), so the lookup is consistent.
+        descendant_uuids: set[UUID] = set()
+        queue: list[TaskGroup] = [root_tg]
+        while queue:
+            tg = queue.pop()
+            descendant_uuids.add(tg.uuid)
+            for element_str in tg.elements:
+                if element_str in tg_by_uuid:
+                    queue.append(tg_by_uuid[element_str])
+
+        # Select Task alongside the TaskType extension fields needed to build TaskExt.
+        stmt = (
+            select(
+                TaskType.name,
+                TaskType.ui_css,
+                TaskType.is_parallel,
+                TaskType.merge_func,
+                TaskType.taskgroup_uuid,
+                Task,
+            )
+            .join(TaskType, Task.tasktype_uuid == TaskType.uuid)
+            .where(
+                and_(
+                    Task.exec_id == execution_id,
+                    Task.rank == rank,
+                    TaskType.taskgroup_uuid.in_(descendant_uuids),
+                )
+            )
+            .order_by(func.lower(TaskType.name))
+        )
+
+        async with self._get_session() as session:
+            result = await session.execute(stmt)
+            rows = result.all()
+
+        # Convert ORM rows to TaskExt model objects.
+        out_list: list[TaskExt] = []
+        for name, ui_css, is_parallel, merge_func, taskgroup_uuid, task_orm_obj in rows:
+            task_ext = TaskExt(**{
+                **task_orm_obj.__dict__,
+                "name": name,
+                "ui_css": ui_css,
+                "is_parallel": is_parallel,
+                "merge_func": merge_func["name"] if merge_func else None,
+                "taskgroup_uuid": taskgroup_uuid,
+            })
+            out_list.append(task_ext)
+
+        return out_list
 
     async def get_task_ext(self, task_id: int) -> TaskExt | None:
         """Return a TaskExt (Task + TaskType.name) by task id.
@@ -1124,10 +1456,12 @@ def after_insert_task_listener(mapper, connection, target):
     try:
         requests.post(new_task_api_endpoint, json=data_snapshot)
     except requests.exceptions.ConnectionError:
-        # logger.info(
-        # "WebConsole apparently not running " +
-        # f"({Config.get_web_server_url()})"
-        # )
+        """
+        logger.info(
+            "WebConsole apparently not running " +
+            f"({Config.get_web_server_url()})"
+        )
+        """
         pass
     except Exception as ex:
         logger.warning(ex)
@@ -1192,10 +1526,12 @@ def after_task_update(mapper, connection, target):
         try:
             requests.post(task_ended_api_endpoint, json=data_snapshot)
         except requests.exceptions.ConnectionError:
-            # logger.info(
-            # "WebConsole apparently not running " +
-            # f"({Config.get_web_server_url()})"
-            # )
+            """
+            logger.info(
+                "WebConsole apparently not running " +
+                f"({Config.get_web_server_url()})"
+            )
+            """
             pass
         except Exception as ex:
             logger.warning(ex)

@@ -74,24 +74,6 @@ def _params_subdir_path(dir_id: int | str, subdir: str) -> str:
     return os.path.join(metadata_root(), str(dir_id), "params", subdir)
 
 
-def param_disk_path(dir_id: int | str, subdir: str, param_name: str) -> str:
-    """Path for a param cloudpickle artifact, relative to metadata_root().
-
-    The relative form is what gets stored in DB disk_ref dicts,
-    avoiding redundant repetition of the metadata_root() prefix.
-
-    Parameters
-    ----------
-    dir_id : int | str
-        Either a numeric exec_id or a temp_dir_id string (used before exec_id is known).
-    subdir : str
-        Sub-directory under params/ (e.g. ``"defaults"`` or ``"overrides"``).
-    param_name : str
-        Parameter name; used as the artifact filename stem.
-    """
-    return os.path.join(str(dir_id), "params", subdir, f"{param_name}.pkl")
-
-
 def link_params_defaults_to_exec(temp_id: str, exec_id: int) -> None:
     """Link metadata/<exec_id>/params/defaults => metadata/<temp_id>/params/defaults.
 
@@ -177,7 +159,11 @@ def value_to_storable(dir_id: int | str, subdir: str, param_name: str, obj: Any)
         return try_json_serialize(obj)
     except TypeError:
         raw_bytes = cloudpickle.dumps(obj)
-        rel_path = param_disk_path(dir_id, subdir, param_name)
+        # Relative path for the param cloudpickle artifact (relative to metadata_root()).
+        # The relative form is what gets stored in DB disk_ref dicts,
+        # avoiding redundant repetition of the metadata_root() prefix.
+        sep = "/" if is_s3_path(metadata_root()) else os.sep
+        rel_path = sep.join([str(dir_id), "params", subdir, f"{param_name}.pkl"])
         write_binary_file(metadata_root(), [rel_path], raw_bytes)
         return {
             "__eTAG__": generate_etag(),

@@ -1,8 +1,14 @@
 import logging
 import os
-import platform
+import re
 import subprocess
 from functools import lru_cache
+
+# Matches all valid Windows native path formats:
+# 1. Drive paths (strictly single letter A-Z): C:\, D:/, c:\, etc.
+# 2. UNC paths: \\server\share, //server/share
+# 3. Long device paths: \\?\C:\, \\.\COM1
+_WIN_PATH_REGEX = re.compile(r"^([a-zA-Z]:[\\/]|[\\/]{2})")
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -22,31 +28,18 @@ def is_wsl():
     return False
 
 
-@lru_cache
+@lru_cache(maxsize=128)
 def is_windows_path(path_dir) -> bool:
-    r"""Check whether the path is a Windows native path (eg. C:\...)."""
-    if is_wsl():
-        try:
-            # Try to convert the path to a Windows path
-            logger.debug(path_dir)
-            result = subprocess.run(
-                ["wslpath", "-u", path_dir], capture_output=True, text=True, check=True
-            )  # windows to wsl (for wsl to windows, use "-w" flag instead)
-            windows_path = result.stdout.strip()
-            # Check if the conversion resulted in a change
-            logger.debug(
-                f"{(windows_path != path_dir)} - "
-                + f"windows_path : {windows_path} - path_dir : {path_dir}"
-            )
-            return windows_path != path_dir
-        except subprocess.CalledProcessError as cpErr:
-            # likely not a valid Windows path
-            logger.warning(str(cpErr))
-            return False
-    else:
-        # If not in WSL, we can't reliably determine the path type
-        # assume it's Linux if on Linux OS
-        return platform.system().lower() not in ["linux", "darwin"]
+    r"""Check whether the path is a Windows native path.
+
+    (eg. C:\... or \\server\share).
+    """
+    if not path_dir:
+        return False
+
+    path_str = str(path_dir)
+    # Syntactic check based on Microsoft Windows path specifications.
+    return bool(_WIN_PATH_REGEX.match(path_str))
 
 
 def is_wsl_mount_path(path_dir) -> bool:

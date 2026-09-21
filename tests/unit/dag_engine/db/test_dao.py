@@ -2,6 +2,7 @@
 Unit tests for retrain_pipelines.dag_engine.db.dao.
 """
 
+import json
 import logging
 import threading
 from datetime import datetime, timedelta, timezone
@@ -9,6 +10,7 @@ from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import text
 from unittest.mock import AsyncMock
 
 from retrain_pipelines.dag_engine.db.dao import _truncate_to_millis
@@ -19,6 +21,7 @@ from retrain_pipelines.dag_engine.db.model import (
     TaskContextAttr,
     TaskExt,
     TaskGroup,
+    TaskPayloadAttr,
     TaskTrace,
     TaskType,
 )
@@ -81,7 +84,7 @@ class TestTruncateToMillis:
 
 
 # ==============================================================================
-# DAOBase – sync, shared in-memory SQLite
+# DAOBase - sync, shared in-memory SQLite
 # ==============================================================================
 
 
@@ -343,7 +346,7 @@ class TestDAOTaskTrace:
 
 
 # ==============================================================================
-# DAO - concurrent stress – isolated_dao (NullPool)
+# DAO - concurrent stress - isolated_dao (NullPool)
 # ==============================================================================
 
 
@@ -1449,8 +1452,6 @@ class TestAsyncDAO:
 
     @pytest.mark.asyncio
     async def test_async_batch_add_entities(self, async_dao):
-        from sqlalchemy import text
-
         exec_id = await async_dao._async_add_entity(
             Execution,
             name="batch_pipe",
@@ -1503,8 +1504,6 @@ class TestAsyncDAO:
 
     @pytest.mark.asyncio
     async def test_batch_add_entities_dispatches_to_async(self, async_dao):
-        from sqlalchemy import text
-
         exec_id = await async_dao._async_add_entity(
             Execution,
             name="disp_batch",
@@ -1825,8 +1824,6 @@ class TestAsyncDAOExecutionTasksList:
 
     @pytest.mark.asyncio
     async def test_get_execution_tasks_list_merge_func_none(self, async_dao):
-        from sqlalchemy import text
-
         exec_id = await async_dao._async_add_entity(
             Execution,
             name="mf_pipe",
@@ -1858,8 +1855,6 @@ class TestAsyncDAOExecutionTasksList:
 
     @pytest.mark.asyncio
     async def test_get_execution_tasks_list_merge_func_truthy(self, async_dao):
-        from sqlalchemy import text
-
         exec_id = await async_dao._async_add_entity(
             Execution,
             name="mf_pipe",
@@ -1899,8 +1894,6 @@ class TestAsyncDAOExecutionTaskTypes:
     async def test_get_execution_tasktypes_list_builds_tasktype_objects(
         self, async_dao
     ):
-        from sqlalchemy import text
-
         exec_id = await async_dao._async_add_entity(
             Execution,
             name="tasktypes_loop_pipe",
@@ -1952,8 +1945,6 @@ class TestAsyncDAOExecutionTaskGroups:
     async def test_get_execution_taskgroups_list_builds_taskgroup_objects(
         self, async_dao
     ):
-        from sqlalchemy import text
-
         exec_id = await async_dao._async_add_entity(
             Execution,
             name="taskgroups_loop_pipe",
@@ -2094,8 +2085,6 @@ class TestAsyncDAOExecutionNumber:
 class TestAsyncDAOTaskgroupsHierarchy:
     @pytest.mark.asyncio
     async def test_get_taskgroups_hierarchy_with_ui_css(self, async_dao):
-        from sqlalchemy import text
-
         tg_uuid = uuid4()
         async with async_dao.engine.begin() as conn:
             await conn.execute(
@@ -2163,8 +2152,6 @@ class TestAsyncDAOTaskgroupsHierarchy:
 class TestAsyncDAOTaskTypeDocstring:
     @pytest.mark.asyncio
     async def test_get_tasktype_docstring_returns_value_when_set(self, async_dao):
-        from sqlalchemy import text
-
         exec_id = await async_dao._async_add_entity(
             Execution,
             name="docstr_pipe",
@@ -2242,7 +2229,7 @@ class TestAsyncDAOTaskTraces:
 
 
 class TestDAOTaskContextAttrs:
-    """add_task_context_attrs – method was never called."""
+    """add_task_context_attrs - method was never called."""
 
     def _seed(self, dao):
         """Return a task_id in a fresh isolated database."""
@@ -2284,8 +2271,64 @@ class TestDAOTaskContextAttrs:
         isolated_dao.add_task_context_attrs(rows)
 
     def test_add_task_context_attrs_empty_rows_is_noop(self, isolated_dao):
-        """(False branch): empty list must skip the batch insert."""
+        """empty list must skip the batch insert."""
         isolated_dao.add_task_context_attrs([])
+
+
+# ==============================================================================
+# DAOTaskPayloadAttr
+# ==============================================================================
+
+
+class TestDAOTaskPayloadAttr:
+    """set_task_exit_payload - inserts a TaskPayloadAttr row."""
+
+    def _seed(self, dao):
+        """Return a task_id in a fresh isolated database."""
+        tt_uuid = uuid4()
+        with patch("requests.post"):
+            exec_id = dao.add_execution(
+                name="payload_pipe",
+                username="u",
+                _start_timestamp=_NOW,
+                metadata_root="/tmp/meta",
+                artifacts_store_root="/tmp/artifacts",
+            )
+            dao.add_tasktype(
+                uuid=tt_uuid,
+                exec_id=exec_id,
+                order=0,
+                name="payload_step",
+                is_parallel=False,
+                children=[],
+            )
+        return dao.add_task(
+            tasktype_uuid=tt_uuid, exec_id=exec_id, _start_timestamp=_NOW
+        )
+
+    def test_set_task_exit_payload_with_disk_ref(self, isolated_dao):
+        """Covers the disk_ref path: payload stored as a cloudpickled artifact."""
+        task_id = self._seed(isolated_dao)
+        row = {
+            "task_id": task_id,
+            "sha": "abc123",
+            "disk_ref": "payloads/task_1.pkl",
+            "inline_val": None,
+        }
+        with patch("requests.post"):
+            isolated_dao.set_task_exit_payload(row)
+
+    def test_set_task_exit_payload_with_inline_val(self, isolated_dao):
+        """Covers the inline_val path: JSON-safe value stored directly."""
+        task_id = self._seed(isolated_dao)
+        row = {
+            "task_id": task_id,
+            "sha": None,
+            "disk_ref": None,
+            "inline_val": {"result": 42},
+        }
+        with patch("requests.post"):
+            isolated_dao.set_task_exit_payload(row)
 
 
 # ==============================================================================
@@ -2299,15 +2342,13 @@ class TestAsyncDAOTaskContextAttrs:
 
     @pytest.mark.asyncio
     async def test_get_task_context_attrs_returns_empty_list(self, async_dao):
-        """method body – no rows => empty list."""
+        """method body - no rows => empty list."""
         result = await async_dao.get_task_context_attrs(task_id=99999)
         assert result == []
 
     @pytest.mark.asyncio
     async def test_get_task_context_attrs_returns_rows(self, seeded_async_dao):
-        """method body – with a real task_id and inserted attr."""
-        from sqlalchemy import text
-
+        """method body - with a real task_id and inserted attr."""
         dao, (exec_id, _) = seeded_async_dao
         tasks = await dao.get_execution_tasks_list(exec_id)
         task_id = tasks[0].id
@@ -2326,6 +2367,393 @@ class TestAsyncDAOTaskContextAttrs:
         assert len(result) == 1
         assert isinstance(result[0], TaskContextAttr)
         assert result[0].attr_name == "out"
+
+
+# ==============================================================================
+# AsyncDAOTaskContextAttrsBulk
+# ==============================================================================
+
+
+class TestAsyncDAOTaskContextAttrsBulk:
+    """Cover get_task_context_attrs_bulk branches."""
+
+    @pytest.mark.asyncio
+    async def test_empty_task_ids_returns_empty_dict(self, async_dao):
+        """Short-circuit branch: empty list => empty dict."""
+        result = await async_dao.get_task_context_attrs_bulk([])
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_returns_dict_grouped_by_task_id(self, async_dao):
+        """Happy path: attrs for multiple tasks grouped by task_id."""
+        exec_id = await async_dao._async_add_entity(
+            Execution,
+            name="bulk_ctx_pipe",
+            username="u",
+            _start_timestamp=_NOW,
+            metadata_root="/tmp/meta",
+            artifacts_store_root="/tmp/artifacts",
+        )
+        tt_uuid = uuid4()
+        async with async_dao.engine.begin() as conn:
+            await conn.execute(
+                text(
+                    'INSERT INTO tasktypes (uuid, exec_id, "order", name, '
+                    "is_parallel, children) VALUES "
+                    "(:uuid, :eid, 0, 'bulk_step', 0, '[]')"
+                ),
+                {"uuid": tt_uuid.hex, "eid": exec_id},
+            )
+            await conn.execute(
+                text(
+                    "INSERT INTO tasks (tasktype_uuid, exec_id, start_timestamp) "
+                    "VALUES (:tu, :eid, :s)"
+                ),
+                {"tu": tt_uuid.hex, "eid": exec_id, "s": _NOW.isoformat()},
+            )
+            row = await conn.execute(text("SELECT last_insert_rowid()"))
+            task_id_1 = row.scalar()
+            await conn.execute(
+                text(
+                    "INSERT INTO tasks (tasktype_uuid, exec_id, start_timestamp) "
+                    "VALUES (:tu, :eid, :s)"
+                ),
+                {"tu": tt_uuid.hex, "eid": exec_id, "s": _NOW.isoformat()},
+            )
+            row = await conn.execute(text("SELECT last_insert_rowid()"))
+            task_id_2 = row.scalar()
+
+            await conn.execute(
+                text(
+                    "INSERT INTO task_context_attrs"
+                    " (task_id, attr_name, eTAG, sha, disk_ref, inline_val)"
+                    " VALUES (:tid, 'a1', 'e1', NULL, NULL, '{\"v\": 1}')"
+                ),
+                {"tid": task_id_1},
+            )
+            await conn.execute(
+                text(
+                    "INSERT INTO task_context_attrs"
+                    " (task_id, attr_name, eTAG, sha, disk_ref, inline_val)"
+                    " VALUES (:tid, 'a2', 'e2', NULL, NULL, '{\"v\": 2}')"
+                ),
+                {"tid": task_id_2},
+            )
+
+        result = await async_dao.get_task_context_attrs_bulk([task_id_1, task_id_2])
+        assert task_id_1 in result
+        assert task_id_2 in result
+        assert len(result[task_id_1]) == 1
+        assert len(result[task_id_2]) == 1
+
+    @pytest.mark.asyncio
+    async def test_task_ids_without_attrs_absent_from_result(self, async_dao):
+        """Task IDs with no recorded attrs are absent from the result dict."""
+        result = await async_dao.get_task_context_attrs_bulk([99998, 99999])
+        assert result == {}
+
+
+# ==============================================================================
+# AsyncDAOExecutionLatestContextAttrs
+# ==============================================================================
+
+
+class TestAsyncDAOExecutionLatestContextAttrs:
+    """Cover get_execution_latest_context_attrs branches."""
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_execution_not_found(self, async_dao):
+        """Execution does not exist => outer join yields no rows => None."""
+        result = await async_dao.get_execution_latest_context_attrs(99999)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_execution_still_running(self, async_dao):
+        """Execution has no _end_timestamp => succeeded flag is 0 => None.
+
+        Uses raw SQL to avoid the ORM ``_end_timestamp`` set event that
+        fires ``after_end_timestamp_change`` and triggers a synchronous
+        lazy-load of ``target.tasks`` outside a greenlet context.
+        """
+        async with async_dao.engine.begin() as conn:
+            await conn.execute(
+                text(
+                    "INSERT INTO executions (name, username, start_timestamp,"
+                    " metadata_root, artifacts_store_root) "
+                    "VALUES ('running_pipe', 'u', :s, '/tmp/meta', '/tmp/artifacts')"
+                ),
+                {"s": _NOW.isoformat()},
+            )
+            row = await conn.execute(text("SELECT last_insert_rowid()"))
+            exec_id = row.scalar()
+
+        result = await async_dao.get_execution_latest_context_attrs(exec_id)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_execution_has_failed_task(self, async_dao):
+        """Execution completed but has a failed task => succeeded flag is 0 => None."""
+        _end = (_NOW + timedelta(hours=1)).isoformat()
+        async with async_dao.engine.begin() as conn:
+            await conn.execute(
+                text(
+                    "INSERT INTO executions (name, username, start_timestamp,"
+                    " end_timestamp, metadata_root, artifacts_store_root) "
+                    "VALUES ('failed_pipe', 'u', :s, :e, '/tmp/meta', '/tmp/artifacts')"
+                ),
+                {"s": _NOW.isoformat(), "e": _end},
+            )
+            row = await conn.execute(text("SELECT last_insert_rowid()"))
+            exec_id = row.scalar()
+
+            tt_uuid = uuid4()
+            await conn.execute(
+                text(
+                    'INSERT INTO tasktypes (uuid, exec_id, "order", name, '
+                    "is_parallel, children) VALUES "
+                    "(:uuid, :eid, 0, 'fail_step', 0, '[]')"
+                ),
+                {"uuid": tt_uuid.hex, "eid": exec_id},
+            )
+            await conn.execute(
+                text(
+                    "INSERT INTO tasks (tasktype_uuid, exec_id, start_timestamp, "
+                    "end_timestamp, failed, rank) VALUES "
+                    "(:tu, :eid, :s, :e, 1, NULL)"
+                ),
+                {
+                    "tu": tt_uuid.hex,
+                    "eid": exec_id,
+                    "s": _NOW.isoformat(),
+                    "e": _end,
+                },
+            )
+
+        result = await async_dao.get_execution_latest_context_attrs(exec_id)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_returns_empty_list_when_succeeded_no_attrs(self, async_dao):
+        """Execution succeeded but no context attrs recorded => empty list."""
+        _end = (_NOW + timedelta(hours=1)).isoformat()
+        async with async_dao.engine.begin() as conn:
+            await conn.execute(
+                text(
+                    "INSERT INTO executions (name, username, start_timestamp,"
+                    " end_timestamp, metadata_root, artifacts_store_root) "
+                    "VALUES ('succ_no_attrs', 'u', :s, :e, '/tmp/meta', '/tmp/artifacts')"
+                ),
+                {"s": _NOW.isoformat(), "e": _end},
+            )
+            row = await conn.execute(text("SELECT last_insert_rowid()"))
+            exec_id = row.scalar()
+
+        result = await async_dao.get_execution_latest_context_attrs(exec_id)
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_returns_attrs_when_succeeded_with_attrs(self, async_dao):
+        """Execution succeeded with context attrs => list of TaskContextAttr."""
+        _end = (_NOW + timedelta(hours=1)).isoformat()
+        async with async_dao.engine.begin() as conn:
+            await conn.execute(
+                text(
+                    "INSERT INTO executions (name, username, start_timestamp,"
+                    " end_timestamp, metadata_root, artifacts_store_root) "
+                    "VALUES ('succ_attrs', 'u', :s, :e, '/tmp/meta', '/tmp/artifacts')"
+                ),
+                {"s": _NOW.isoformat(), "e": _end},
+            )
+            row = await conn.execute(text("SELECT last_insert_rowid()"))
+            exec_id = row.scalar()
+
+            tt_uuid = uuid4()
+            await conn.execute(
+                text(
+                    'INSERT INTO tasktypes (uuid, exec_id, "order", name, '
+                    "is_parallel, children) VALUES "
+                    "(:uuid, :eid, 0, 'ctx_step', 0, '[]')"
+                ),
+                {"uuid": tt_uuid.hex, "eid": exec_id},
+            )
+            await conn.execute(
+                text(
+                    "INSERT INTO tasks (tasktype_uuid, exec_id, start_timestamp, "
+                    "end_timestamp, failed, rank) VALUES "
+                    "(:tu, :eid, :s, :e, 0, NULL)"
+                ),
+                {
+                    "tu": tt_uuid.hex,
+                    "eid": exec_id,
+                    "s": _NOW.isoformat(),
+                    "e": _end,
+                },
+            )
+            row = await conn.execute(text("SELECT last_insert_rowid()"))
+            task_id = row.scalar()
+
+            await conn.execute(
+                text(
+                    "INSERT INTO task_context_attrs"
+                    " (task_id, attr_name, eTAG, sha, disk_ref, inline_val)"
+                    " VALUES (:tid, 'model', 'etag-1', 'sha-1', 'path.pkl', NULL)"
+                ),
+                {"tid": task_id},
+            )
+            await conn.execute(
+                text(
+                    "INSERT INTO task_context_attrs"
+                    " (task_id, attr_name, eTAG, sha, disk_ref, inline_val)"
+                    " VALUES (:tid, 'data', 'etag-2', NULL, NULL, '{\"x\": 1}')"
+                ),
+                {"tid": task_id},
+            )
+
+        result = await async_dao.get_execution_latest_context_attrs(exec_id)
+        assert result is not None
+        assert len(result) == 2
+        assert all(isinstance(r, TaskContextAttr) for r in result)
+        # Ordered by attr_name (case-insensitive): "data" < "model"
+        assert result[0].attr_name == "data"
+        assert result[1].attr_name == "model"
+
+
+# ==============================================================================
+# AsyncDAOTaskExitPayload
+# ==============================================================================
+
+
+class TestAsyncDAOTaskExitPayload:
+    """Cover get_task_exit_payload branches."""
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_no_payload(self, async_dao):
+        """No payload row for the task => None."""
+        result = await async_dao.get_task_exit_payload(99999)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_returns_payload_when_found(self, async_dao):
+        """Payload row exists => return TaskPayloadAttr."""
+        exec_id = await async_dao._async_add_entity(
+            Execution,
+            name="exit_payload_pipe",
+            username="u",
+            _start_timestamp=_NOW,
+            metadata_root="/tmp/meta",
+            artifacts_store_root="/tmp/artifacts",
+        )
+        tt_uuid = uuid4()
+        async with async_dao.engine.begin() as conn:
+            await conn.execute(
+                text(
+                    'INSERT INTO tasktypes (uuid, exec_id, "order", name, '
+                    "is_parallel, children) VALUES "
+                    "(:uuid, :eid, 0, 'p_step', 0, '[]')"
+                ),
+                {"uuid": tt_uuid.hex, "eid": exec_id},
+            )
+            await conn.execute(
+                text(
+                    "INSERT INTO tasks (tasktype_uuid, exec_id, start_timestamp) "
+                    "VALUES (:tu, :eid, :s)"
+                ),
+                {"tu": tt_uuid.hex, "eid": exec_id, "s": _NOW.isoformat()},
+            )
+            row = await conn.execute(text("SELECT last_insert_rowid()"))
+            task_id = row.scalar()
+            await conn.execute(
+                text(
+                    "INSERT INTO task_payload_attrs"
+                    " (task_id, sha, disk_ref, inline_val) "
+                    "VALUES (:tid, 'sha1', 'path.pkl', NULL)"
+                ),
+                {"tid": task_id},
+            )
+
+        result = await async_dao.get_task_exit_payload(task_id)
+        assert result is not None
+        assert isinstance(result, TaskPayloadAttr)
+        assert result.sha == "sha1"
+        assert result.disk_ref == "path.pkl"
+
+
+# ==============================================================================
+# AsyncDAOTaskExitPayloadsBulk
+# ==============================================================================
+
+
+class TestAsyncDAOTaskExitPayloadsBulk:
+    """Cover get_task_exit_payloads_bulk branches."""
+
+    @pytest.mark.asyncio
+    async def test_empty_task_ids_returns_empty_dict(self, async_dao):
+        """Short-circuit branch: empty list => empty dict."""
+        result = await async_dao.get_task_exit_payloads_bulk([])
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_returns_dict_mapped_by_task_id(self, async_dao):
+        """Happy path: payloads for multiple tasks mapped by task_id."""
+        exec_id = await async_dao._async_add_entity(
+            Execution,
+            name="bulk_payload_pipe",
+            username="u",
+            _start_timestamp=_NOW,
+            metadata_root="/tmp/meta",
+            artifacts_store_root="/tmp/artifacts",
+        )
+        tt_uuid = uuid4()
+        async with async_dao.engine.begin() as conn:
+            await conn.execute(
+                text(
+                    'INSERT INTO tasktypes (uuid, exec_id, "order", name, '
+                    "is_parallel, children) VALUES "
+                    "(:uuid, :eid, 0, 'bp_step', 0, '[]')"
+                ),
+                {"uuid": tt_uuid.hex, "eid": exec_id},
+            )
+            await conn.execute(
+                text(
+                    "INSERT INTO tasks (tasktype_uuid, exec_id, start_timestamp) "
+                    "VALUES (:tu, :eid, :s)"
+                ),
+                {"tu": tt_uuid.hex, "eid": exec_id, "s": _NOW.isoformat()},
+            )
+            row = await conn.execute(text("SELECT last_insert_rowid()"))
+            task_id_1 = row.scalar()
+            await conn.execute(
+                text(
+                    "INSERT INTO tasks (tasktype_uuid, exec_id, start_timestamp) "
+                    "VALUES (:tu, :eid, :s)"
+                ),
+                {"tu": tt_uuid.hex, "eid": exec_id, "s": _NOW.isoformat()},
+            )
+            row = await conn.execute(text("SELECT last_insert_rowid()"))
+            task_id_2 = row.scalar()
+
+            await conn.execute(
+                text(
+                    "INSERT INTO task_payload_attrs"
+                    " (task_id, sha, disk_ref, inline_val) "
+                    "VALUES (:tid, 'sha1', NULL, '{\"r\": 1}')"
+                ),
+                {"tid": task_id_1},
+            )
+            await conn.execute(
+                text(
+                    "INSERT INTO task_payload_attrs"
+                    " (task_id, sha, disk_ref, inline_val) "
+                    "VALUES (:tid, 'sha2', 'p.pkl', NULL)"
+                ),
+                {"tid": task_id_2},
+            )
+
+        result = await async_dao.get_task_exit_payloads_bulk([task_id_1, task_id_2])
+        assert task_id_1 in result
+        assert task_id_2 in result
+        assert isinstance(result[task_id_1], TaskPayloadAttr)
+        assert isinstance(result[task_id_2], TaskPayloadAttr)
 
 
 # ==============================================================================
@@ -2351,3 +2779,270 @@ class TestAsyncDAOTaskExt:
         with patch.object(async_dao, "_get_session", return_value=_null_session):
             result = await async_dao.get_task_ext(task_id=99999)
         assert result is None
+
+
+# ==============================================================================
+# AsyncDAOExecutionTaskgroupRanks
+# ==============================================================================
+
+
+class TestAsyncDAOExecutionTaskgroupRanks:
+    """Cover get_execution_taskgroup_ranks branches."""
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_taskgroup_not_found(self, async_dao):
+        """No matching taskgroup => no rows => None."""
+        result = await async_dao.get_execution_taskgroup_ranks(99999, "no_such_grp")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_taskgroup_not_found_for_existing_execution(
+        self, async_dao
+    ):
+        """Execution exists but taskgroup name doesn't match => None."""
+        exec_id = await async_dao._async_add_entity(
+            Execution,
+            name="no_tg_rank_pipe",
+            username="u",
+            _start_timestamp=_NOW,
+            metadata_root="/tmp/meta",
+            artifacts_store_root="/tmp/artifacts",
+        )
+        result = await async_dao.get_execution_taskgroup_ranks(exec_id, "no_such_grp")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_returns_taskgroup_and_sorted_ranks(self, async_dao):
+        """Happy path: returns TaskGroup and deduplicated, sorted ranks.
+
+        Seeds tasks with list ranks (including a duplicate) and a None rank
+        to exercise the dedup and sort logic that handles mixed types.
+        """
+        tg_uuid = uuid4()
+        tt_uuid = uuid4()
+        exec_id = await async_dao._async_add_entity(
+            Execution,
+            name="ranks_pipe",
+            username="u",
+            _start_timestamp=_NOW,
+            metadata_root="/tmp/meta",
+            artifacts_store_root="/tmp/artifacts",
+        )
+        async with async_dao.engine.begin() as conn:
+            await conn.execute(
+                text(
+                    'INSERT INTO taskgroups (uuid, exec_id, "order", name, elements) '
+                    "VALUES (:uuid, :eid, 0, 'rank_grp', '[]')"
+                ),
+                {"uuid": tg_uuid.hex, "eid": exec_id},
+            )
+            await conn.execute(
+                text(
+                    'INSERT INTO tasktypes (uuid, exec_id, "order", name, '
+                    "is_parallel, children, taskgroup_uuid) VALUES "
+                    "(:uuid, :eid, 0, 'rank_step', 0, '[]', :tg_uuid)"
+                ),
+                {"uuid": tt_uuid.hex, "eid": exec_id, "tg_uuid": tg_uuid.hex},
+            )
+            await conn.execute(
+                text(
+                    "INSERT INTO tasks (tasktype_uuid, exec_id, start_timestamp, rank) "
+                    "VALUES (:tu, :eid, :s, '[1, 2]')"
+                ),
+                {"tu": tt_uuid.hex, "eid": exec_id, "s": _NOW.isoformat()},
+            )
+            await conn.execute(
+                text(
+                    "INSERT INTO tasks (tasktype_uuid, exec_id, start_timestamp, rank) "
+                    "VALUES (:tu, :eid, :s, '[0]')"
+                ),
+                {"tu": tt_uuid.hex, "eid": exec_id, "s": _NOW.isoformat()},
+            )
+            # Duplicate rank [0] - should be deduplicated
+            await conn.execute(
+                text(
+                    "INSERT INTO tasks (tasktype_uuid, exec_id, start_timestamp, rank) "
+                    "VALUES (:tu, :eid, :s, '[0]')"
+                ),
+                {"tu": tt_uuid.hex, "eid": exec_id, "s": _NOW.isoformat()},
+            )
+            # Task with NULL rank
+            await conn.execute(
+                text(
+                    "INSERT INTO tasks (tasktype_uuid, exec_id, start_timestamp, rank) "
+                    "VALUES (:tu, :eid, :s, NULL)"
+                ),
+                {"tu": tt_uuid.hex, "eid": exec_id, "s": _NOW.isoformat()},
+            )
+
+        result = await async_dao.get_execution_taskgroup_ranks(exec_id, "rank_grp")
+        assert result is not None
+        taskgroup, ranks = result
+        assert isinstance(taskgroup, TaskGroup)
+        assert taskgroup.name == "rank_grp"
+        # Deduplicated and sorted: [[0], [1, 2], None]
+        # None sorts last because the key is (r is None, r).
+        assert len(ranks) == 3
+        assert ranks[0] == [0]
+        assert ranks[1] == [1, 2]
+        assert ranks[2] is None
+
+
+# ==============================================================================
+# AsyncDAOTaskgroupNestedTasks
+# ==============================================================================
+
+
+class TestAsyncDAOTaskgroupNestedTasks:
+    """Cover get_taskgroup_nested_tasks branches."""
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_no_taskgroups(self, async_dao):
+        """Execution exists but has no taskgroups => None."""
+        exec_id = await async_dao._async_add_entity(
+            Execution,
+            name="no_tg_pipe",
+            username="u",
+            _start_timestamp=_NOW,
+            metadata_root="/tmp/meta",
+            artifacts_store_root="/tmp/artifacts",
+        )
+        async_dao.get_execution_taskgroups_list.cache_clear()
+        result = await async_dao.get_taskgroup_nested_tasks(exec_id, "grp", [0])
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_taskgroup_name_not_found(self, async_dao):
+        """Execution has taskgroups but the requested name doesn't match."""
+        exec_id = await async_dao._async_add_entity(
+            Execution,
+            name="wrong_tg_pipe",
+            username="u",
+            _start_timestamp=_NOW,
+            metadata_root="/tmp/meta",
+            artifacts_store_root="/tmp/artifacts",
+        )
+        async with async_dao.engine.begin() as conn:
+            await conn.execute(
+                text(
+                    'INSERT INTO taskgroups (uuid, exec_id, "order", name, elements) '
+                    "VALUES (:uuid, :eid, 0, 'actual_grp', '[]')"
+                ),
+                {"uuid": uuid4().hex, "eid": exec_id},
+            )
+        async_dao.get_execution_taskgroups_list.cache_clear()
+        result = await async_dao.get_taskgroup_nested_tasks(exec_id, "wrong_name", [0])
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_returns_task_exts_for_matching_rank(self, async_dao):
+        """Nested taskgroups with tasks at matching rank => list of TaskExt.
+
+        Seeds a parent taskgroup whose ``elements`` list references the
+        child taskgroup's UUID (dashed string format to match the
+        ``str(tg.uuid)`` keys used by the BFS traversal).  Tasks in both
+        the parent and child taskgroups share rank ``[0]`` so the query
+        returns both, exercising the TaskExt construction loop.
+        """
+        parent_uuid = uuid4()
+        child_uuid = uuid4()
+        tt_parent_uuid = uuid4()
+        tt_child_uuid = uuid4()
+
+        exec_id = await async_dao._async_add_entity(
+            Execution,
+            name="nested_tasks_pipe",
+            username="u",
+            _start_timestamp=_NOW,
+            metadata_root="/tmp/meta",
+            artifacts_store_root="/tmp/artifacts",
+        )
+        async with async_dao.engine.begin() as conn:
+            # Parent taskgroup whose elements reference the child (dashed
+            # UUID format to match str(tg.uuid) keys used by the BFS).
+            await conn.execute(
+                text(
+                    'INSERT INTO taskgroups (uuid, exec_id, "order", name, elements) '
+                    "VALUES (:uuid, :eid, 0, 'nested_grp', :elems)"
+                ),
+                {
+                    "uuid": parent_uuid.hex,
+                    "eid": exec_id,
+                    "elems": json.dumps([str(child_uuid)]),
+                },
+            )
+            await conn.execute(
+                text(
+                    'INSERT INTO taskgroups (uuid, exec_id, "order", name, elements) '
+                    "VALUES (:uuid, :eid, 1, 'child_grp', '[]')"
+                ),
+                {"uuid": child_uuid.hex, "eid": exec_id},
+            )
+            await conn.execute(
+                text(
+                    'INSERT INTO tasktypes (uuid, exec_id, "order", name, '
+                    "is_parallel, children, taskgroup_uuid) VALUES "
+                    "(:uuid, :eid, 0, 'parent_step', 0, '[]', :tg_uuid)"
+                ),
+                {
+                    "uuid": tt_parent_uuid.hex,
+                    "eid": exec_id,
+                    "tg_uuid": parent_uuid.hex,
+                },
+            )
+            await conn.execute(
+                text(
+                    'INSERT INTO tasktypes (uuid, exec_id, "order", name, '
+                    "is_parallel, children, taskgroup_uuid) VALUES "
+                    "(:uuid, :eid, 1, 'child_step', 0, '[]', :tg_uuid)"
+                ),
+                {
+                    "uuid": tt_child_uuid.hex,
+                    "eid": exec_id,
+                    "tg_uuid": child_uuid.hex,
+                },
+            )
+            await conn.execute(
+                text(
+                    "INSERT INTO tasks (tasktype_uuid, exec_id, start_timestamp, rank) "
+                    "VALUES (:tu, :eid, :s, '[0]')"
+                ),
+                {"tu": tt_parent_uuid.hex, "eid": exec_id, "s": _NOW.isoformat()},
+            )
+            await conn.execute(
+                text(
+                    "INSERT INTO tasks (tasktype_uuid, exec_id, start_timestamp, rank) "
+                    "VALUES (:tu, :eid, :s, '[0]')"
+                ),
+                {"tu": tt_child_uuid.hex, "eid": exec_id, "s": _NOW.isoformat()},
+            )
+
+        async_dao.get_execution_taskgroups_list.cache_clear()
+        result = await async_dao.get_taskgroup_nested_tasks(exec_id, "nested_grp", [0])
+        assert result is not None
+        assert len(result) == 2
+        assert all(isinstance(t, TaskExt) for t in result)
+
+    @pytest.mark.asyncio
+    async def test_returns_empty_list_when_no_matching_tasks(self, async_dao):
+        """Taskgroup exists but no tasks match the given rank => empty list."""
+        exec_id = await async_dao._async_add_entity(
+            Execution,
+            name="no_match_pipe",
+            username="u",
+            _start_timestamp=_NOW,
+            metadata_root="/tmp/meta",
+            artifacts_store_root="/tmp/artifacts",
+        )
+        async with async_dao.engine.begin() as conn:
+            await conn.execute(
+                text(
+                    'INSERT INTO taskgroups (uuid, exec_id, "order", name, elements) '
+                    "VALUES (:uuid, :eid, 0, 'empty_grp', '[]')"
+                ),
+                {"uuid": uuid4().hex, "eid": exec_id},
+            )
+        async_dao.get_execution_taskgroups_list.cache_clear()
+        result = await async_dao.get_taskgroup_nested_tasks(exec_id, "empty_grp", [0])
+        assert result is not None
+        assert result == []

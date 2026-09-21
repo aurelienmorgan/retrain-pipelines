@@ -2,6 +2,7 @@
 
 import hashlib
 import io
+import os
 import sys
 from datetime import date, datetime, timezone
 
@@ -19,6 +20,8 @@ from retrain_pipelines.dag_engine.stores.commons import (
     compute_sha,
 )
 from retrain_pipelines.dag_engine.stores.params_store import value_to_storable
+from retrain_pipelines.utils.file_utils import write_binary_file
+from retrain_pipelines.utils.s3_utils import is_s3_path
 
 
 # ---------------------------------------------------------------------------
@@ -27,10 +30,13 @@ from retrain_pipelines.dag_engine.stores.params_store import value_to_storable
 
 
 class TestMetadataRoot:
-    def test_returns_cache_metadata_subdir(self, monkeypatch, tmp_path):
-        monkeypatch.setenv("RP_ASSETS_CACHE", str(tmp_path))
-
-        assert metadata_root() == str(tmp_path / "metadata")
+    def test_returns_cache_metadata_subdir(self, assets_cache):
+        expected = (
+            f"{assets_cache.rstrip('/')}/metadata"
+            if is_s3_path(assets_cache)
+            else os.path.join(assets_cache, "metadata")
+        )
+        assert metadata_root() == expected
 
 
 # ---------------------------------------------------------------------------
@@ -68,12 +74,9 @@ class TestMakeDiskRef:
 
 
 class TestLoadFromDisk:
-    def test_deserializes_cloudpickle_artifact(self, monkeypatch, tmp_path):
+    def test_deserializes_cloudpickle_artifact(self, assets_cache):
         """Verify that load_from_disk correctly reads and unpickles a file."""
-        monkeypatch.setenv("RP_ASSETS_CACHE", str(tmp_path))
         rel_path = "myid/params/defaults/my_param.pkl"
-        abs_path = tmp_path / "metadata" / rel_path
-        abs_path.parent.mkdir(parents=True, exist_ok=True)
 
         class Custom:
             def __init__(self, val=42):
@@ -82,8 +85,8 @@ class TestLoadFromDisk:
             def __eq__(self, other):
                 return isinstance(other, Custom) and self.val == other.val
 
-        with open(abs_path, "wb") as fh:
-            cloudpickle.dump({"complex": Custom(99)}, fh)
+        data = cloudpickle.dumps({"complex": Custom(99)})
+        write_binary_file(metadata_root(), [rel_path], data)
 
         result = commons.load_from_disk(metadata_root(), rel_path)
 
@@ -96,9 +99,8 @@ class TestLoadFromDisk:
 
 
 class TestResolveStorable:
-    def test_resolves_disk_ref(self, monkeypatch, tmp_path):
+    def test_resolves_disk_ref(self, assets_cache):
         """When given a disk_ref envelope, it loads and returns the original object."""
-        monkeypatch.setenv("RP_ASSETS_CACHE", str(tmp_path))
 
         class Custom:
             def __init__(self, v):

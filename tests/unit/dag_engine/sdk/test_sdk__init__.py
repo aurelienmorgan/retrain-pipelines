@@ -2,11 +2,21 @@
 
 import asyncio
 import concurrent.futures
-from datetime import datetime, timedelta, timezone
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+import importlib
+from datetime import datetime, timedelta
+from unittest.mock import patch
+from uuid import uuid4
 
 import pytest
+from sqlalchemy.orm import Session
+
+from retrain_pipelines.dag_engine.db.model import (
+    Execution as ExecutionDbModel,
+    Task as TaskDbModel,
+    TaskType as TaskTypeDbModel,
+)
+from retrain_pipelines.dag_engine.sdk import ExecutionsIterator
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -15,39 +25,52 @@ import pytest
 _MODULE = "retrain_pipelines.dag_engine.sdk"  # module under test (as importable path)
 
 
-def _make_exec_ext(
-    id: int,
-    name: str = "pipe",
-    start: datetime | None = None,
-    end: datetime | None = None,
-    success: bool = True,
-):
-    """Build a lightweight stand-in for an ORM ExecutionExt row."""
-    if start is None:
-        start = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc) - timedelta(
-            hours=id
-        )
-    return SimpleNamespace(
-        id=id,
-        name=name,
-        metadata_root="/tmp/meta",
-        artifacts_store_root="/tmp/artifacts",
-        start_timestamp=start,
-        end_timestamp=end,
-        success=success,
-    )
+def _seed_exec(engine, exec_id, name="pipe", failed=None, start=None):
+    """Insert an execution (and optionally a task) via ORM.
 
-
-def _make_dao_mock(execs_pages, count=0):
-    """Return an AsyncDAO mock whose get_executions_ext cycles through *execs_pages*
-    (a list of lists) on successive calls, and whose get_executions_count returns
-    *count*.
+    If ``failed`` is True or False, a corresponding task is inserted so that
+    the execution's success status can be computed by the DAO. Uses naive
+    datetime objects to ensure consistent string comparison in SQLite.
     """
-    dao = MagicMock()
-    # Each call to get_executions_ext returns the next page
-    dao.get_executions_ext = AsyncMock(side_effect=execs_pages)
-    dao.get_executions_count = AsyncMock(return_value=count)
-    return dao
+    if start is None:
+        start = datetime(2024, 1, 1, 12, 0, 0) - timedelta(hours=exec_id)
+
+    end_ts = start + timedelta(hours=1) if failed is not None else None
+
+    with Session(engine) as session:
+        execution = ExecutionDbModel(
+            id=exec_id,
+            name=name,
+            username="user",
+            start_timestamp=start,
+            end_timestamp=end_ts,
+            metadata_root="/tmp/meta",
+            artifacts_store_root="/tmp/artifacts",
+        )
+        session.add(execution)
+
+        if failed is not None:
+            tt_uuid = uuid4()
+            tasktype = TaskTypeDbModel(
+                uuid=tt_uuid,
+                exec_id=exec_id,
+                order=0,
+                name="step",
+                is_parallel=False,
+                children=[],
+            )
+            session.add(tasktype)
+
+            task = TaskDbModel(
+                tasktype_uuid=tt_uuid,
+                exec_id=exec_id,
+                start_timestamp=start,
+                end_timestamp=end_ts,
+                failed=failed,
+            )
+            session.add(task)
+
+        session.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -61,13 +84,11 @@ class TestRunAsync:
     def _import_run_async(self):
         # Import fresh each time; patch must be applied before import in some
         # cases, but here we just reach into the module namespace directly.
-        import importlib
-
         mod = importlib.import_module(_MODULE)
         return mod._run_async
 
     # ------------------------------------------------------------------
-    # Path 1: no running event loop → asyncio.run()
+    # Path 1: no running event loop => asyncio.run()
     # ------------------------------------------------------------------
 
     def test_no_running_loop_uses_asyncio_run(self):
@@ -163,17 +184,13 @@ class TestRunAsync:
 
 class TestExecutionsIteratorConstruction:
     def test_defaults(self):
-        from retrain_pipelines.dag_engine.sdk import ExecutionsIterator
-
-        it = ExecutionsIterator(exec_name="my_pipe")
-        assert it.exec_name == "my_pipe"
+        it = ExecutionsIterator(pipeline_name="my_pipe")
+        assert it.pipeline_name == "my_pipe"
         assert it.success_only is False
         assert it.page_size == 10
 
     def test_custom_params(self):
-        from retrain_pipelines.dag_engine.sdk import ExecutionsIterator
-
-        it = ExecutionsIterator(exec_name="p", success_only=True, page_size=3)
+        it = ExecutionsIterator(pipeline_name="p", success_only=True, page_size=3)
         assert it.success_only is True
         assert it.page_size == 3
 
@@ -186,173 +203,123 @@ class TestExecutionsIteratorConstruction:
 class TestPreviousAsync:
     """Drive _previous() directly via __anext__ (async path)."""
 
-    # ------------------------------------------------------------------
-    # DAO returns empty list => None => StopAsyncIteration
-    # ------------------------------------------------------------------
-
     @pytest.mark.asyncio
-    async def test_empty_dao_returns_none(self):
-        from retrain_pipelines.dag_engine.sdk import ExecutionsIterator
-
-        dao_mock = _make_dao_mock(execs_pages=[[]])
-        it = ExecutionsIterator(exec_name="pipe")
-
-        with patch(f"{_MODULE}.AsyncDAO", return_value=dao_mock):
-            with patch.dict("os.environ", {"RP_METADATASTORE_ASYNC_URL": "fake://url"}):
-                result = await it._previous()
+    async def test_empty_dao_returns_none(self, isolated_async_dao):
+        it = ExecutionsIterator(pipeline_name="pipe")
+        result = await it._previous()
 
         assert result is None
         assert it._buffer == []
         assert it._index == 0
 
-    # ------------------------------------------------------------------
-    # DAO returns rows => buffer filled, _before_datetime updated
-    # ------------------------------------------------------------------
-
     @pytest.mark.asyncio
-    async def test_first_page_populates_buffer(self):
-        from retrain_pipelines.dag_engine.sdk import ExecutionsIterator
+    async def test_first_page_populates_buffer(self, isolated_async_dao):
+        _seed_exec(isolated_async_dao, 1)
+        _seed_exec(isolated_async_dao, 2)
+        _seed_exec(isolated_async_dao, 3)
+        # each iteration returns at most a full page of size 3
+        it = ExecutionsIterator(pipeline_name="pipe", page_size=3)
 
-        rows = [_make_exec_ext(i) for i in range(1, 4)]  # ids 1,2,3
-        dao_mock = _make_dao_mock(execs_pages=[rows, []])  # page1 then empty
-        it = ExecutionsIterator(exec_name="pipe", page_size=3)
-
-        with patch(f"{_MODULE}.AsyncDAO", return_value=dao_mock):
-            with patch.dict("os.environ", {"RP_METADATASTORE_ASYNC_URL": "fake://url"}):
-                exec0 = await it._previous()
+        exec0 = await it._previous()
 
         assert exec0 is not None
         assert exec0.id == 1
-        # Buffer should hold all three; index advanced to 1
+        # Buffer should hold all three ; index advanced to 1
         assert len(it._buffer) == 3
         assert it._index == 1
-        # _before_datetime must be set to last row's start - 1 ms
-        expected_bdt = rows[-1].start_timestamp - timedelta(milliseconds=1)
+        # _before_datetime (for next page elements retrieval filtering)
+        # is expected to be set to last row's start - 1 ms
+        expected_bdt = it._buffer[-1].start_timestamp - timedelta(milliseconds=1)
         assert it._before_datetime == expected_bdt
 
-    # ------------------------------------------------------------------
-    # Buffer not exhausted => subsequent call serves from cache, no new DAO call
-    # ------------------------------------------------------------------
-
     @pytest.mark.asyncio
-    async def test_second_call_uses_buffer(self):
-        from retrain_pipelines.dag_engine.sdk import ExecutionsIterator
-
-        rows = [_make_exec_ext(i) for i in range(1, 4)]
-        dao_mock = _make_dao_mock(execs_pages=[rows])
-        it = ExecutionsIterator(exec_name="pipe", page_size=3)
-
-        with patch(f"{_MODULE}.AsyncDAO", return_value=dao_mock):
-            with patch.dict("os.environ", {"RP_METADATASTORE_ASYNC_URL": "fake://url"}):
-                await it._previous()  # fills buffer, index=1
-                exec1 = await it._previous()  # served from buffer, index=2
-
-        assert exec1.id == 2
-        # DAO should only have been called once
-        assert dao_mock.get_executions_ext.call_count == 1
-
-    # ------------------------------------------------------------------
-    # Buffer exhausted => fetch next page
-    # ------------------------------------------------------------------
-
-    @pytest.mark.asyncio
-    async def test_second_page_fetched_when_buffer_exhausted(self):
-        from retrain_pipelines.dag_engine.sdk import ExecutionsIterator
-
-        page1 = [_make_exec_ext(1)]
-        page2 = [_make_exec_ext(2)]
-        dao_mock = _make_dao_mock(execs_pages=[page1, page2, []])
-        it = ExecutionsIterator(exec_name="pipe", page_size=1)
-
-        with patch(f"{_MODULE}.AsyncDAO", return_value=dao_mock):
-            with patch.dict("os.environ", {"RP_METADATASTORE_ASYNC_URL": "fake://url"}):
-                e1 = await it._previous()  # page1 loaded, e1 returned
-                e2 = await it._previous()  # page1 exhausted => page2 loaded
-
-        assert e1.id == 1
-        assert e2.id == 2
-        assert dao_mock.get_executions_ext.call_count == 2
-
-    # ------------------------------------------------------------------
-    # __anext__ raises StopAsyncIteration when DAO exhausted
-    # ------------------------------------------------------------------
-
-    @pytest.mark.asyncio
-    async def test_anext_stop_async_iteration(self):
-        from retrain_pipelines.dag_engine.sdk import ExecutionsIterator
-
-        dao_mock = _make_dao_mock(execs_pages=[[]])
-        it = ExecutionsIterator(exec_name="pipe")
-
-        with patch(f"{_MODULE}.AsyncDAO", return_value=dao_mock):
-            with patch.dict("os.environ", {"RP_METADATASTORE_ASYNC_URL": "fake://url"}):
-                with pytest.raises(StopAsyncIteration):
-                    await it.__anext__()
-
-    # ------------------------------------------------------------------
-    # __anext__ returns execution when available
-    # ------------------------------------------------------------------
-
-    @pytest.mark.asyncio
-    async def test_anext_returns_execution(self):
-        from retrain_pipelines.dag_engine.sdk import ExecutionsIterator
-
-        rows = [_make_exec_ext(10)]
-        dao_mock = _make_dao_mock(execs_pages=[rows])
-        it = ExecutionsIterator(exec_name="pipe")
-
-        with patch(f"{_MODULE}.AsyncDAO", return_value=dao_mock):
-            with patch.dict("os.environ", {"RP_METADATASTORE_ASYNC_URL": "fake://url"}):
-                result = await it.__anext__()
-
-        assert result.id == 10
-
-    # ------------------------------------------------------------------
-    # __aiter__ returns self
-    # ------------------------------------------------------------------
+    async def test_anext_stop_async_iteration(self, isolated_async_dao):
+        it = ExecutionsIterator(pipeline_name="pipe")
+        with pytest.raises(StopAsyncIteration):
+            await it.__anext__()
 
     @pytest.mark.asyncio
     async def test_aiter_returns_self(self):
-        from retrain_pipelines.dag_engine.sdk import ExecutionsIterator
-
-        it = ExecutionsIterator(exec_name="pipe")
+        it = ExecutionsIterator(pipeline_name="pipe")
         assert it.__aiter__() is it
 
-    # ------------------------------------------------------------------
-    # success_only=True passes "success" status to DAO
-    # ------------------------------------------------------------------
+    @pytest.mark.asyncio
+    async def test_success_only_passes_status_to_dao(self, isolated_async_dao):
+        _seed_exec(isolated_async_dao, 1, failed=False)
+        _seed_exec(isolated_async_dao, 2, failed=True)
+        it = ExecutionsIterator(pipeline_name="pipe", success_only=True, page_size=10)
+
+        result = await it._previous()
+
+        assert result is not None
+        assert result.id == 1
+        assert await it._previous() is None
 
     @pytest.mark.asyncio
-    async def test_success_only_passes_status_to_dao(self):
-        from retrain_pipelines.dag_engine.sdk import ExecutionsIterator
+    async def test_not_success_only_passes_none_status_to_dao(self, isolated_async_dao):
+        _seed_exec(isolated_async_dao, 1, failed=False)
+        _seed_exec(isolated_async_dao, 2, failed=True)
+        it = ExecutionsIterator(pipeline_name="pipe", success_only=False, page_size=10)
 
-        dao_mock = _make_dao_mock(execs_pages=[[]])
-        it = ExecutionsIterator(exec_name="pipe", success_only=True)
+        e1 = await it._previous()
+        e2 = await it._previous()
 
-        with patch(f"{_MODULE}.AsyncDAO", return_value=dao_mock):
-            with patch.dict("os.environ", {"RP_METADATASTORE_ASYNC_URL": "fake://url"}):
-                await it._previous()
+        assert {e1.id, e2.id} == {1, 2}
+        assert await it._previous() is None
 
-        call_kwargs = dao_mock.get_executions_ext.call_args
-        assert call_kwargs.kwargs.get("execs_status") == "success"
 
-    # ------------------------------------------------------------------
-    # success_only=False passes None status to DAO
-    # ------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# _previous – page-buffer round-trip validation (engine-level query counting)
+# ---------------------------------------------------------------------------
+
+
+class TestPreviousAsyncDAOCallCount:
+    """Validate that ``_previous()`` minimizes database round-trips.
+
+    Uses SQLAlchemy's ``before_cursor_execute`` engine event (via the
+    ``query_counter`` fixture) to count real SQL statements issued against
+    the file-based SQLite database.
+    No mocking or patching of the
+    ``AsyncDAO`` symbol is required—the DAO, ORM, connection pool, and
+    SQL are all exercised end-to-end.
+
+    Covers:
+      * buffer not exhausted => zero additional queries on next call
+      * buffer exhausted     => new page fetched from the database
+    """
 
     @pytest.mark.asyncio
-    async def test_not_success_only_passes_none_status_to_dao(self):
-        from retrain_pipelines.dag_engine.sdk import ExecutionsIterator
+    async def test_second_call_uses_buffer(self, isolated_async_dao, query_counter):
+        """When the buffer still holds unread rows the second call
+        must not issue any SQL at all."""
+        _seed_exec(isolated_async_dao, 1)
+        _seed_exec(isolated_async_dao, 2)
+        _seed_exec(isolated_async_dao, 3)
+        it = ExecutionsIterator(pipeline_name="pipe", page_size=3)
 
-        dao_mock = _make_dao_mock(execs_pages=[[]])
-        it = ExecutionsIterator(exec_name="pipe", success_only=False)
+        await it._previous()  # fills buffer (3 rows)
+        query_counter.reset()
+        exec1 = await it._previous()  # served from buffer
 
-        with patch(f"{_MODULE}.AsyncDAO", return_value=dao_mock):
-            with patch.dict("os.environ", {"RP_METADATASTORE_ASYNC_URL": "fake://url"}):
-                await it._previous()
+        assert exec1.id == 2
+        assert query_counter.count == 0
 
-        call_kwargs = dao_mock.get_executions_ext.call_args
-        assert call_kwargs.kwargs.get("execs_status") is None
+    @pytest.mark.asyncio
+    async def test_second_page_fetched_when_buffer_exhausted(
+        self, isolated_async_dao, query_counter
+    ):
+        """When the buffer is exhausted the next call must hit the
+        database again to fetch a fresh page."""
+        _seed_exec(isolated_async_dao, 1)
+        _seed_exec(isolated_async_dao, 2)
+        it = ExecutionsIterator(pipeline_name="pipe", page_size=1)
+
+        await it._previous()  # page 1 (1 row)
+        query_counter.reset()
+        e2 = await it._previous()  # buffer exhausted => page 2
+
+        assert e2.id == 2
+        assert query_counter.count > 0
 
 
 # ---------------------------------------------------------------------------
@@ -363,29 +330,19 @@ class TestPreviousAsync:
 class TestPreviousSync:
     """previous() is a sync wrapper; it must work outside an event loop."""
 
-    def test_previous_returns_execution(self):
-        from retrain_pipelines.dag_engine.sdk import ExecutionsIterator
+    def test_previous_returns_execution(self, isolated_async_dao):
+        _seed_exec(isolated_async_dao, 7)
+        it = ExecutionsIterator(pipeline_name="pipe")
 
-        rows = [_make_exec_ext(7)]
-        dao_mock = _make_dao_mock(execs_pages=[rows])
-        it = ExecutionsIterator(exec_name="pipe")
-
-        with patch(f"{_MODULE}.AsyncDAO", return_value=dao_mock):
-            with patch.dict("os.environ", {"RP_METADATASTORE_ASYNC_URL": "fake://url"}):
-                result = it.previous()
+        result = it.previous()
 
         assert result is not None
         assert result.id == 7
 
-    def test_previous_returns_none_when_exhausted(self):
-        from retrain_pipelines.dag_engine.sdk import ExecutionsIterator
+    def test_previous_returns_none_when_exhausted(self, isolated_async_dao):
+        it = ExecutionsIterator(pipeline_name="pipe")
 
-        dao_mock = _make_dao_mock(execs_pages=[[]])
-        it = ExecutionsIterator(exec_name="pipe")
-
-        with patch(f"{_MODULE}.AsyncDAO", return_value=dao_mock):
-            with patch.dict("os.environ", {"RP_METADATASTORE_ASYNC_URL": "fake://url"}):
-                result = it.previous()
+        result = it.previous()
 
         assert result is None
 
@@ -396,35 +353,24 @@ class TestPreviousSync:
 
 
 class TestLength:
-    def test_length_all(self):
-        from retrain_pipelines.dag_engine.sdk import ExecutionsIterator
+    def test_length_all(self, isolated_async_dao):
+        for i in range(1, 6):
+            _seed_exec(isolated_async_dao, i)
+        it = ExecutionsIterator(pipeline_name="pipe", success_only=False)
 
-        dao_mock = _make_dao_mock(execs_pages=[], count=5)
-        it = ExecutionsIterator(exec_name="pipe", success_only=False)
-
-        with patch(f"{_MODULE}.AsyncDAO", return_value=dao_mock):
-            with patch.dict("os.environ", {"RP_METADATASTORE_ASYNC_URL": "fake://url"}):
-                n = it.length()
+        n = it.length()
 
         assert n == 5
-        dao_mock.get_executions_count.assert_awaited_once_with(
-            pipeline_name="pipe", execs_status=None
-        )
 
-    def test_length_success_only(self):
-        from retrain_pipelines.dag_engine.sdk import ExecutionsIterator
+    def test_length_success_only(self, isolated_async_dao):
+        _seed_exec(isolated_async_dao, 1, failed=False)
+        _seed_exec(isolated_async_dao, 2, failed=False)
+        _seed_exec(isolated_async_dao, 3, failed=True)
+        it = ExecutionsIterator(pipeline_name="pipe", success_only=True)
 
-        dao_mock = _make_dao_mock(execs_pages=[], count=3)
-        it = ExecutionsIterator(exec_name="pipe", success_only=True)
+        n = it.length()
 
-        with patch(f"{_MODULE}.AsyncDAO", return_value=dao_mock):
-            with patch.dict("os.environ", {"RP_METADATASTORE_ASYNC_URL": "fake://url"}):
-                n = it.length()
-
-        assert n == 3
-        dao_mock.get_executions_count.assert_awaited_once_with(
-            pipeline_name="pipe", execs_status="success"
-        )
+        assert n == 2
 
 
 # ---------------------------------------------------------------------------
@@ -434,48 +380,31 @@ class TestLength:
 
 class TestSyncIteratorProtocol:
     def test_iter_returns_self(self):
-        from retrain_pipelines.dag_engine.sdk import ExecutionsIterator
-
-        it = ExecutionsIterator(exec_name="pipe")
+        it = ExecutionsIterator(pipeline_name="pipe")
         assert iter(it) is it
 
-    def test_next_returns_execution(self):
-        from retrain_pipelines.dag_engine.sdk import ExecutionsIterator
+    def test_next_returns_execution(self, isolated_async_dao):
+        _seed_exec(isolated_async_dao, 99)
+        it = ExecutionsIterator(pipeline_name="pipe")
 
-        rows = [_make_exec_ext(99)]
-        dao_mock = _make_dao_mock(execs_pages=[rows])
-        it = ExecutionsIterator(exec_name="pipe")
-
-        with patch(f"{_MODULE}.AsyncDAO", return_value=dao_mock):
-            with patch.dict("os.environ", {"RP_METADATASTORE_ASYNC_URL": "fake://url"}):
-                result = next(it)
+        result = next(it)
 
         assert result.id == 99
 
-    def test_next_raises_stop_iteration(self):
-        from retrain_pipelines.dag_engine.sdk import ExecutionsIterator
+    def test_next_raises_stop_iteration(self, isolated_async_dao):
+        it = ExecutionsIterator(pipeline_name="pipe")
+        with pytest.raises(StopIteration):
+            next(it)
 
-        dao_mock = _make_dao_mock(execs_pages=[[]])
-        it = ExecutionsIterator(exec_name="pipe")
+    def test_full_sync_iteration(self, isolated_async_dao):
+        _seed_exec(isolated_async_dao, 10)
+        _seed_exec(isolated_async_dao, 9)
+        _seed_exec(isolated_async_dao, 8)
+        it = ExecutionsIterator(pipeline_name="pipe", page_size=3)
 
-        with patch(f"{_MODULE}.AsyncDAO", return_value=dao_mock):
-            with patch.dict("os.environ", {"RP_METADATASTORE_ASYNC_URL": "fake://url"}):
-                with pytest.raises(StopIteration):
-                    next(it)
+        collected = list(it)
 
-    def test_full_sync_iteration(self):
-        """for-loop over iterator yields all executions in order."""
-        from retrain_pipelines.dag_engine.sdk import ExecutionsIterator
-
-        rows = [_make_exec_ext(i) for i in [10, 9, 8]]
-        dao_mock = _make_dao_mock(execs_pages=[rows, []])
-        it = ExecutionsIterator(exec_name="pipe", page_size=3)
-
-        with patch(f"{_MODULE}.AsyncDAO", return_value=dao_mock):
-            with patch.dict("os.environ", {"RP_METADATASTORE_ASYNC_URL": "fake://url"}):
-                collected = list(it)
-
-        assert [e.id for e in collected] == [10, 9, 8]
+        assert [e.id for e in collected] == [8, 9, 10]
 
 
 # ---------------------------------------------------------------------------
@@ -485,17 +414,14 @@ class TestSyncIteratorProtocol:
 
 class TestAsyncIteratorProtocol:
     @pytest.mark.asyncio
-    async def test_full_async_iteration(self):
-        from retrain_pipelines.dag_engine.sdk import ExecutionsIterator
-
-        rows = [_make_exec_ext(i) for i in [5, 4, 3]]
-        dao_mock = _make_dao_mock(execs_pages=[rows, []])
-        it = ExecutionsIterator(exec_name="pipe", page_size=3)
+    async def test_full_async_iteration(self, isolated_async_dao):
+        _seed_exec(isolated_async_dao, 5)
+        _seed_exec(isolated_async_dao, 4)
+        _seed_exec(isolated_async_dao, 3)
+        it = ExecutionsIterator(pipeline_name="pipe", page_size=3)
 
         collected = []
-        with patch(f"{_MODULE}.AsyncDAO", return_value=dao_mock):
-            with patch.dict("os.environ", {"RP_METADATASTORE_ASYNC_URL": "fake://url"}):
-                async for exec_ in it:
-                    collected.append(exec_.id)
+        async for exec_ in it:
+            collected.append(exec_.id)
 
-        assert collected == [5, 4, 3]
+        assert collected == [3, 4, 5]

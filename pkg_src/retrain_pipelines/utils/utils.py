@@ -68,7 +68,7 @@ def parse_datetime(value: str) -> datetime:
     return dt.astimezone(timezone.utc)
 
 
-@lru_cache
+@lru_cache(maxsize=128)
 def get_text_pixel_width(
     text: str,
     font_name: str,

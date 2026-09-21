@@ -1,40 +1,18 @@
-import os
-from typing import Any
-import pytest
+"""Unit tests for retrain_pipelines.dag_engine.stores.contexts_store"""
 
+import os
+
+import cloudpickle
+
+from retrain_pipelines.dag_engine.core import DagExecutionContext
 from retrain_pipelines.dag_engine.stores.contexts_store import (
     _CONTEXT_EXCLUDE_ATTRS,
-    context_attr_disk_path,
     _serialize_attr,
     snapshot_context_etags,
     compute_context_diff,
 )
-from retrain_pipelines.dag_engine.stores.commons import compute_sha
-
-
-class MockContext:
-    """Duck-typed execution context matching DagExecutionContext interface for testing."""
-
-    def __init__(
-        self, params: dict[str, Any], attr_refs: dict[str, dict] | None = None
-    ):
-        self._params = params
-        self._attr_refs = attr_refs or {}
-
-
-@pytest.fixture(autouse=True)
-def _setup_cache_env(tmp_path):
-    """Isolate disk artifacts by routing RP_ASSETS_CACHE to a temporary directory."""
-    cache_dir = tmp_path / "cache"
-    cache_dir.mkdir()
-    os.environ["RP_ASSETS_CACHE"] = str(cache_dir)
-    yield
-
-
-def test_context_attr_disk_path():
-    path = context_attr_disk_path(10, 20, "model_weights")
-
-    assert path == os.path.join("10", "20", "model_weights.pkl")
+from retrain_pipelines.dag_engine.stores.commons import compute_sha, metadata_root
+from retrain_pipelines.utils.file_utils import read_binary_file
 
 
 class TestSerializeAttr:
@@ -55,7 +33,8 @@ class TestSerializeAttr:
         assert row["disk_ref"] is None
         assert row["inline_val"] == value
 
-    def test_non_json_serializable_value(self, tmp_path):
+    def test_non_json_serializable_value(self, assets_cache):
+        """Covers branch where value is cloudpickled to disk across both backends."""
         exec_id, task_id, attr_name = 5, 10, "lambda_func"
 
         def value(x: int) -> int:
@@ -74,16 +53,18 @@ class TestSerializeAttr:
         assert row["sha"] == current_sha
         assert row["eTAG"] == current_etag
 
-        abs_path = os.path.join(tmp_path, "cache", "metadata", ref["disk_ref"])
-        assert os.path.exists(abs_path)
+        # Verify the artifact was written to the configured backend.
+        data = read_binary_file(metadata_root(), [ref["disk_ref"]])
+        assert cloudpickle.loads(data)(2) == 4
 
 
 class TestSnapshotContextEtags:
     def test_excludes_and_none(self):
-        ctx = MockContext(
-            {"keep": "val", "skip": "skip_val", "none_val": None},
-            {"keep": {"eTAG": "etag-keep"}, "skip": {"eTAG": "etag-skip"}},
-        )
+        ctx = DagExecutionContext({"keep": "val", "skip": "skip_val", "none_val": None})
+        ctx._attr_refs = {
+            "keep": {"eTAG": "etag-keep"},
+            "skip": {"eTAG": "etag-skip"},
+        }
         exclude = frozenset(["skip"])
         etags = snapshot_context_etags(ctx, exclude)
 
@@ -92,7 +73,7 @@ class TestSnapshotContextEtags:
         assert etags["keep"] == "etag-keep"
 
     def test_generates_new_etag(self):
-        ctx = MockContext({"new": "val"}, {})
+        ctx = DagExecutionContext({"new": "val"})
         etags = snapshot_context_etags(ctx, frozenset())
 
         assert "new" in etags
@@ -102,7 +83,7 @@ class TestSnapshotContextEtags:
 
 class TestComputeContextDiff:
     def test_new_attr_serializes(self):
-        ctx = MockContext({"new": [1, 2, 3]}, {})
+        ctx = DagExecutionContext({"new": [1, 2, 3]})
         rows = compute_context_diff(1, 1, ctx, {}, frozenset())
 
         assert len(rows) == 1
@@ -113,25 +94,32 @@ class TestComputeContextDiff:
         assert rows[0]["sha"] is None
         assert ctx._attr_refs["new"]["eTAG"] == rows[0]["eTAG"]
 
-    def test_modified_attr_serializes(self):
-        _, new_val = "old", "updated"
-        old_etag = "etag-old"
+    def test_modified_attr_serializes(self, assets_cache):
+        """Covers branch where modified attr is non-JSON-serializable (disk-pickled)."""
         new_etag = "etag-new"
-        ctx = MockContext({"mod": new_val}, {"mod": {"eTAG": new_etag}})
-        entry_etags = {"mod": old_etag}
+        ctx = DagExecutionContext({"mod": lambda x: x * 2})
+        ctx._attr_refs = {"mod": {"eTAG": new_etag}}
+        entry_etags = {"mod": "etag-old"}
+
         rows = compute_context_diff(1, 1, ctx, entry_etags, frozenset())
 
         assert len(rows) == 1
         assert rows[0]["eTAG"] == new_etag
-        assert rows[0]["sha"] is None  # "updated" is JSON-serializable
-        assert rows[0]["inline_val"] == new_val
+        assert rows[0]["sha"] is not None
+        assert rows[0]["disk_ref"] is not None
+        assert rows[0]["inline_val"] is None
         assert ctx._attr_refs["mod"]["eTAG"] == new_etag
+
+        # Verify the artifact was written to the configured backend.
+        data = read_binary_file(metadata_root(), [rows[0]["disk_ref"]])
+        assert cloudpickle.loads(data)(21) == 42
 
     def test_unchanged_attr_carries_forward_ref(self):
         val = "stable"
         etag = "etag-stable"
         ref = {"eTAG": etag, "disk_ref": None, "inline": val}
-        ctx = MockContext({"keep": val}, {"keep": ref})
+        ctx = DagExecutionContext({"keep": val})
+        ctx._attr_refs = {"keep": ref}
         entry_etags = {"keep": etag}
         rows = compute_context_diff(1, 1, ctx, entry_etags, frozenset())
 
@@ -144,7 +132,7 @@ class TestComputeContextDiff:
     def test_unchanged_attr_missing_ref_serializes(self):
         val = "edge_case"
         etag = "etag-edge"
-        ctx = MockContext({"edge": val}, {})
+        ctx = DagExecutionContext({"edge": val})
         entry_etags = {"edge": etag}
         rows = compute_context_diff(1, 1, ctx, entry_etags, frozenset())
 
@@ -155,7 +143,7 @@ class TestComputeContextDiff:
         assert ctx._attr_refs["edge"]["eTAG"] == rows[0]["eTAG"]
 
     def test_filters_excluded_and_none(self):
-        ctx = MockContext({"username": "admin", "val": None, "keep": True})
+        ctx = DagExecutionContext({"username": "admin", "val": None, "keep": True})
         rows = compute_context_diff(1, 1, ctx, {}, _CONTEXT_EXCLUDE_ATTRS)
 
         assert len(rows) == 1

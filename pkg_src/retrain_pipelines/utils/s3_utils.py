@@ -1,6 +1,7 @@
 import io
 import logging
 import os
+from functools import lru_cache
 from urllib.parse import urlparse
 
 import boto3
@@ -9,11 +10,13 @@ from botocore.exceptions import ClientError
 logging.getLogger("botocore").setLevel(logging.WARNING)
 
 
+@lru_cache(maxsize=128)
 def is_s3_path(path: str) -> bool:
     """Return True if *path* is an S3 URI (``s3://…``)."""
     return path.startswith("s3://")
 
 
+@lru_cache(maxsize=128)
 def parse_s3_uri(uri: str) -> tuple[str, str]:
     """Parse an S3 URI into ``(bucket, key_prefix)``.
 

@@ -1,45 +1,66 @@
 """Unit tests for retrain_pipelines.dag_engine.sdk.core
 
-Note
------------
-- AsyncDAO and in_notebook are patched via their "bound names"
-  inside the module being tested.
+Uses file-based SQLite (via the ``isolated_async_dao`` fixture) so that
+``AsyncDAO`` instances created internally by the SDK share the same
+database. No DAO mocking or patching is used ; all DB interactions are real.
+
+The ``metadata_root`` fixture (parametrized for local and S3 backends)
+is used throughout so that disk-artifact resolution is exercised against
+both storage backends.
 """
 
-import asyncio
-
+import json
 from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock, patch
-import pytest
-import threading
+from uuid import uuid4
 
+import pytest
+from sqlalchemy.orm import Session
+
+from retrain_pipelines.dag_engine.db.model import (
+    Execution as ExecutionDbModel,
+    Task as TaskDbModel,
+    TaskType as TaskTypeDbModel,
+    TaskGroup as TaskGroupDbModel,
+    TaskContextAttr as TaskContextAttrDbModel,
+    TaskPayloadAttr as TaskPayloadAttrDbModel,
+)
 from retrain_pipelines.dag_engine.sdk import core
 from retrain_pipelines.dag_engine.sdk.core import (
-    AttrsDiff,
     Execution,
     ExecutionParams,
+    Task,
     TaskExitContext,
+    TaskExitPayload,
+    TaskGroup,
+    TaskGroupRank,
+    TaskGroupRanks,
     shutdown_async_sdk,
 )
 
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
-
+# IMPORTANT: We use SQLAlchemy ORM (`Session.add()`) for all seed inserts.
+# `disable_all_dao_listeners` dynamically disables all DAO event listeners,
+# making ORM inserts safe. Raw SQL `text()` queries must be avoided as
+# they bypass SQLAlchemy's `TypeDecorator` logic. This causes `JSON` and
+# `Uuid` columns to be serialized as plain strings without the exact
+# formatting `AsyncDAO` expects in its `WHERE` clauses, leading to silent
+# filter mismatches and KeyErrors in the SDK.
+# ---------------------------------------------------------------------------
 
 _NOW = datetime(2024, 6, 1, 12, 0, 0)
 _LATER = datetime(2024, 6, 1, 13, 0, 0)
 
-_MODULE = "retrain_pipelines.dag_engine.sdk.core"
 
-
-def _make_execution(**kwargs):
+def _make_execution(metadata_root, **kwargs):
     """Return a minimal valid Execution instance."""
     defaults = dict(
         id=1,
         name="pipe",
-        metadata_root="/tmp/meta",
+        metadata_root=metadata_root,
         artifacts_store_root="/tmp/artifacts",
+        username="username",
         start_timestamp=_NOW,
         end_timestamp=None,
         success=True,
@@ -48,13 +69,13 @@ def _make_execution(**kwargs):
     return Execution(**defaults)
 
 
-def _make_task(**kwargs):
-    from retrain_pipelines.dag_engine.sdk.core import Task
-
+def _make_task(metadata_root, **kwargs):
+    """Return a minimal valid Task instance."""
     defaults = dict(
         id=10,
+        exec_id=7,
         name="my_task",
-        metadata_root="/tmp/meta",
+        metadata_root=metadata_root,
         start_timestamp=_NOW,
         end_timestamp=None,
         success=True,
@@ -63,194 +84,190 @@ def _make_task(**kwargs):
     return Task(**defaults)
 
 
+def _seed_execution(engine, metadata_root, params=None, end_ts=_LATER):
+    """Insert an execution row via ORM. Returns the execution id."""
+    with Session(engine) as session:
+        execution = ExecutionDbModel(
+            name="pipe",
+            username="user",
+            start_timestamp=_NOW,
+            end_timestamp=end_ts,
+            metadata_root=metadata_root,
+            artifacts_store_root="/tmp/artifacts",
+            params=json.loads(params) if isinstance(params, str) else params,
+        )
+        session.add(execution)
+        session.commit()
+        session.refresh(execution)
+        return execution.id
+
+
+def _seed_execution_with_task(
+    engine, metadata_root, task_name="step", failed=False, params=None
+):
+    """Seed an execution, tasktype, and task via ORM inserts.
+
+    Returns (exec_id, task_id).
+    """
+    exec_id = _seed_execution(engine, metadata_root, params=params)
+    tt_uuid = uuid4()
+    failed_val = failed if failed is not None else None
+    end_ts = _LATER if failed is not None else None
+
+    with Session(engine) as session:
+        tasktype = TaskTypeDbModel(
+            uuid=tt_uuid,
+            exec_id=exec_id,
+            order=0,
+            name=task_name,
+            is_parallel=False,
+            children=[],
+        )
+        session.add(tasktype)
+
+        task = TaskDbModel(
+            tasktype_uuid=tt_uuid,
+            exec_id=exec_id,
+            start_timestamp=_NOW,
+            end_timestamp=end_ts,
+            failed=failed_val,
+        )
+        session.add(task)
+        session.commit()
+        task_id = task.id
+
+    return exec_id, task_id
+
+
+def _seed_context_attr(
+    engine,
+    task_id,
+    attr_name,
+    inline_val=None,
+    disk_ref=None,
+    sha=None,
+    eTAG="dummy_eTAG",
+):
+    """Insert a task_context_attrs row via ORM."""
+    with Session(engine) as session:
+        attr = TaskContextAttrDbModel(
+            task_id=task_id,
+            attr_name=attr_name,
+            eTAG=eTAG,
+            sha=sha,
+            disk_ref=disk_ref,
+            inline_val=inline_val,
+        )
+        session.add(attr)
+        session.commit()
+
+
+def _seed_task_payload(engine, task_id, inline_val=None, disk_ref=None, sha=None):
+    """Insert a task_payload_attrs row via ORM."""
+    with Session(engine) as session:
+        payload = TaskPayloadAttrDbModel(
+            task_id=task_id, sha=sha, disk_ref=disk_ref, inline_val=inline_val
+        )
+        session.add(payload)
+        session.commit()
+
+
+def _seed_taskgroup_with_task(
+    engine, metadata_root, task_name="tg_task", failed=False, rank="UNSET"
+):
+    """Seed an execution, taskgroup, tasktype, and task via ORM inserts.
+
+    Returns (exec_id, task_id, tg_uuid, tt_uuid).
+    """
+    exec_id = _seed_execution(engine, metadata_root)
+    tt_uuid = uuid4()
+    tg_uuid = uuid4()
+    if rank == "UNSET":
+        rank = [1]
+    failed_val = failed if failed is not None else None
+    end_ts = _LATER if failed is not None else None
+
+    with Session(engine) as session:
+        taskgroup = TaskGroupDbModel(
+            uuid=tg_uuid,
+            exec_id=exec_id,
+            order=0,
+            name="tg",
+            elements=[str(tt_uuid)],
+        )
+        session.add(taskgroup)
+
+        tasktype = TaskTypeDbModel(
+            uuid=tt_uuid,
+            exec_id=exec_id,
+            order=0,
+            name=task_name,
+            is_parallel=True,
+            children=[],
+            taskgroup_uuid=tg_uuid,
+        )
+        session.add(tasktype)
+
+        task = TaskDbModel(
+            tasktype_uuid=tt_uuid,
+            exec_id=exec_id,
+            start_timestamp=_NOW,
+            end_timestamp=end_ts,
+            failed=failed_val,
+            rank=rank,
+        )
+        session.add(task)
+        session.commit()
+        task_id = task.id
+
+    return exec_id, task_id, str(tg_uuid), str(tt_uuid)
+
+
 # ---------------------------------------------------------------------------
 # _run_async
 # ---------------------------------------------------------------------------
 
 
 class TestRunAsync:
-    """Cover the module-level _run_async helper."""
+    """Cover the module-level _run_async helper and event loop lifecycle."""
 
     def test_shutdown_async_sdk_stops_and_joins(self):
-        """Covers shutdown_async_sdk() happy path."""
+        """Covers shutdown_async_sdk() when loop is running and thread is alive."""
+        core._start_loop()
+        loop = core._loop
+        thread = core._loop_thread
 
-        loop = MagicMock()
-        loop.is_running.return_value = True
+        assert loop is not None
+        assert thread is not None
+        assert loop.is_running()
+        assert thread.is_alive()
 
-        thread = MagicMock(spec=threading.Thread)
-        thread.is_alive.return_value = True
+        shutdown_async_sdk()
 
-        with (
-            patch.object(core, "_loop", loop),
-            patch.object(core, "_loop_thread", thread),
-        ):
+        assert not loop.is_running()
+        assert not thread.is_alive()
+
+        # Reset global state so other tests can start it cleanly if needed
+        core._loop = None
+        core._loop_thread = None
+
+    def test_shutdown_async_sdk_when_loop_not_started(self):
+        """Covers branch where loop was never started (idempotent no-op).
+
+        Ensures shutdown_async_sdk does not raise when _loop and
+        _loop_thread are both None, covering the short-circuit
+        condition branches.
+        """
+        # Ensure clean state - if loop was started, stop it first
+        if core._loop is not None and core._loop.is_running():
             shutdown_async_sdk()
+        core._loop = None
+        core._loop_thread = None
 
-        loop.call_soon_threadsafe.assert_called_once_with(loop.stop)
-        thread.join.assert_called_once_with(timeout=2.0)
-
-
-# ---------------------------------------------------------------------------
-# ExecutionParams
-# ---------------------------------------------------------------------------
-
-
-class TestExecutionParams:
-    """Cover ExecutionParams mapping, lazy resolution, and object-SHA-based comparison."""
-
-    def test_init_stores_raw(self):
-        raw = {"a": {"default": 1}}
-        params = ExecutionParams(raw, "/tmp/meta")
-        assert params._raw is raw
-
-    def test_active_storable_override_vs_default(self):
-        raw = {"k": {"default": "def_val", "override": "ovr_val"}}
-        params = ExecutionParams(raw, "/tmp/meta")
-        assert params._active_storable("k") == "ovr_val"
-        del raw["k"]["override"]
-        assert params._active_storable("k") == "def_val"
-
-    def test_getitem_resolves_storable(self):
-        raw = {"x": {"default": 99}}
-        params = ExecutionParams(raw, "/tmp/meta")
-        assert params["x"] == 99
-
-    def test_contains_true(self):
-        assert "a" in ExecutionParams({"a": {}}, "/tmp/meta")
-
-    def test_contains_false(self):
-        assert "b" not in ExecutionParams({"a": {}}, "/tmp/meta")
-
-    def test_iter(self):
-        params = ExecutionParams({"a": {}, "b": {}}, "/tmp/meta")
-        assert list(params) == ["a", "b"]
-
-    def test_len(self):
-        assert len(ExecutionParams({"a": {}, "b": {}}, "/tmp/meta")) == 2
-
-    def test_repr(self):
-        params = ExecutionParams({"x": {}, "y": {}}, "/tmp/meta")
-        assert repr(params) == "ExecutionParams(params=['x', 'y'])"
-
-    def test_keys(self):
-        params = ExecutionParams({"k1": {}, "k2": {}}, "/tmp/meta")
-        assert list(params.keys()) == ["k1", "k2"]
-
-    def test_description_returns_string(self):
-        params = ExecutionParams(
-            {"p": {"description": "a dummy param", "default": 1}}, "/tmp/meta"
-        )
-        assert params.description("p") == "a dummy param"
-
-    def test_description_missing_key_raises(self):
-        params = ExecutionParams({"p": {"description": "x"}}, "/tmp/meta")
-        with pytest.raises(KeyError):
-            params.description("missing")
-
-    def test_default_native_value(self):
-        params = ExecutionParams(
-            {"p": {"description": "d", "default": 42}}, "/tmp/meta"
-        )
-        assert params.default("p") == 42
-
-    def test_default_resolves_disk_ref(self):
-        disk_ref = {"__sha__": "abc", "__disk_ref__": "some/path.pkl"}
-        params = ExecutionParams(
-            {"p": {"description": "d", "default": disk_ref}}, "/tmp/meta"
-        )
-        with patch(
-            f"{_MODULE}.load_from_disk", return_value="unpickled_value"
-        ) as mock_load:
-            result = params.default("p")
-        mock_load.assert_called_once_with("/tmp/meta", "some/path.pkl")
-        assert result == "unpickled_value"
-
-    def test_default_no_default_key_returns_none(self):
-        params = ExecutionParams({"p": {"description": "d"}}, "/tmp/meta")
-        assert params.default("p") is None
-
-    def test_default_ignores_override(self):
-        """default() always returns the default value, never the override."""
-        params = ExecutionParams(
-            {"p": {"description": "d", "default": "orig", "override": "overridden"}},
-            "/tmp/meta",
-        )
-        assert params.default("p") == "orig"
-
-    def test_param_equals_native_match(self):
-        p1 = ExecutionParams({"m": {"default": 1}}, "/tmp/meta")
-        p2 = ExecutionParams({"m": {"default": 1}}, "/tmp/meta")
-        assert p1.param_equals("m", p2) is True
-
-    def test_param_equals_native_mismatch(self):
-        p1 = ExecutionParams({"m": {"default": 1}}, "/tmp/meta")
-        p2 = ExecutionParams({"m": {"default": 2}}, "/tmp/meta")
-        assert p1.param_equals("m", p2) is False
-
-    def test_param_equals_disk_ref_match(self):
-        disk_a = {"__sha__": "hash1", "__disk_ref__": True}
-        disk_b = {"__sha__": "hash1", "__disk_ref__": True}
-        p1 = ExecutionParams({"m": {"default": disk_a}}, "/tmp/meta")
-        p2 = ExecutionParams({"m": {"default": disk_b}}, "/tmp/meta")
-        assert p1.param_equals("m", p2) is True
-
-    def test_param_equals_disk_ref_mismatch(self):
-        disk_a = {"__sha__": "hash1", "__disk_ref__": True}
-        disk_b = {"__sha__": "hash2", "__disk_ref__": True}
-        p1 = ExecutionParams({"m": {"default": disk_a}}, "/tmp/meta")
-        p2 = ExecutionParams({"m": {"default": disk_b}}, "/tmp/meta")
-        assert p1.param_equals("m", p2) is False
-
-    def test_param_equals_mixed_storage_mismatch(self):
-        """Covers branch where one param is disk-pickled and the other is inline."""
-        disk_a = {"__sha__": "hash1", "__disk_ref__": True}
-        p1 = ExecutionParams({"m": {"default": disk_a}}, "/tmp/meta")
-        p2 = ExecutionParams({"m": {"default": 1}}, "/tmp/meta")
-        assert p1.param_equals("m", p2) is False
-
-    def test_diff(self):
-        # Include a disk-ref param to exercise the branch inside _sha()
-        disk_ref = {"__disk_ref__": "path", "__sha__": "abc123"}
-        p1 = ExecutionParams(
-            {
-                "only1": {"default": 1},
-                "same": {"default": 2},
-                "mod": {"default": 3},
-                "disk": {"default": disk_ref},
-            },
-            "/tmp",
-        )
-        p2 = ExecutionParams(
-            {
-                "same": {"default": 2},
-                "mod": {"default": 4},
-                "only2": {"default": 5},
-                "disk": {"default": disk_ref},
-            },
-            "/tmp",
-        )
-        diff = p1.diff(p2)
-
-        assert diff.only_in_self == ["only1"]
-        assert diff.modified == ["mod"]
-        assert diff.only_in_other == ["only2"]
-
-    def test_diff_identical(self):
-        params = {"foo": {"default": 1}}
-        lhs = ExecutionParams(params, "/tmp")
-        rhs = ExecutionParams(params, "/tmp")
-        diff = lhs.diff(rhs)
-        assert diff.only_in_self == []
-        assert diff.modified == []
-        assert diff.only_in_other == []
-
-    def test_diff_mixed_storage_mismatch(self):
-        """Covers branch in diff() where one param is disk and the other is inline."""
-        disk_a = {"__sha__": "hash1", "__disk_ref__": True}
-        p1 = ExecutionParams({"mod": {"default": disk_a}}, "/tmp")
-        p2 = ExecutionParams({"mod": {"default": 1}}, "/tmp")
-        diff = p1.diff(p2)
-        assert diff.modified == ["mod"]
+        # Should be a safe no-op
+        shutdown_async_sdk()
+        assert core._loop is None
+        assert core._loop_thread is None
 
 
 # ---------------------------------------------------------------------------
@@ -259,8 +276,10 @@ class TestExecutionParams:
 
 
 class TestExecutionModel:
-    def test_fields_set_correctly(self):
-        exec_ = _make_execution(end_timestamp=_LATER)
+    """Cover Execution model construction and simple methods."""
+
+    def test_fields_set_correctly(self, metadata_root):
+        exec_ = _make_execution(metadata_root, end_timestamp=_LATER)
 
         assert exec_.id == 1
         assert exec_.name == "pipe"
@@ -268,116 +287,93 @@ class TestExecutionModel:
         assert exec_.end_timestamp == _LATER
         assert exec_.success is True
 
-    # completed()
-    def test_completed_true_when_end_timestamp_set(self):
-        exec_ = _make_execution(end_timestamp=_LATER)
+    def test_completed_true_when_end_timestamp_set(self, metadata_root):
+        exec_ = _make_execution(metadata_root, end_timestamp=_LATER)
         assert exec_.completed() is True
 
-    def test_completed_false_when_end_timestamp_none(self):
-        exec_ = _make_execution(end_timestamp=None)
+    def test_completed_false_when_end_timestamp_none(self, metadata_root):
+        exec_ = _make_execution(metadata_root, end_timestamp=None)
         assert exec_.completed() is False
+
+    def test_elements_iterator_not_implemented(self, metadata_root):
+        """Covers the NotImplementedError guard in elements_iterator."""
+        exec_ = _make_execution(metadata_root)
+        with pytest.raises(NotImplementedError):
+            exec_.elements_iterator()
+
+
+class TestExecutionGetLatest:
+    """Cover Execution.get_latest()."""
+
+    def test_get_latest_success(self, isolated_async_dao, metadata_root):
+        """Covers branch where the latest execution is found."""
+        exec_id, _ = _seed_execution_with_task(
+            isolated_async_dao, metadata_root, task_name="step", failed=False
+        )
+        exec_ = Execution.get_latest("pipe")
+        assert exec_.id == exec_id
+        assert exec_.name == "pipe"
+
+    def test_get_latest_success_only(self, isolated_async_dao, metadata_root):
+        """Covers branch where success_only=True filters to successful executions."""
+        # Seed a failed execution first
+        _seed_execution_with_task(
+            isolated_async_dao, metadata_root, task_name="step", failed=True
+        )
+        # Seed a successful execution
+        exec_id, _ = _seed_execution_with_task(
+            isolated_async_dao, metadata_root, task_name="step", failed=False
+        )
+        exec_ = Execution.get_latest("pipe", success_only=True)
+        assert exec_.id == exec_id
+        assert exec_.success is True
+
+    def test_get_latest_not_found(self, isolated_async_dao, metadata_root):
+        """Covers branch where no execution matches the name, raising KeyError."""
+        _seed_execution_with_task(
+            isolated_async_dao, metadata_root, task_name="step", failed=False
+        )
+        with pytest.raises(KeyError, match="No execution found with name=missing_pipe"):
+            Execution.get_latest("missing_pipe")
 
 
 class TestExecutionGetTasksWithName:
-    """Cover Execution.get_tasks_with_name() classmethod."""
+    """Cover Execution.get_tasks_with_name()."""
 
-    # get_tasks_with_name() ; tasks returned, failed=False => success=True
-    def test_get_tasks_with_name_returns_tasks(self):
-        exec_ = _make_execution()
-
-        orm_task = MagicMock()
-        orm_task.id = 99
-        orm_task.start_timestamp = _NOW
-        orm_task.end_timestamp = _LATER
-        orm_task.failed = False  # success = not False => True
-
-        async_dao_instance = MagicMock()
-        async_dao_instance.get_execution_tasks_with_name = AsyncMock(
-            return_value=[orm_task]
+    def test_get_tasks_with_name_returns_tasks(self, isolated_async_dao, metadata_root):
+        """Covers branch where tasks are returned and failed=False => success=True."""
+        exec_id, _ = _seed_execution_with_task(
+            isolated_async_dao, metadata_root, task_name="preprocess", failed=False
         )
 
-        with (
-            patch(f"{_MODULE}.AsyncDAO", return_value=async_dao_instance),
-            patch.dict(
-                "os.environ",
-                {"RP_METADATASTORE_ASYNC_URL": "sqlite+aiosqlite:///:memory:"},
-            ),
-        ):
-            tasks = exec_.get_tasks_with_name("preprocess")
+        exec_ = _make_execution(metadata_root, id=exec_id)
+        tasks = exec_.get_tasks_with_name("preprocess")
 
         assert len(tasks) == 1
-        assert tasks[0].id == 99
         assert tasks[0].name == "preprocess"
         assert tasks[0].success is True
 
-    # get_tasks_with_name() ; failed=None => success defaults to True
-    def test_get_tasks_with_name_failed_none(self):
-        exec_ = _make_execution()
-
-        orm_task = MagicMock()
-        orm_task.id = 7
-        orm_task.start_timestamp = _NOW
-        orm_task.end_timestamp = None
-        orm_task.failed = None  # triggers the `else True` branch of the ternary
-
-        async_dao_instance = MagicMock()
-        async_dao_instance.get_execution_tasks_with_name = AsyncMock(
-            return_value=[orm_task]
+    def test_get_tasks_with_name_failed_none(self, isolated_async_dao, metadata_root):
+        """Covers branch where failed=None => success defaults to True."""
+        exec_id, _ = _seed_execution_with_task(
+            isolated_async_dao, metadata_root, task_name="train", failed=None
         )
 
-        with (
-            patch(f"{_MODULE}.AsyncDAO", return_value=async_dao_instance),
-            patch.dict(
-                "os.environ",
-                {"RP_METADATASTORE_ASYNC_URL": "sqlite+aiosqlite:///:memory:"},
-            ),
-        ):
-            tasks = exec_.get_tasks_with_name("train")
+        exec_ = _make_execution(metadata_root, id=exec_id)
+        tasks = exec_.get_tasks_with_name("train")
 
         assert tasks[0].success is True
 
-    # get_tasks_with_name() ; empty list from DAO
-    def test_get_tasks_with_name_empty(self):
-        exec_ = _make_execution()
+    def test_get_tasks_with_name_empty(self, isolated_async_dao, metadata_root):
+        """Covers branch where no tasks match the given name."""
+        exec_id, _ = _seed_execution_with_task(
+            isolated_async_dao, metadata_root, task_name="preprocess", failed=False
+        )
 
-        async_dao_instance = MagicMock()
-        async_dao_instance.get_execution_tasks_with_name = AsyncMock(return_value=[])
-
-        with (
-            patch(f"{_MODULE}.AsyncDAO", return_value=async_dao_instance),
-            patch.dict(
-                "os.environ",
-                {"RP_METADATASTORE_ASYNC_URL": "sqlite+aiosqlite:///:memory:"},
-            ),
-        ):
-            tasks = exec_.get_tasks_with_name("nonexistent")
+        exec_ = _make_execution(metadata_root, id=exec_id)
+        tasks = exec_.get_tasks_with_name("nonexistent")
 
         assert tasks == []
-
-    # get_tasks_with_name() ; None from DAO => early-return []
-    def test_get_tasks_with_name_none_from_dao(self):
-        exec_ = _make_execution()
-
-        async_dao_instance = MagicMock()
-        async_dao_instance.get_execution_tasks_with_name = AsyncMock(return_value=None)
-
-        with (
-            patch(f"{_MODULE}.AsyncDAO", return_value=async_dao_instance),
-            patch.dict(
-                "os.environ",
-                {"RP_METADATASTORE_ASYNC_URL": "sqlite+aiosqlite:///:memory:"},
-            ),
-        ):
-            tasks = exec_.get_tasks_with_name("nonexistent")
-
-        assert tasks == []
-
-    # elements_iterator() ; raises NotImplementedError
-    def test_elements_iterator_not_implemented(self):
-        exec_ = _make_execution()
-
-        with pytest.raises(NotImplementedError):
-            exec_.elements_iterator()
 
 
 class TestExecutionGetTaskById:
@@ -386,175 +382,209 @@ class TestExecutionGetTaskById:
     Exercises dao.engine.dispose() and the KeyError branch of get_task_by_id.
     """
 
-    def test_get_by_id_success(self):
-        mock_ext = MagicMock()
-        # Use configure_mock so as to set mocked-object "name" attribute (and not mock name)
-        mock_ext.configure_mock(
-            id=42,
-            name="pipe_v2",
-            metadata_root="/tmp/meta",
-            artifacts_store_root="/tmp/artifacts",
-            start_timestamp=_NOW,
-            end_timestamp=_LATER,
-            success=True,
-        )
-        mock_dao = MagicMock()
-        mock_dao.get_execution_ext = AsyncMock(return_value=mock_ext)
-        # engine.dispose() is awaited in the finally block ; must be AsyncMock.
-        mock_dao.engine = MagicMock()
-        mock_dao.engine.dispose = AsyncMock()
-
-        mock_task = MagicMock()
-        mock_task.id = 123
-        mock_task.name = "task_name"
-        mock_task.start_timestamp = _NOW
-        mock_task.end_timestamp = _LATER
-        mock_task.failed = False
-
-        # get_task_ext returns mock_task for id=123, None otherwise
-        mock_dao.get_task_ext = AsyncMock(
-            side_effect=lambda task_id: mock_task if task_id == 123 else None
+    def test_get_by_id_success(self, isolated_async_dao, metadata_root):
+        """Covers branch where execution is found and task is retrieved."""
+        exec_id, task_id = _seed_execution_with_task(
+            isolated_async_dao, metadata_root, task_name="task_name", failed=False
         )
 
-        with (
-            patch(f"{_MODULE}.AsyncDAO", return_value=mock_dao),
-            patch.dict(
-                "os.environ",
-                {"RP_METADATASTORE_ASYNC_URL": "sqlite+aiosqlite:///:memory:"},
-            ),
-        ):
-            # Exercise get_by_id ; covers the finally block
-            exec_ = Execution.get_by_id(42)
-            assert exec_.id == 42
-            assert exec_.success is True
-            mock_dao.engine.dispose.assert_awaited_once()
+        exec_ = Execution.get_by_id(exec_id)
+        assert exec_.id == exec_id
+        assert exec_.success is True
 
-            # Exercise get_task_by_id
-            task = exec_.get_task_by_id(123)
-            assert task.id == 123
-            assert task.name == "task_name"
-            assert task.success is True
+        task = exec_.get_task_by_id(task_id)
+        assert task.id == task_id
+        assert task.name == "task_name"
+        assert task.success is True
 
-            # Cover the KeyError branch
-            with pytest.raises(KeyError, match="No task found with id=999"):
-                exec_.get_task_by_id(999)
+    def test_get_by_id_raises_keyerror(self, isolated_async_dao):
+        """Covers branch where execution is not found."""
+        with pytest.raises(KeyError, match="No execution found with id=99"):
+            Execution.get_by_id(99)
 
-    def test_get_by_id_raises_keyerror(self):
-        mock_dao = MagicMock()
-        mock_dao.get_execution_ext = AsyncMock(return_value=None)
-        # engine.dispose() is awaited in the finally block; must be AsyncMock.
-        mock_dao.engine = MagicMock()
-        mock_dao.engine.dispose = AsyncMock()
-        with (
-            patch(f"{_MODULE}.AsyncDAO", return_value=mock_dao),
-            patch.dict(
-                "os.environ",
-                {"RP_METADATASTORE_ASYNC_URL": "sqlite+aiosqlite:///:memory:"},
-            ),
-        ):
-            with pytest.raises(KeyError, match="No execution found with id=99"):
-                Execution.get_by_id(99)
-        mock_dao.engine.dispose.assert_awaited_once()
-
-
-class TestAttrsDiff:
-    def test_attrsdiff_repr(self):
-        d = AttrsDiff(
-            only_in_self=["a"],
-            modified=["b"],
-            only_in_other=["c"],
+    def test_get_task_by_id_keyerror(self, isolated_async_dao, metadata_root):
+        """Covers branch where task is not found."""
+        exec_id, _ = _seed_execution_with_task(
+            isolated_async_dao, metadata_root, task_name="task_name", failed=False
         )
 
-        assert repr(d) == (
-            "AttrsDiff(only_in_self=['a'], modified=['b'], only_in_other=['c'])"
-        )
+        exec_ = Execution.get_by_id(exec_id)
+        with pytest.raises(KeyError, match="No task found with id=999"):
+            exec_.get_task_by_id(999)
 
 
 class TestExecutionGetParams:
     """Cover Execution.get_params()."""
 
-    def test_get_params_returns_instance(self):
-        mock_full = MagicMock()
-        mock_full.params = {"a": {"default": 1}}
+    def test_get_params_returns_instance(self, isolated_async_dao, metadata_root):
+        params_json = json.dumps({"a": {"default": 1}})
+        exec_id = _seed_execution(isolated_async_dao, metadata_root, params=params_json)
 
-        mock_dao = MagicMock()
-        mock_dao.get_execution = AsyncMock(return_value=mock_full)
-        mock_dao.engine = MagicMock()
-
-        exec_ = _make_execution()
-
-        with (
-            patch(f"{_MODULE}.AsyncDAO", return_value=mock_dao),
-            patch.dict(
-                "os.environ",
-                {"RP_METADATASTORE_ASYNC_URL": "sqlite+aiosqlite:///:memory:"},
-            ),
-        ):
-            params = exec_.get_params()
+        exec_ = _make_execution(metadata_root, id=exec_id)
+        params = exec_.get_params()
 
         assert isinstance(params, ExecutionParams)
         assert len(params) == 1
+        assert params["a"] == 1
 
-    def test_get_params_empty_dict(self):
-        mock_dao = MagicMock()
-        mock_dao.get_execution = AsyncMock(return_value=MagicMock(params=None))
-        mock_dao.engine = MagicMock()
+    def test_get_params_empty_dict(self, isolated_async_dao, metadata_root):
+        exec_id = _seed_execution(isolated_async_dao, metadata_root, params=None)
 
-        exec_ = _make_execution()
-
-        with (
-            patch(f"{_MODULE}.AsyncDAO", return_value=mock_dao),
-            patch.dict(
-                "os.environ",
-                {"RP_METADATASTORE_ASYNC_URL": "sqlite+aiosqlite:///:memory:"},
-            ),
-        ):
-            params = exec_.get_params()
+        exec_ = _make_execution(metadata_root, id=exec_id)
+        params = exec_.get_params()
 
         assert len(params) == 0
 
-    def test_params_getattr_passthrough(self):
-        params = ExecutionParams({}, "/tmp")
 
-        obj = object()
+class TestExecutionGetTaskgroupsWithName:
+    """Cover Execution.get_taskgroups_with_name()."""
 
-        with patch(f"{_MODULE}.is_disk_ref", return_value=False):
-            assert params._resolve(obj) is obj
-
-    def test_diff(self):
-        p1 = ExecutionParams(
-            {
-                "only1": {"default": 1},
-                "same": {"default": 2},
-                "mod": {"default": 3},
-            },
-            "/tmp",
+    def test_get_taskgroups_with_name_success(self, isolated_async_dao, metadata_root):
+        """Covers branch where taskgroup is found and ranks are returned."""
+        exec_id, _, tg_uuid, _ = _seed_taskgroup_with_task(
+            isolated_async_dao, metadata_root
         )
-        p2 = ExecutionParams(
-            {
-                "same": {"default": 2},
-                "mod": {"default": 4},
-                "only2": {"default": 5},
-            },
-            "/tmp",
+        exec_ = _make_execution(metadata_root, id=exec_id)
+        tgr = exec_.get_taskgroups_with_name("tg")
+
+        assert isinstance(tgr, TaskGroupRanks)
+        assert tgr.taskgroup.uuid == tg_uuid
+        assert tgr.ranks == [[1]]
+
+    def test_get_taskgroups_with_name_not_found(
+        self, isolated_async_dao, metadata_root
+    ):
+        """Covers branch where taskgroup is not found, triggering the except TypeError block.
+
+        The DAO returns None for a missing taskgroup, which causes tuple
+        unpacking to raise TypeError. This test verifies that the TypeError
+        is caught and None is returned gracefully.
+        """
+        exec_id, _ = _seed_execution_with_task(
+            isolated_async_dao, metadata_root, task_name="step", failed=False
         )
-        diff = p1.diff(p2)
+        exec_ = _make_execution(metadata_root, id=exec_id)
+        tgr = exec_.get_taskgroups_with_name("missing_tg")
 
-        assert diff.only_in_self == ["only1"]
-        assert diff.modified == ["mod"]
-        assert diff.only_in_other == ["only2"]
+        assert tgr is None
 
-    def test_diff_identical(self):
-        params = {"foo": {"default": 1}}
 
-        lhs = ExecutionParams(params, "/tmp")
-        rhs = ExecutionParams(params, "/tmp")
+class TestExecutionGetTaskgroupForRank:
+    """Cover Execution.get_taskgroup_for_rank()."""
 
-        diff = lhs.diff(rhs)
+    def test_get_taskgroup_for_rank_success(self, isolated_async_dao, metadata_root):
+        """Covers branch where taskgroup and rank are found."""
+        exec_id, _, _, _ = _seed_taskgroup_with_task(
+            isolated_async_dao, metadata_root, rank=[1, 2]
+        )
+        exec_ = _make_execution(metadata_root, id=exec_id)
+        tgr = exec_.get_taskgroup_for_rank("tg", [1, 2])
 
-        assert diff.only_in_self == []
-        assert diff.modified == []
-        assert diff.only_in_other == []
+        assert isinstance(tgr, TaskGroupRank)
+        assert tgr.rank == [1, 2]
+
+    def test_get_taskgroup_for_rank_rank_not_found(
+        self, isolated_async_dao, metadata_root
+    ):
+        """Covers branch where taskgroup is found but rank is not."""
+        exec_id, _, _, _ = _seed_taskgroup_with_task(
+            isolated_async_dao, metadata_root, rank=[1, 2]
+        )
+        exec_ = _make_execution(metadata_root, id=exec_id)
+        tgr = exec_.get_taskgroup_for_rank("tg", [9, 9])
+
+        assert tgr is None
+
+    def test_get_taskgroup_for_rank_empty_rank_success(
+        self, isolated_async_dao, metadata_root
+    ):
+        """Covers branch where requested rank is empty and taskgroup has NULL ranks.
+
+        Verifies the path where target_rank is None and ranks equals [None],
+        satisfying the rank_exists check.
+        """
+        exec_id, _, _, _ = _seed_taskgroup_with_task(
+            isolated_async_dao, metadata_root, rank=None
+        )
+        exec_ = _make_execution(metadata_root, id=exec_id)
+        tgr = exec_.get_taskgroup_for_rank("tg", [])
+
+        assert isinstance(tgr, TaskGroupRank)
+        assert tgr.rank is None
+
+    def test_get_taskgroup_for_rank_empty_rank_not_found(
+        self, isolated_async_dao, metadata_root
+    ):
+        """Covers branch where requested rank is empty but taskgroup has non-None ranks.
+
+        When target_rank is None (empty input) but the taskgroup's ranks
+        list contains non-None entries, rank_exists evaluates to False
+        and None is returned with a warning.
+        """
+        exec_id, _, _, _ = _seed_taskgroup_with_task(
+            isolated_async_dao, metadata_root, rank=[1, 2]
+        )
+        exec_ = _make_execution(metadata_root, id=exec_id)
+        tgr = exec_.get_taskgroup_for_rank("tg", [])
+
+        assert tgr is None
+
+    def test_get_taskgroup_for_rank_not_found(self, isolated_async_dao, metadata_root):
+        """Covers branch where taskgroup is not found, returning None gracefully.
+
+        Requires the suggested `try...except TypeError` fix in `sdk.core` to
+        handle the DAO returning `None` for a missing taskgroup, allowing the
+        `if not tg:` block to execute and return `None`.
+        """
+        exec_id, _ = _seed_execution_with_task(
+            isolated_async_dao, metadata_root, task_name="step", failed=False
+        )
+        exec_ = _make_execution(metadata_root, id=exec_id)
+        tgr = exec_.get_taskgroup_for_rank("missing_tg", [1])
+        assert tgr is None
+
+
+class TestExecutionGetAttrs:
+    """Cover Execution.get_attrs()."""
+
+    def test_get_attrs_success(self, isolated_async_dao, metadata_root):
+        """Covers branch where execution attrs are found."""
+        exec_id, task_id = _seed_execution_with_task(
+            isolated_async_dao, metadata_root, task_name="step", failed=False
+        )
+        _seed_context_attr(isolated_async_dao, task_id, "my_attr", inline_val="val")
+
+        exec_ = _make_execution(metadata_root, id=exec_id)
+        ctx = exec_.get_attrs()
+
+        assert isinstance(ctx, TaskExitContext)
+        assert ctx["my_attr"] == "val"
+
+    def test_get_attrs_empty(self, isolated_async_dao, metadata_root):
+        """Covers branch where execution completed but no context attrs exist."""
+        exec_id, task_id = _seed_execution_with_task(
+            isolated_async_dao, metadata_root, task_name="step", failed=False
+        )
+        exec_ = _make_execution(metadata_root, id=exec_id)
+        ctx = exec_.get_attrs()
+
+        assert isinstance(ctx, TaskExitContext)
+        assert len(ctx) == 0
+
+    def test_get_attrs_none(self, isolated_async_dao, metadata_root):
+        """Covers branch where execution did not complete successfully (None).
+
+        Seeds an execution with end_timestamp=None (still running), which
+        causes the DAO to return None from get_execution_latest_context_attrs,
+        triggering the warning-and-return-None path.
+        """
+        exec_id = _seed_execution(isolated_async_dao, metadata_root, end_ts=None)
+        exec_ = _make_execution(
+            metadata_root, id=exec_id, end_timestamp=None, success=False
+        )
+        ctx = exec_.get_attrs()
+
+        assert ctx is None
 
 
 # ---------------------------------------------------------------------------
@@ -563,304 +593,354 @@ class TestExecutionGetParams:
 
 
 class TestTaskModel:
-    def test_task_fields(self):
-        task = _make_task()
+    """Cover Task model construction and field defaults."""
+
+    def test_task_fields(self, metadata_root):
+        task = _make_task(metadata_root)
         assert task.id == 10
         assert task.name == "my_task"
         assert task.start_timestamp == _NOW
         assert task.end_timestamp is None
         assert task.success is True
 
-    def test_task_success_none(self):
-        task = _make_task(success=None)
+    def test_task_success_none(self, metadata_root):
+        task = _make_task(metadata_root, success=None)
         assert task.success is None
 
-    def test_task_with_end_timestamp(self):
-        task = _make_task(end_timestamp=_LATER)
+    def test_task_with_end_timestamp(self, metadata_root):
+        task = _make_task(metadata_root, end_timestamp=_LATER)
         assert task.end_timestamp == _LATER
 
-    def test_task_failed_true_success_false(self):
-        task = _make_task(success=False)
+    def test_task_failed_true_success_false(self, metadata_root):
+        task = _make_task(metadata_root, success=False)
         assert task.success is False
-
-
-class TestTaskExitContext:
-    def _make_row(self, attr_name, disk_ref=None, inline_val=None, sha="hash"):
-        row = MagicMock()
-        row.attr_name = attr_name
-        row.disk_ref = disk_ref
-        row.inline_val = inline_val
-        row.sha = sha
-        return row
-
-    def test_getitem_inline(self):
-        rows = [self._make_row("a", inline_val="v1")]
-        ctx = TaskExitContext(rows, "/tmp")
-        assert ctx["a"] == "v1"
-
-    def test_getitem_disk_ref(self):
-        rows = [self._make_row("a", disk_ref="path.pkl")]
-        ctx = TaskExitContext(rows, "/tmp")
-        # Patch at the source module where it's defined/imported
-        with patch(f"{_MODULE}.load_from_disk", return_value="unpickled") as mock_load:
-            val = ctx["a"]
-            mock_load.assert_called_once_with("/tmp", "path.pkl")
-            assert val == "unpickled"
-
-    def test_get_found_and_not_found(self):
-        rows = [self._make_row("a", inline_val="v1")]
-        ctx = TaskExitContext(rows, "/tmp")
-        assert ctx.get("a") == "v1"
-        assert ctx.get("missing", "default") == "default"
-
-    def test_contains(self):
-        rows = [self._make_row("a")]
-        ctx = TaskExitContext(rows, "/tmp")
-        assert "a" in ctx
-        assert "b" not in ctx
-
-    def test_iter_and_len_and_keys(self):
-        rows = [self._make_row("a"), self._make_row("b")]
-        ctx = TaskExitContext(rows, "/tmp")
-        assert list(ctx) == ["a", "b"]
-        assert len(ctx) == 2
-        assert list(ctx.keys()) == ["a", "b"]
-
-    def test_repr(self):
-        rows = [self._make_row("a")]
-        ctx = TaskExitContext(rows, "/tmp")
-        assert repr(ctx) == "TaskExitContext(attrs=['a'])"
-
-    def test_attr_equals(self):
-        r1 = self._make_row("a", inline_val="v1", sha=None)
-        r2 = self._make_row("a", inline_val="v1", sha=None)
-        r3 = self._make_row("a", inline_val="v2", sha=None)
-
-        ctx1 = TaskExitContext([r1], "/tmp")
-        ctx2 = TaskExitContext([r2], "/tmp")
-        ctx3 = TaskExitContext([r3], "/tmp")
-        ctx4 = TaskExitContext([], "/tmp")
-
-        assert ctx1.attr_equals("a", ctx2) is True
-        assert ctx1.attr_equals("a", ctx3) is False
-        assert ctx1.attr_equals("missing", ctx4) is True  # both missing
-        assert ctx1.attr_equals("a", ctx4) is False  # one missing
-
-    def test_attr_equals_disk_ref(self):
-        """Covers branch in attr_equals where one or both rows are disk-pickled."""
-        r1 = self._make_row("a", disk_ref="d1", sha="h1")
-        r2 = self._make_row("a", disk_ref="d1", sha="h1")
-        r3 = self._make_row("a", disk_ref="d1", sha="h2")
-
-        ctx1 = TaskExitContext([r1], "/tmp")
-        ctx2 = TaskExitContext([r2], "/tmp")
-        ctx3 = TaskExitContext([r3], "/tmp")
-
-        assert ctx1.attr_equals("a", ctx2) is True
-        assert ctx1.attr_equals("a", ctx3) is False
-
-    @pytest.mark.parametrize(
-        "case_id, self_rows, other_rows, expected_only_in_self, expected_modified, "
-        "expected_only_in_other",
-        [
-            (
-                "all_inline",
-                [
-                    ("only1", None, "v1", None),
-                    ("mod", None, "v1", None),
-                    ("same", None, "v1", None),
-                ],
-                [
-                    ("only2", None, "v2", None),
-                    ("mod", None, "v2", None),
-                    ("same", None, "v1", None),
-                ],
-                ["only1"],
-                ["mod"],
-                ["only2"],
-            ),
-            (
-                "all_disk_ref",
-                [
-                    ("only1", "d1", None, "h1"),
-                    ("mod", "d2", None, "h1"),
-                    ("same", "d3", None, "h1"),
-                ],
-                [
-                    ("only2", "d4", None, "h2"),
-                    ("mod", "d2", None, "h2"),
-                    ("same", "d3", None, "h1"),
-                ],
-                ["only1"],
-                ["mod"],
-                ["only2"],
-            ),
-            (
-                "mixed_inline_and_disk",
-                [
-                    ("only1", None, "v1", None),
-                    ("mod", "d1", None, "h1"),
-                    ("same", None, "v1", None),
-                    ("mixed_mod", "d2", None, "h1"),
-                ],
-                [
-                    ("only2", "d3", None, "h2"),
-                    ("mod", "d1", None, "h2"),
-                    ("same", None, "v1", None),
-                    ("mixed_mod", None, "v1", None),
-                ],
-                ["only1"],
-                ["mixed_mod", "mod"],
-                ["only2"],
-            ),
-            (
-                "inline_vs_disk_mismatch",
-                [("attr", None, "v1", None)],
-                [("attr", "d1", None, "h1")],
-                [],
-                ["attr"],
-                [],
-            ),
-        ],
-    )
-    def test_diff(
-        self,
-        case_id,
-        self_rows,
-        other_rows,
-        expected_only_in_self,
-        expected_modified,
-        expected_only_in_other,
-    ):
-        r1 = [
-            self._make_row(n, disk_ref=d, inline_val=v, sha=s)
-            for n, d, v, s in self_rows
-        ]
-        r2 = [
-            self._make_row(n, disk_ref=d, inline_val=v, sha=s)
-            for n, d, v, s in other_rows
-        ]
-
-        ctx1 = TaskExitContext(r1, "/tmp")
-        ctx2 = TaskExitContext(r2, "/tmp")
-
-        diff = ctx1.diff(ctx2)
-        assert diff.only_in_self == expected_only_in_self
-        assert diff.only_in_other == expected_only_in_other
-        assert diff.modified == expected_modified
-
-    @pytest.mark.parametrize(
-        "case_id, rows_config",
-        [
-            (
-                "all_inline",
-                [("a", None, "v1", None), ("b", None, "v2", None)],
-            ),
-            (
-                "all_disk_ref",
-                [("a", "d1", None, "h1"), ("b", "d2", None, "h2")],
-            ),
-            (
-                "mixed_inline_and_disk",
-                [("a", None, "v1", None), ("b", "d1", None, "h1")],
-            ),
-        ],
-    )
-    def test_diff_identical(self, case_id, rows_config):
-        rows = [
-            self._make_row(n, disk_ref=d, inline_val=v, sha=s)
-            for n, d, v, s in rows_config
-        ]
-
-        ctx1 = TaskExitContext(rows, "/tmp")
-        ctx2 = TaskExitContext(rows, "/tmp")
-
-        diff = ctx1.diff(ctx2)
-
-        assert diff.only_in_self == []
-        assert diff.modified == []
-        assert diff.only_in_other == []
 
 
 class TestTaskGetExitContext:
     """Cover Task.get_exit_context()."""
 
-    def test_get_exit_context_success(self):
-        task = _make_task(metadata_root="/tmp/meta")
-        mock_row = MagicMock()
-        mock_row.attr_name = "my_attr"
-        mock_row.disk_ref = None
-        mock_row.inline_val = "val"
-        mock_row.sha = "hash1"
+    def test_get_exit_context_with_attrs(self, isolated_async_dao, metadata_root):
+        """Covers branch where context attrs exist for the task."""
+        exec_id, task_id = _seed_execution_with_task(
+            isolated_async_dao, metadata_root, task_name="step", failed=False
+        )
+        _seed_context_attr(isolated_async_dao, task_id, "my_attr", inline_val="val")
 
-        mock_dao = MagicMock()
-        mock_dao.get_task_context_attrs = AsyncMock(return_value=[mock_row])
-        mock_dao.engine = MagicMock()
-        mock_dao.engine.dispose = AsyncMock()
-
-        with (
-            patch(f"{_MODULE}.AsyncDAO", return_value=mock_dao),
-            patch.dict(
-                "os.environ",
-                {"RP_METADATASTORE_ASYNC_URL": "sqlite+aiosqlite:///:memory:"},
-            ),
-        ):
-            ctx = task.get_exit_context()
+        exec_ = Execution.get_by_id(exec_id)
+        task = exec_.get_task_by_id(task_id)
+        ctx = task.get_exit_context()
 
         assert isinstance(ctx, TaskExitContext)
         assert ctx["my_attr"] == "val"
 
-    def test_get_exit_context_empty(self):
-        task = _make_task(metadata_root="/tmp/meta")
-        mock_dao = MagicMock()
-        mock_dao.get_task_context_attrs = AsyncMock(return_value=None)
-        mock_dao.engine = MagicMock()
-        mock_dao.engine.dispose = AsyncMock()
+    def test_get_exit_context_empty(self, isolated_async_dao, metadata_root):
+        """Covers branch where no context attrs exist for the task."""
+        exec_id, task_id = _seed_execution_with_task(
+            isolated_async_dao, metadata_root, task_name="step", failed=False
+        )
 
-        with (
-            patch(f"{_MODULE}.AsyncDAO", return_value=mock_dao),
-            patch.dict(
-                "os.environ",
-                {"RP_METADATASTORE_ASYNC_URL": "sqlite+aiosqlite:///:memory:"},
-            ),
-        ):
-            ctx = task.get_exit_context()
+        exec_ = Execution.get_by_id(exec_id)
+        task = exec_.get_task_by_id(task_id)
+        ctx = task.get_exit_context()
+
+        assert isinstance(ctx, TaskExitContext)
         assert len(ctx) == 0
 
-    def test_get_exit_context_full_execution(self):
-        """Cover all lines inside Task.get_exit_context (including inner async def).
 
-        This test patches _run_async to execute the coroutine synchronously,
-        ensuring the background thread is not used and coverage can track the lines.
+class TestTaskGetExitPayload:
+    """Cover Task.get_exit_payload()."""
+
+    def test_get_exit_payload_none(self, isolated_async_dao, metadata_root):
+        """Covers branch where payload is not found (None)."""
+        exec_id, task_id = _seed_execution_with_task(
+            isolated_async_dao, metadata_root, task_name="my_task", failed=False
+        )
+
+        exec_ = Execution.get_by_id(exec_id)
+        task = exec_.get_task_by_id(task_id)
+        payload = task.get_exit_payload()
+
+        assert isinstance(payload, TaskExitPayload)
+        assert payload["my_task"] is None
+
+
+# ---------------------------------------------------------------------------
+# TaskGroup model
+# ---------------------------------------------------------------------------
+
+
+class TestTaskGroup:
+    """Cover TaskGroup equality."""
+
+    def test_eq(self, metadata_root):
+        tg1 = TaskGroup(
+            exec_id=1, metadata_root=metadata_root, uuid="123", name="tg", elements=[]
+        )
+        tg2 = TaskGroup(
+            exec_id=1, metadata_root=metadata_root, uuid="123", name="tg", elements=[]
+        )
+        tg3 = TaskGroup(
+            exec_id=1, metadata_root=metadata_root, uuid="456", name="tg", elements=[]
+        )
+
+        assert tg1 == tg2
+        assert tg1 != tg3
+        assert tg1 != "not_a_tg"
+
+
+class TestTaskGroupRanks:
+    """Cover TaskGroupRanks methods."""
+
+    def test_parse_ranks_strings(self, metadata_root):
+        tgr = TaskGroupRanks(
+            exec_id=1,
+            metadata_root=metadata_root,
+            uuid="123",
+            name="tg",
+            elements=[],
+            ranks=["[1, 2]", "[3, 4]"],
+        )
+        assert tgr.ranks == [[1, 2], [3, 4]]
+
+    def test_parse_ranks_lists(self, metadata_root):
+        tgr = TaskGroupRanks(
+            exec_id=1,
+            metadata_root=metadata_root,
+            uuid="123",
+            name="tg",
+            elements=[],
+            ranks=[[1, 2], [3, 4]],
+        )
+        assert tgr.ranks == [[1, 2], [3, 4]]
+
+    def test_parse_ranks_empty_string(self, metadata_root):
+        """Covers branch where a rank string is empty (e.g. '[]'), yielding an empty list."""
+        tgr = TaskGroupRanks(
+            exec_id=1,
+            metadata_root=metadata_root,
+            uuid="123",
+            name="tg",
+            elements=[],
+            ranks=["[]"],
+        )
+        assert tgr.ranks == [[]]
+
+    def test_parse_ranks_not_list(self, metadata_root):
+        """Covers branch where ranks input is not a list (e.g., None)."""
+        assert TaskGroupRanks.parse_ranks(None) is None
+
+    def test_iter(self, metadata_root):
+        tgr = TaskGroupRanks(
+            exec_id=1,
+            metadata_root=metadata_root,
+            uuid="123",
+            name="tg",
+            elements=[],
+            ranks=[[1, 2]],
+        )
+        ranks = [tgr_rank.rank for tgr_rank in tgr]
+        assert ranks == [[1, 2]]
+
+    def test_iter_empty(self, metadata_root):
+        """Covers branch where ranks is an empty list, yielding a single None rank."""
+        tgr = TaskGroupRanks(
+            exec_id=1,
+            metadata_root=metadata_root,
+            uuid="123",
+            name="tg",
+            elements=[],
+            ranks=[],
+        )
+        ranks = [tgr_rank.rank for tgr_rank in tgr]
+        assert ranks == [None]
+
+    def test_getitem(self, metadata_root):
+        tgr = TaskGroupRanks(
+            exec_id=1,
+            metadata_root=metadata_root,
+            uuid="123",
+            name="tg",
+            elements=[],
+            ranks=[[1, 2], [3, 4]],
+        )
+        assert tgr[0].rank == [1, 2]
+        assert isinstance(tgr[0:1], list)
+        assert tgr[0:1][0].rank == [1, 2]
+
+    def test_getitem_empty(self, metadata_root):
+        tgr = TaskGroupRanks(
+            exec_id=1,
+            metadata_root=metadata_root,
+            uuid="123",
+            name="tg",
+            elements=[],
+            ranks=[],
+        )
+        assert tgr[0].rank is None
+
+    def test_len(self, metadata_root):
+        tgr = TaskGroupRanks(
+            exec_id=1,
+            metadata_root=metadata_root,
+            uuid="123",
+            name="tg",
+            elements=[],
+            ranks=[[1, 2], [3, 4]],
+        )
+        assert len(tgr) == 2
+
+    def test_get_rank(self, metadata_root):
+        tgr = TaskGroupRanks(
+            exec_id=1,
+            metadata_root=metadata_root,
+            uuid="123",
+            name="tg",
+            elements=[],
+            ranks=[[1, 2], [3, 4]],
+        )
+        assert tgr.get_rank([1, 2]).rank == [1, 2]
+        assert tgr.get_rank([9, 9]) is None
+
+    def test_get_rank_empty(self, metadata_root):
+        tgr = TaskGroupRanks(
+            exec_id=1,
+            metadata_root=metadata_root,
+            uuid="123",
+            name="tg",
+            elements=[],
+            ranks=[],
+        )
+        assert tgr.get_rank([1, 2]).rank is None
+
+
+class TestTaskGroupRank:
+    """Cover TaskGroupRank methods."""
+
+    def test_parse_rank_string(self, metadata_root):
+        tg = TaskGroup(
+            exec_id=1, metadata_root=metadata_root, uuid="123", name="tg", elements=[]
+        )
+        tgr = TaskGroupRank(taskgroup=tg, rank="[1, 2]")
+        assert tgr.rank == [1, 2]
+
+    def test_parse_rank_list(self, metadata_root):
+        tg = TaskGroup(
+            exec_id=1, metadata_root=metadata_root, uuid="123", name="tg", elements=[]
+        )
+        tgr = TaskGroupRank(taskgroup=tg, rank=[1, 2])
+        assert tgr.rank == [1, 2]
+
+    def test_parse_rank_empty_string(self, metadata_root):
+        """Covers branch where rank string is empty (e.g. '[]'), yielding an empty list."""
+        tg = TaskGroup(
+            exec_id=1, metadata_root=metadata_root, uuid="123", name="tg", elements=[]
+        )
+        tgr = TaskGroupRank(taskgroup=tg, rank="[]")
+        assert tgr.rank == []
+
+    def test_parse_rank_not_string_or_list(self, metadata_root):
+        """Covers branch where rank is not a string or list (e.g., None)."""
+        tg = TaskGroup(
+            exec_id=1, metadata_root=metadata_root, uuid="123", name="tg", elements=[]
+        )
+        tgr = TaskGroupRank(taskgroup=tg, rank=None)
+        assert tgr.rank is None
+
+    def test_eq(self, metadata_root):
+        tg1 = TaskGroup(
+            exec_id=1, metadata_root=metadata_root, uuid="123", name="tg", elements=[]
+        )
+        tg2 = TaskGroup(
+            exec_id=1, metadata_root=metadata_root, uuid="123", name="tg", elements=[]
+        )
+        tgr1 = TaskGroupRank(taskgroup=tg1, rank=[1, 2])
+        tgr2 = TaskGroupRank(taskgroup=tg2, rank=[1, 2])
+        tgr3 = TaskGroupRank(taskgroup=tg2, rank=[3, 4])
+
+        assert tgr1 == tgr2
+        assert tgr1 != tgr3
+        assert tgr1 != "not_a_tgr"
+
+    def test_get_exit_context_empty(self, isolated_async_dao, metadata_root):
+        """Covers branch where no tasks are found for the taskgroup."""
+        exec_id, _ = _seed_execution_with_task(
+            isolated_async_dao, metadata_root, task_name="step", failed=False
+        )
+        tg = TaskGroup(
+            exec_id=exec_id,
+            metadata_root=metadata_root,
+            uuid="123",
+            name="missing_tg",
+            elements=[],
+        )
+        tgr = TaskGroupRank(taskgroup=tg, rank=[1])
+
+        ctx = tgr.get_exit_context()
+        assert len(ctx) == 0
+
+    def test_get_exit_context_with_attrs(self, isolated_async_dao, metadata_root):
+        """Covers success path where member tasks are found and their context attrs are merged.
+
+        Seeds a real taskgroup with one member task that has a context attr,
+        then uses the SDK's own ``get_taskgroups_with_name`` and ``get_rank``
+        methods to fetch the ``TaskGroupRank`` instance. This ensures the
+        object is perfectly aligned with the DB state and tests the full SDK
+        flow end-to-end.
         """
-        task = _make_task(metadata_root="/tmp/meta")
-        mock_row = MagicMock()
-        mock_row.attr_name = "my_attr"
-        mock_row.disk_ref = None
-        mock_row.inline_val = "val"
-        mock_row.sha = "hash1"
+        exec_id, task_id, _, _ = _seed_taskgroup_with_task(
+            isolated_async_dao, metadata_root, task_name="tg_task", rank=[1, 2]
+        )
+        _seed_context_attr(
+            isolated_async_dao, task_id, "merged_attr", inline_val="val1"
+        )
 
-        mock_dao = MagicMock()
-        mock_dao.get_task_context_attrs = AsyncMock(return_value=[mock_row])
-        mock_dao.engine = MagicMock()
-        mock_dao.engine.dispose = AsyncMock()
+        exec_ = _make_execution(metadata_root, id=exec_id)
+        tgr_list = exec_.get_taskgroups_with_name("tg")
+        assert tgr_list is not None
+        tgr = tgr_list.get_rank([1, 2])
+        assert tgr is not None
 
-        # Patch AsyncDAO as usual, but also patch _run_async to run the coroutine
-        # in the current thread so that coverage records its lines.
-        def run_coro_in_main_thread(coro):
-            return asyncio.run(coro)
-
-        with (
-            patch(f"{_MODULE}.AsyncDAO", return_value=mock_dao),
-            patch(f"{_MODULE}._run_async", side_effect=run_coro_in_main_thread),
-            patch.dict(
-                "os.environ",
-                {"RP_METADATASTORE_ASYNC_URL": "sqlite+aiosqlite:///:memory:"},
-            ),
-        ):
-            ctx = task.get_exit_context()
-
+        ctx = tgr.get_exit_context()
         assert isinstance(ctx, TaskExitContext)
-        assert ctx["my_attr"] == "val"
-        # Verify that the async function's body was executed (dao method called)
-        mock_dao.get_task_context_attrs.assert_awaited_once_with(task.id)
+        assert ctx["merged_attr"] == "val1"
+
+    def test_get_exit_payload_empty(self, isolated_async_dao, metadata_root):
+        """Covers branch where no tasks are found for the taskgroup."""
+        exec_id, _ = _seed_execution_with_task(
+            isolated_async_dao, metadata_root, task_name="step", failed=False
+        )
+        tg = TaskGroup(
+            exec_id=exec_id,
+            metadata_root=metadata_root,
+            uuid="123",
+            name="missing_tg",
+            elements=[],
+        )
+        tgr = TaskGroupRank(taskgroup=tg, rank=[1])
+
+        payload = tgr.get_exit_payload()
+        assert bool(payload) is False
+
+    def test_get_exit_payload_with_data(self, isolated_async_dao, metadata_root):
+        """Covers success path where member tasks and their payloads are found.
+
+        Seeds a real taskgroup with one member task that has an inline
+        payload, then uses the SDK's own ``get_taskgroups_with_name`` and
+        ``get_rank`` methods to fetch the ``TaskGroupRank`` instance. This
+        ensures the object is perfectly aligned with the DB state and tests
+        the full SDK flow end-to-end.
+        """
+        exec_id, task_id, _, _ = _seed_taskgroup_with_task(
+            isolated_async_dao, metadata_root, task_name="tg_task", rank=[1, 2]
+        )
+        _seed_task_payload(isolated_async_dao, task_id, inline_val=42)
+
+        exec_ = _make_execution(metadata_root, id=exec_id)
+        tgr_list = exec_.get_taskgroups_with_name("tg")
+        assert tgr_list is not None
+        tgr = tgr_list.get_rank([1, 2])
+        assert tgr is not None
+
+        payload = tgr.get_exit_payload()
+        assert isinstance(payload, TaskExitPayload)
+        assert payload["tg_task"] == 42

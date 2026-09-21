@@ -16,29 +16,15 @@ Attrs with None values are ignored (equivalent to deleted entries).
 import os
 from typing import Any
 
+import cloudpickle
+
 from ...utils.file_utils import write_binary_file
+from ...utils.s3_utils import is_s3_path
 from .commons import compute_sha, generate_etag, metadata_root, try_json_serialize
 
 # Context attrs injected by dag.init() that must never be serialized as serialized user context
 # (since they each already are available as other db metadata fields).
 _CONTEXT_EXCLUDE_ATTRS: frozenset = frozenset({"exec_id", "pipeline_name", "username"})
-
-
-def context_attr_disk_path(exec_id: int, task_id: int, attr_name: str) -> str:
-    """Relative path for a context attr cloudpickle artifact (relative to metadata_root()).
-
-    Only written for attrs whose value is not JSON-serializable.
-
-    Parameters
-    ----------
-    exec_id : int
-        Execution id.
-    task_id : int
-        Task id (defines the artifact subdirectory).
-    attr_name : str
-        Attribute name (used as the artifact filename stem).
-    """
-    return os.path.join(str(exec_id), str(task_id), f"{attr_name}.pkl")
 
 
 def _serialize_attr(
@@ -80,11 +66,13 @@ def _serialize_attr(
             "inline_val": json_val,
         }
     except TypeError:
-        import cloudpickle
-
         raw_bytes = cloudpickle.dumps(value)
         sha = compute_sha(value)
-        rel_path = context_attr_disk_path(exec_id, task_id, attr_name)
+        # Relative path for the context attr cloudpickle artifact
+        # (relative to metadata_root()).
+        # Only written for attrs whose value is not JSON-serializable.
+        sep = "/" if is_s3_path(metadata_root()) else os.sep
+        rel_path = sep.join([str(exec_id), str(task_id), f"{attr_name}.pkl"])
         write_binary_file(metadata_root(), [rel_path], raw_bytes)
         ref = {"eTAG": etag, "sha": sha, "disk_ref": rel_path, "inline": None}
         row = {

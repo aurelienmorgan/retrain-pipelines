@@ -4,7 +4,7 @@ import re
 from functools import lru_cache
 
 import boto3
-from botocore.exceptions import ClientError
+from botocore.exceptions import BotoCoreError, ClientError
 
 from .s3_utils import is_s3_path, parse_s3_uri
 
@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 
-@lru_cache
+@lru_cache(maxsize=128)
 def build_path(root: str, parts: tuple[str, ...]) -> str:
     """
     Build via a convenience method.
@@ -299,3 +299,62 @@ def list_files(root: str, recursive: bool = True) -> list[str]:
             return files_list
         else:
             return os.listdir(root)
+
+
+def file_exists(fullpath: str) -> bool:
+    """Check if a file exists at a local path or S3 URI.
+
+    Dispatches to the appropriate backend based on whether *fullpath* is
+    an S3 URI. For local paths, safely handles invalid characters. For S3,
+    gracefully returns False for missing keys or unreachable buckets/errors
+    instead of raising exceptions, ensuring robust existence checks.
+
+    Parameters
+    ----------
+    fullpath : str
+        Full local path or S3 URI (``s3://bucket/key``).
+
+    Returns
+    -------
+    bool
+        True if the file exists, False otherwise.
+    """
+    if is_s3_path(fullpath):
+        bucket, key = parse_s3_uri(fullpath)
+        # parse_s3_uri enforces a trailing slash for paths without extensions,
+        # assuming they are directories. For strict file existence, we need
+        # the exact object key, so we strip the enforced slash.
+        if key.endswith("/"):
+            key = key.rstrip("/")
+
+        if not key:
+            # Root of bucket: not a file
+            return False
+
+        s3 = boto3.client("s3")
+        try:
+            s3.head_object(Bucket=bucket, Key=key)
+            return True
+        except ClientError as e:
+            code = e.response.get("Error", {}).get("Code", "")
+            # S3 returns 404 for both missing keys and missing buckets
+            # to prevent bucket enumeration.
+            if code in ("404", "NoSuchKey", "NoSuchBucket"):
+                return False
+            # AccessDenied (403) or other ClientErrors mean the file/bucket
+            # is not reachable. We fail safely to False but log the issue,
+            # as a user checking existence expects a boolean, but shouldn't
+            # be silently misled without a trace.
+            logger.warning(f"S3 existence check failed for {fullpath}: {e}")
+            return False
+        except BotoCoreError as e:
+            # Handles network issues, missing credentials, etc.
+            logger.warning(f"S3 connection error checking existence of {fullpath}: {e}")
+            return False
+    else:
+        # Local filesystem path
+        try:
+            return os.path.isfile(fullpath)
+        except (TypeError, ValueError):
+            # Handles invalid paths (e.g., embedded null bytes) gracefully
+            return False

@@ -616,6 +616,7 @@
                             return { isIframe: true, selfUrl, parentUrl, parentOrigin };
                         }
                         console.log(getFrameContext());
+                        /*
                         function isHuggingFaceSpaceHostedWebConsole() {
                             const frameContext = getFrameContext();
 
@@ -654,6 +655,7 @@
                             // card is hosted by "Hugging Face Space"-hosted WebConsole instance
                             // => do nothing
                         }
+                        */
                     } else {
                         // card is not displayed as an iframe
                         var isLocalFile = window.location.protocol === "file:"
@@ -661,14 +663,14 @@
                         if (isLocalFile) {
                             // card is prob' displayed
                             // via a python call to
-                            // "retrain_pipelines.inspectors.browse_local_pipeline_card"
+                            // ``retrain_pipelines.inspectors.legacy.browse_local_pipeline_card``
+                            // or ``retrain_pipelines.inspectors.open_pipeline_card_file``
                             var previousDir = window.location.pathname.substring(
                                     0, window.location.pathname.lastIndexOf('/'));
-                            console.log(previousDir)
-                            var lastSegment = link.href.substring(
-                                    link.href.lastIndexOf('/') + 1);
-                            var newHref = `file:///${previousDir}/_html-custom-${lastSegment}.html`;
-                            console.log(newHref)
+                            console.log("previousDir", previousDir);
+                            const pipeline_card_filename = window.location.pathname.split('/').pop();
+                            var newHref = `file:///${previousDir}/_${pipeline_card_filename}`;
+                            console.log("newHref", newHref);
                             link.href = newHref;
                         } else {
                             // card is prob' hosted by ui-backend
@@ -941,17 +943,26 @@
                     <div class="card-body">
                         <h3 style="color:#FFD700;">Training artifacts&nbsp;:</h3>
                         <div style="background-color:#000; color:#e6e6e6;
-                        font-family:'Segoe UI', Roboto; font-size: 10pt;
-                        white-space: nowrap !important; padding-left: 10px; margin-left:45px;
-                        margin-right:45px; width:auto;">
+                                   font-family:'Segoe UI', Roboto; font-size: 10pt;
+                                   white-space: nowrap !important; padding-left: 10px; margin-left:45px;
+                                   margin-right:45px; width:auto;">
                             <p class="command-container">
                                 <span id="dataset-version-metadata">
                                     <font color="#018f01"># dataset version metadata</font>
                                     <br />
-                                    {{task_obj_python_cmd}}[<font color="#66bb6a;">'dataset_commit_dict'</font>].data
+{% if exec_obj_python_cmd.startswith('metaflow') -%}
+    <!-- LEGACY - KEEP ELSE CLAUSE ONLY -->
+                                        {{exec_obj_python_cmd}}[<font
+                                            color="#66bb6a;">'dataset_commit_dict'</font>].data
+{%- else -%}
+                                        {{exec_obj_python_cmd}}[<font
+                                            color="#66bb6a;">'dataset_commit_dict'</font>]
+{%- endif %}
                                 </span>
-                                <button class="copy-icon" onclick="commandToClipboard('dataset-version-metadata')">
-                                    <svg width="16" height="16" fill="none" stroke="white" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
+                                <button class="copy-icon"
+                                        onclick="commandToClipboard('dataset-version-metadata')">
+                                    <svg width="16" height="16" fill="none" stroke="white" stroke-width="1"
+                                         stroke-linecap="round" stroke-linejoin="round">
                                         <use xlink:href="#copy-icon"></use>
                                     </svg>
                                 </button>
@@ -960,10 +971,19 @@
                                 <span id="model-version-metadata">
                                     <font color="#018f01"># model version metadata</font>
                                     <br />
-                                    {{task_obj_python_cmd}}[<font color="#66bb6a;">'model_commit_dict'</font>].data
+{% if exec_obj_python_cmd.startswith('metaflow') -%}
+    <!-- LEGACY - KEEP ELSE CLAUSE ONLY -->
+                                        {{exec_obj_python_cmd}}[<font
+                                            color="#66bb6a;">'model_commit_dict'</font>].data
+{%- else -%}
+                                        {{exec_obj_python_cmd}}[<font
+                                            color="#66bb6a;">'model_commit_dict'</font>]
+{%- endif %}
                                 </span>
-                                <button class="copy-icon" onclick="commandToClipboard('model-version-metadata')">
-                                    <svg width="16" height="16" fill="none" stroke="white" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
+                                <button class="copy-icon"
+                                        onclick="commandToClipboard('model-version-metadata')">
+                                    <svg width="16" height="16" fill="none" stroke="white" stroke-width="1"
+                                         stroke-linecap="round" stroke-linejoin="round">
                                         <use xlink:href="#copy-icon"></use>
                                     </svg>
                                 </button>
@@ -972,15 +992,24 @@
                         <br />
                         <h3 style="color:#FFD700;">Validation inference recordset&nbsp;:</h3>
                         <div style="background-color:#000; color:#e6e6e6;
-                        font-family:'Segoe UI', Roboto; font-size: 10pt;
-                        white-space: nowrap !important; padding-left: 10px; margin-left:45px;
-                        margin-right:45px; width:auto;">
+                                   font-family:'Segoe UI', Roboto; font-size: 10pt;
+                                   white-space: nowrap !important; padding-left: 10px; margin-left:45px;
+                                   margin-right:45px; width:auto;">
                             <p class="command-container">
                                 <span id="validation_results">
-                                    {{task_obj_python_cmd}}[<font color="#66bb6a;">'validation_results'</font>].data
+{% if exec_obj_python_cmd.startswith('metaflow') -%}
+    <!-- LEGACY - KEEP ELSE CLAUSE ONLY -->
+                                        {{exec_obj_python_cmd}}[<font
+                                            color="#66bb6a;">'validation_results'</font>].data
+{%- else -%}
+                                        {{exec_obj_python_cmd}}[<font
+                                            color="#66bb6a;">'validation_results'</font>]
+{%- endif %}
                                 </span>
-                                <button class="copy-icon" onclick="commandToClipboard('validation_results')">
-                                    <svg width="16" height="16" fill="none" stroke="white" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
+                                <button class="copy-icon"
+                                        onclick="commandToClipboard('validation_results')">
+                                    <svg width="16" height="16" fill="none" stroke="white" stroke-width="1"
+                                         stroke-linecap="round" stroke-linejoin="round">
                                         <use xlink:href="#copy-icon"></use>
                                     </svg>
                                 </button>
@@ -1036,8 +1065,6 @@
                         <a target="_blank"
                            href="https://github.com/aurelienmorgan/retrain-pipelines"
                            style="text-decoration: none;"><code class="shiny-silver-text"><span style="font-family: 'Lobster'; font-size: 14px; font-weight: normal; letter-spacing: 3px;">retrain-pipelines</span> {{__version__}}</code></a>
-                        &nbsp; - &nbsp;
-                        Open&nbsp;Source&nbsp;FTW&nbsp;!
                     </font>
                 </small>
                 <a href="#pageTop" style="color: #6082B6; text-decoration: none;">page top&nbsp;↑&nbsp;&nbsp;&nbsp;</a>

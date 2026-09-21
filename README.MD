@@ -1,5 +1,9 @@
 ﻿
-![PyPI - Monthly Downloads](https://img.shields.io/pypi/dm/retrain-pipelines)
+Please support us by dropping us a :star: here. Thanks.
+<br />
+<br />
+
+[![PyPI - Monthly Downloads](https://pypistats.com/api/badges/retrain-pipelines?period=month)](https://pypistats.com/packages/retrain-pipelines)
 ![PyPI - Total Downloads](https://static.pepy.tech/badge/retrain-pipelines)
 ![PyPI - Release version](https://img.shields.io/pypi/v/retrain-pipelines)
 ![GitHub - License](https://img.shields.io/github/license/aurelienmorgan/retrain-pipelines?logo=github&style=flat&color=purple)
@@ -261,7 +265,7 @@ find us @ https://pypi.org/project/retrain-pipelines/
 <br />
 <hr />
 
-Drop us a star&nbsp;!&nbsp;⭐&nbsp;&nbsp;&nbsp;&nbsp;[![GitHub Stars](https://img.shields.io/github/stars/aurelienmorgan/retrain-pipelines.svg?style=social&label=-%C2%A0retrain-pipelines%C2%A0-&maxAge=172800)](https://github.com/aurelienmorgan/retrain-pipelines/stargazers)
+Please drop us a star&nbsp;!&nbsp;⭐&nbsp;&nbsp;&nbsp;&nbsp;[![GitHub Stars](https://img.shields.io/github/stars/aurelienmorgan/retrain-pipelines.svg?style=social&label=-%C2%A0retrain-pipelines%C2%A0-&maxAge=172800)](https://github.com/aurelienmorgan/retrain-pipelines/stargazers)
 <br />
 <hr width=60% />
 

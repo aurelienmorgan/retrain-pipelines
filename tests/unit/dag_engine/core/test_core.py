@@ -899,6 +899,26 @@ class TestTaskTypeWrapFunc:
         finally:
             _dag_execution_context_var.reset(token)
 
+    def test_wrap_func_payload_serialize_exception(self, _dao_and_registry):
+        """Verify exception during exit payload serialization is caught and logged.
+
+        Ensures that a failure during the exit payload serialization does not
+        mask the task's successful completion.
+        """
+        dao_mock, _ = _dao_and_registry
+        dao_mock.set_task_exit_payload.side_effect = RuntimeError("DB payload error")
+
+        def my_func():
+            return "ok"
+
+        t = TaskType(func=my_func, is_parallel=False)
+        task_id, result = t.func(exec_id=1)
+
+        assert result == "ok"
+        assert task_id == 1
+        call_kwargs = dao_mock.update_task.call_args[1]
+        assert call_kwargs["failed"] is False
+
     def test_wrap_func_failure_raises_task_func_exception(self, _dao_and_registry):
         def bad_func():
             raise ValueError("boom")

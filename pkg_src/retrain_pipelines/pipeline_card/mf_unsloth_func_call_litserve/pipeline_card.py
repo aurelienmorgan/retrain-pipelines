@@ -213,7 +213,11 @@ def get_html(params: Mapping[str, Any]) -> str:
         validation_completions_curve=validation_completions_curve,
         metrics_table=indent(metrics_table, " " * 28),
         ###################################
-        task_obj_python_cmd=apply_args_color_format(params["task_obj_python_cmd"]),
+        exec_obj_python_cmd=(  # LEGACY  -  keep else clause only ##
+            apply_args_color_format(params["task_obj_python_cmd"])
+            if "task_obj_python_cmd" in params
+            else apply_args_color_format(params["exec_obj_python_cmd"])
+        ),
         dag_svg=indent(params["dag_svg"], " " * 40),
         __version__=__version__,
     )

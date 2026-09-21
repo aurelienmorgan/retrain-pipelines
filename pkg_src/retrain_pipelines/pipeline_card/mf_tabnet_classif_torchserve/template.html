@@ -620,6 +620,7 @@
                         return { isIframe: true, selfUrl, parentUrl, parentOrigin };
                     }
                     console.log(getFrameContext());
+                    /*
                     function isHuggingFaceSpaceHostedWebConsole() {
                         const frameContext = getFrameContext();
 
@@ -658,6 +659,7 @@
                         // card is hosted by "Hugging Face Space"-hosted WebConsole instance
                         // => do nothing
                     }
+                    */
                 } else {
                     // card is not displayed as an iframe
                     var isLocalFile = window.location.protocol === "file:"
@@ -665,14 +667,14 @@
                     if (isLocalFile) {
                         // card is prob' displayed
                         // via a python call to
-                        // "retrain_pipelines.inspectors.browse_local_pipeline_card"
+                        // ``retrain_pipelines.inspectors.legacy.browse_local_pipeline_card``
+                        // or ``retrain_pipelines.inspectors.open_pipeline_card_file``
                         var previousDir = window.location.pathname.substring(
                                 0, window.location.pathname.lastIndexOf('/'));
-                        console.log(previousDir)
-                        var lastSegment = link.href.substring(
-                                link.href.lastIndexOf('/') + 1);
-                        var newHref = `file:///${previousDir}/_html-custom-${lastSegment}.html`;
-                        console.log(newHref)
+                        console.log("previousDir", previousDir);
+                        const pipeline_card_filename = window.location.pathname.split('/').pop();
+                        var newHref = `file:///${previousDir}/_${pipeline_card_filename}`;
+                        console.log("newHref", newHref);
                         link.href = newHref;
                     } else {
                         // card is prob' hosted by ui-backend
@@ -1126,14 +1128,18 @@
                         font-family:'Segoe UI', Roboto; font-size: 10pt;
                         white-space: nowrap !important; padding-left: 10px; margin-left:45px;
                         margin-right:45px; width:auto;">
+{% if exec_obj_python_cmd.startswith('metaflow') %}
+    <!-- LEGACY - KEEP ELSE CLAUSE ONLY -->
                             <p class="command-container">
                                 <span id="dataset-size">
                                     <font color="#018f01"># dataset size</font>
                                     <br />
-                                    {{task_obj_python_cmd}}[<font color="#66bb6a;">'data_file'</font>].size
+                                    {{exec_obj_python_cmd}}[<font
+                                        color="#66bb6a;">'data_file'</font>].size
                                 </span>
                                 <button class="copy-icon" onclick="commandToClipboard('dataset-size')">
-                                    <svg width="16" height="16" fill="none" stroke="white" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
+                                    <svg width="16" height="16" fill="none" stroke="white" stroke-width="1"
+                                         stroke-linecap="round" stroke-linejoin="round">
                                         <use xlink:href="#copy-icon"></use>
                                     </svg>
                                 </button>
@@ -1142,14 +1148,31 @@
                                 <span id="dataset-object">
                                     <font color="#018f01"># dataset object</font>
                                     <br />
-                                    {{task_obj_python_cmd}}[<font color="#66bb6a;">'data_file'</font>].data
+                                    {{exec_obj_python_cmd}}[<font
+                                        color="#66bb6a;">'data_file'</font>].data
                                 </span>
                                 <button class="copy-icon" onclick="commandToClipboard('dataset-object')">
-                                    <svg width="16" height="16" fill="none" stroke="white" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
+                                    <svg width="16" height="16" fill="none" stroke="white" stroke-width="1"
+                                         stroke-linecap="round" stroke-linejoin="round">
                                         <use xlink:href="#copy-icon"></use>
                                     </svg>
                                 </button>
                             </p>
+{% else %}
+                            <p class="command-container">
+                                <span id="dataset-object">
+                                    <font color="#018f01"># dataset object</font>
+                                    <br />
+                                    {{exec_obj_python_cmd}}[<font color="#66bb6a;">'data'</font>]
+                                </span>
+                                <button class="copy-icon" onclick="commandToClipboard('dataset-object')">
+                                    <svg width="16" height="16" fill="none" stroke="white" stroke-width="1"
+                                         stroke-linecap="round" stroke-linejoin="round">
+                                        <use xlink:href="#copy-icon"></use>
+                                    </svg>
+                                </button>
+                            </p>
+{% endif %}
                         </div>
                         <br />
                         <h3 style="color:#FFD700;">Trained ML Model version :</h3>
@@ -1159,10 +1182,16 @@
                         margin-right:45px; width:auto;">
                             <p class="command-container">
                                 <span id="model">
-                                    {{task_obj_python_cmd}}[<font color="#66bb6a;">'model'</font>].data
+{% if exec_obj_python_cmd.startswith('metaflow') -%}
+    <!-- LEGACY - KEEP ELSE CLAUSE ONLY -->
+                                    {{exec_obj_python_cmd}}[<font color="#66bb6a;">'model'</font>].data
+{%- else -%}
+                                    {{exec_obj_python_cmd}}[<font color="#66bb6a;">'model'</font>]
+{%- endif %}
                                 </span>
                                 <button class="copy-icon" onclick="commandToClipboard('model')">
-                                    <svg width="16" height="16" fill="none" stroke="white" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
+                                    <svg width="16" height="16" fill="none" stroke="white" stroke-width="1"
+                                         stroke-linecap="round" stroke-linejoin="round">
                                         <use xlink:href="#copy-icon"></use>
                                     </svg>
                                 </button>
@@ -1178,10 +1207,18 @@
                                 <span id="scaler">
                                     <font color="#018f01"># fitted standard scaler</font>
                                     <br />
-                                    {{task_obj_python_cmd}}[<font color="#66bb6a;">'scaler'</font>].data.__dict__
+{% if exec_obj_python_cmd.startswith('metaflow') -%}
+    <!-- LEGACY - KEEP ELSE CLAUSE ONLY -->
+                                        {{exec_obj_python_cmd}}[<font
+                                            color="#66bb6a;">'scaler'</font>].data.__dict__
+{%- else -%}
+                                        {{exec_obj_python_cmd}}[<font
+                                            color="#66bb6a;">'scaler'</font>].__dict__
+{%- endif %}
                                 </span>
                                 <button class="copy-icon" onclick="commandToClipboard('scaler')">
-                                    <svg width="16" height="16" fill="none" stroke="white" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
+                                    <svg width="16" height="16" fill="none" stroke="white" stroke-width="1"
+                                         stroke-linecap="round" stroke-linejoin="round">
                                         <use xlink:href="#copy-icon"></use>
                                     </svg>
                                 </button>
@@ -1190,10 +1227,18 @@
                                 <span id="buckets-edges">
                                     <font color="#018f01"># num_features buckets edges</font>
                                     <br />
-                                    {{task_obj_python_cmd}}[<font color="#66bb6a;">'buckets'</font>].data
+{% if exec_obj_python_cmd.startswith('metaflow') -%}
+    <!-- LEGACY - KEEP ELSE CLAUSE ONLY -->
+                                        {{exec_obj_python_cmd}}[<font
+                                            color="#66bb6a;">'buckets'</font>].data
+{%- else -%}
+                                        {{exec_obj_python_cmd}}[<font
+                                            color="#66bb6a;">'buckets'</font>]
+{%- endif %}
                                 </span>
                                 <button class="copy-icon" onclick="commandToClipboard('buckets-edges')">
-                                    <svg width="16" height="16" fill="none" stroke="white" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
+                                    <svg width="16" height="16" fill="none" stroke="white" stroke-width="1"
+                                         stroke-linecap="round" stroke-linejoin="round">
                                         <use xlink:href="#copy-icon"></use>
                                     </svg>
                                 </button>
@@ -1202,10 +1247,18 @@
                                 <span id="encoder">
                                     <font color="#018f01"># fitted one-hot encoder</font>
                                     <br />
-                                    {{task_obj_python_cmd}}[<font color="#66bb6a;">'encoder'</font>].data.__dict__
+{% if exec_obj_python_cmd.startswith('metaflow') -%}
+    <!-- LEGACY - KEEP ELSE CLAUSE ONLY -->
+                                        {{exec_obj_python_cmd}}[<font
+                                            color="#66bb6a;">'encoder'</font>].data.__dict__
+{%- else -%}
+                                        {{exec_obj_python_cmd}}[<font
+                                            color="#66bb6a;">'encoder'</font>].__dict__
+{%- endif %}
                                 </span>
                                 <button class="copy-icon" onclick="commandToClipboard('encoder')">
-                                    <svg width="16" height="16" fill="none" stroke="white" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
+                                    <svg width="16" height="16" fill="none" stroke="white" stroke-width="1"
+                                         stroke-linecap="round" stroke-linejoin="round">
                                         <use xlink:href="#copy-icon"></use>
                                     </svg>
                                 </button>
@@ -1260,10 +1313,9 @@
                         &nbsp; - &nbsp;
                         <a target="_blank"
                            href="https://github.com/aurelienmorgan/retrain-pipelines"
-                           style="text-decoration: none;"><code class="shiny-silver-text" style="font-family: 'Lobster'; font-size: 14px; font-weight: normal; letter-spacing: 3px;">retrain-pipelines
-                        {{__version__}}</code></a>
-                        &nbsp; - &nbsp;
-                        Open&nbsp;Source&nbsp;FTW&nbsp;!
+                           style="text-decoration: none;"><code class="shiny-silver-text"
+                           style="font-family: 'Lobster'; font-size: 14px; font-weight: normal; 
+                                  letter-spacing: 3px;">retrain-pipelines {{__version__}}</code></a>
                     </font>
                 </small>
                 <a href="#pageTop" style="color: #6082B6; text-decoration: none;">page top&nbsp;↑</a>

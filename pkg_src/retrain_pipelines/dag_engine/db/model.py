@@ -263,7 +263,9 @@ class Task(Base):
     )
     execution = relationship("Execution", back_populates="tasks", viewonly=True)
 
-    rank: Mapped[list | None] = mapped_column(JSON)  # ARRAY(Integer)
+    rank: Mapped[list | None] = mapped_column(
+        JSON(none_as_null=True), nullable=True
+    )  # ARRAY(Integer)
 
     _start_timestamp: Mapped[datetime] = mapped_column(
         "start_timestamp",
@@ -380,6 +382,45 @@ class TaskContextAttr(Base):
     def __repr__(self):
         storage = "disk" if self.disk_ref else "inline"
         return f"TaskContextAttr(task={self.task_id}, attr={self.attr_name!r}, {storage})"
+
+
+class TaskPayloadAttr(Base):
+    """Exit-payload record for a single task instance.
+
+    One row per task instance, written at task func exit on success.
+    A single ``SELECT * FROM task_payload_attrs WHERE task_id = ?``
+    resolves the payload in O(1).
+
+    Exactly one of disk_ref or inline_val is set when the payload is
+    non-null ; both are null when the task returned None:
+      - disk_ref non-null  : cloudpickled artifact; path is relative to
+                             the execution's metadata_root column.
+      - inline_val non-null: JSON-safe value stored directly.
+    """
+
+    __tablename__ = "task_payload_attrs"
+
+    task_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("tasks.id"), primary_key=True, nullable=False
+    )
+
+    # sha: content-based SHA-256 computed at serialization time via compute_sha();
+    #      non-null for disk-pickled payloads only ; null for inline payloads.
+    #      Used by the SDK for value-equality comparisons across executions.
+    sha: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Cloudpickled artifact path, relative to the execution's metadata_root.
+    disk_ref: Mapped[str | None] = mapped_column(String, nullable=True)
+    # JSON-safe value stored directly. ``disk_ref`` being non-null (not this column)
+    # is the signal that the value lives on disk.
+    inline_val: Mapped[Any] = mapped_column(JSON(none_as_null=True), nullable=True)
+
+    def __init__(self, **kwargs):
+        kwargs.pop("_sa_instance_state", None)
+        super().__init__(**kwargs)
+
+    def __repr__(self):
+        storage = "disk" if self.disk_ref else "inline"
+        return f"TaskPayloadAttr(task={self.task_id}, {storage})"
 
 
 class TaskTrace(Base):
