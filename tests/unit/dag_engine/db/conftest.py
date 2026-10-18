@@ -1,283 +1,78 @@
 """
-DAO fixtures scoped to the db unit-test subtree.
+DAO fixtures scoped to the db integration-test subtree.
 
-NOTE: ``isolated_dao`` and ``disable_http_listener`` can be found in
-the parent ``dag_engine/conftest.py``. They're shared with
-runtime tests (they are available in this subtree via normal
-pytest fixture inheritance).
+NOTE: ``isolated_dao``, ``isolated_async_dao``, ``seeded_async_dao``,
+``taskgroup_seeded_async_dao``, ``_disable_dao_listeners_session``,
+``isolated_db``, and ``metadatastore_url`` are all inherited from parent
+conftests via normal pytest fixture discovery.
 
 Provides:
-  ``sync_dao``: Session-scoped DAO backed by a shared in-memory SQLite.
-    StaticPool is substituted for NullPool only during DAO construction so
-    that the single in-memory database is visible to all threads. The patch
-    is not held open beyond construction; doing so would corrupt NullPool
-    isolation for any ``isolated_dao`` created in the same session.
+  ``sync_dao``: session-scoped DAO parametrised on ``["sqlite", "postgresql"]``.
+    Uses ``DAO(db_url=url)`` for both backends ; no treatment difference.
+    SQLite: session-scoped file in ``tmp_path_factory``.
+    PostgreSQL: URL from the PG* env vars set by ``postgres_session``.
+    ``_disable_dao_listeners_session`` requested explicitly so no
+    ``patch("requests.post")`` is needed in any test.
 
-  ``async_dao``: function-scoped AsyncDAO backed by a fresh in-memory
-    aiosqlite database with all ORM tables created on startup.
+  ``async_dao``: function-scoped ``AsyncDAO`` via ``isolated_db``.
+    Schema already exists (``isolated_db`` called ``create_all``).
+    Uses ``Config.get_metadatastore_async_url()`` ; URL derived from the
+    monkeypatched ``RP_METADATASTORE_URL``, no explicit async URL.
 
-  ``seeded_async_dao``: function-scoped fixture that seeds the
-    ``async_dao`` database with a set of Executions, TaskTypes, and Tasks
-    suitable for exercising all AsyncDAO query methods. All inserts are
-    done via raw SQL so that no ORM event listeners fire during fixture
-    setup: setting ``_end_timestamp`` through the ORM on an
-    async-session-attached ``Execution`` fires ``after_end_timestamp_change``,
-    which attempts a synchronous lazy-load of ``target.tasks`` outside a
-    greenlet context, raising ``MissingGreenlet``.
-    Yields ``(async_dao, (exec_id_with_tasks, tt_uuid))`` where
-    ``exec_id_with_tasks`` is an Execution that has an associated
-    TaskType (name="seeded_step") and one Task, and ``tt_uuid`` is
-    that TaskType's UUID.
-
-  ``taskgroup_seeded_async_dao``: function-scoped fixture that seeds the
-    ``async_dao`` database with an Execution, a TaskGroup, and a nested
-    child TaskGroup whose ``elements`` list references the parent uuid,
-    suitable for exercising ``get_taskgroups_hierarchy`` and
-    ``get_execution_taskgroups_list`` found-path branches.
-    Yields ``(async_dao, (exec_id, parent_tg_uuid, child_tg_uuid))``.
-
-NOTE: ``sync_dao`` must NOT wrap its yield inside the
-NullPool=>StaticPool patch context manager. Doing so would keep the
-patch active for the entire session, causing every subsequently-created
-``isolated_dao`` engine to also use StaticPool ; a single shared
-connection ; which defeats NullPool isolation and causes concurrent
-threads to collide on the same session. The patch is therefore scoped
-only to the DAO constructor call.
+  ``silence_dao_logs``, ``LogCapture``, ``capture_log``: logging utilities.
 """
 
 import io
 import logging
 import os
-from datetime import datetime, timedelta, timezone
-from unittest.mock import patch
-from uuid import uuid4
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import text
-from sqlalchemy.pool import StaticPool
 
-from retrain_pipelines.dag_engine.db.dao import DAO
-from retrain_pipelines.dag_engine.db.model import Base
+from retrain_pipelines.dag_engine.config import Config
+from retrain_pipelines.dag_engine.db.dao import AsyncDAO, DAO
 
 
-_NOW = datetime(2024, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
+def _pg_url() -> str:
+    return (
+        f"postgresql://{os.environ['PGUSER']}:{os.environ['PGPASSWORD']}"
+        f"@{os.environ['PGHOST']}:{os.environ['PGPORT']}"
+        f"/{os.environ['PGDATABASE']}"
+    )
 
 
-@pytest.fixture(scope="session")
-def sync_dao():
-    """Session-scoped DAO backed by a shared in-memory SQLite.
+@pytest.fixture(scope="session", params=["sqlite", "postgresql"])
+def sync_dao(
+    request, postgres_session, _disable_dao_listeners_session, tmp_path_factory
+):
+    """Session-scoped DAO parametrised on SQLite and PostgreSQL.
 
-    StaticPool is substituted for NullPool only during DAO construction so
-    that the single in-memory database is visible to all threads. The patch
-    is not held open beyond construction; doing so would corrupt NullPool
-    isolation for any ``isolated_dao`` created in the same session.
+    Same construction logic for both backends: ``DAO(db_url=url)``.
+    ``DAO.__init__`` calls ``Base.metadata.create_all`` (idempotent).
+    Data accumulates within the session (tests use ``>= N`` assertions).
     """
-    with patch("sqlalchemy.pool.NullPool", StaticPool), patch("requests.post"):
-        dao = DAO(db_url=os.environ["RP_METADATASTORE_URL"])  # sqlite in-mem
+    if request.param == "sqlite":
+        db_path = tmp_path_factory.mktemp("sync_db") / "sync.db"
+        url = f"sqlite:///{db_path}"
+    else:
+        url = _pg_url()
+
+    dao = DAO(db_url=url)
     yield dao
     dao.dispose()
 
 
 @pytest_asyncio.fixture
-async def async_dao():
-    """Function-scoped AsyncDAO on a fresh in-memory aiosqlite database.
+async def async_dao(isolated_db):
+    """Function-scoped AsyncDAO on a clean per-test database.
 
-    Tables are created via the ORM metadata before yielding so every test
-    gets a clean schema with no pre-existing rows.
-    The AsyncDAO instance
-    is then wired to the same engine so all operations share the migrated
-    schema.
-    A second in-memory URL is passed to ``AsyncDAO.__init__`` to
-    satisfy the constructor; that engine is immediately discarded and
-    replaced with the pre-migrated one.
+    Schema is present (``isolated_db`` called ``create_all``).
+    Async URL derived by ``Config.get_metadatastore_async_url()`` from the
+    monkeypatched ``RP_METADATASTORE_URL``.
     """
-    from retrain_pipelines.dag_engine.db.dao import AsyncDAO
-    from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-    from sqlalchemy.orm import sessionmaker
-
-    engine = create_async_engine(
-        os.environ["RP_METADATASTORE_ASYNC_URL"],  # sqlite in-mem
-        future=True,
-        poolclass=StaticPool,
-        connect_args={"check_same_thread": False},
-    )
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-
-    dao = AsyncDAO(db_url=os.environ["RP_METADATASTORE_ASYNC_URL"])  # sqlite in-mem
-    await dao.engine.dispose()
-    dao.engine = engine
-    dao.session_factory = sessionmaker(
-        bind=engine,
-        expire_on_commit=False,
-        class_=AsyncSession,
-    )
-
+    dao = AsyncDAO(db_url=Config.get_metadatastore_async_url())
     yield dao
-    await engine.dispose()
-
-
-@pytest_asyncio.fixture
-async def seeded_async_dao(async_dao):
-    """Function-scoped fixture: seeded AsyncDAO database.
-
-    Seeds:
-      - Two Executions named "cnt_pipe" (username="alice"): one completed
-        successfully (no failed tasks), one completed with a failed Task.
-      - One Execution with a TaskType (name="seeded_step") and one Task,
-        used by task-list / tasktype / info / number / trace tests.
-
-    Yields:
-      (async_dao, (exec_id_with_tasks, tt_uuid))
-    """
-    tt_uuid_f = uuid4()
-    tt_uuid = uuid4()
-    _end = (_NOW + timedelta(hours=1)).isoformat()
-
-    async with async_dao.engine.begin() as conn:
-        await conn.execute(
-            text(
-                "INSERT INTO executions (name, username, start_timestamp, end_timestamp,"
-                " metadata_root, artifacts_store_root)"
-                "VALUES (:n, :u, :s, :e, '/tmp/meta', '/tmp/artifacts')"
-            ),
-            {"n": "cnt_pipe", "u": "alice", "s": _NOW.isoformat(), "e": _end},
-        )
-
-        await conn.execute(
-            text(
-                "INSERT INTO executions (name, username, start_timestamp, end_timestamp,"
-                " metadata_root, artifacts_store_root) "
-                "VALUES (:n, :u, :s, :e, '/tmp/meta', '/tmp/artifacts')"
-            ),
-            {
-                "n": "cnt_pipe",
-                "u": "alice",
-                "s": (_NOW + timedelta(seconds=1)).isoformat(),
-                "e": _end,
-            },
-        )
-        row = await conn.execute(text("SELECT last_insert_rowid()"))
-        exec_id_failed = row.scalar()
-
-        await conn.execute(
-            text(
-                "INSERT INTO tasktypes"
-                ' (uuid, exec_id, "order", name, is_parallel, children) '
-                "VALUES (:uuid, :eid, 0, 'fail_step', 0, '[]')"
-            ),
-            {"uuid": tt_uuid_f.hex, "eid": exec_id_failed},
-        )
-
-        await conn.execute(
-            text(
-                "INSERT INTO tasks"
-                " (tasktype_uuid, exec_id, start_timestamp, end_timestamp, failed) "
-                "VALUES (:tu, :eid, :s, :e, 1)"
-            ),
-            {
-                "tu": tt_uuid_f.hex,
-                "eid": exec_id_failed,
-                "s": (_NOW + timedelta(seconds=1)).isoformat(),
-                "e": _end,
-            },
-        )
-
-        await conn.execute(
-            text(
-                "INSERT INTO executions (name, username, start_timestamp,"
-                " metadata_root, artifacts_store_root) "
-                "VALUES (:n, :u, :s, '/tmp/meta', '/tmp/artifacts')"
-            ),
-            {
-                "n": "cnt_pipe",
-                "u": "alice",
-                "s": (_NOW + timedelta(seconds=2)).isoformat(),
-            },
-        )
-        row = await conn.execute(text("SELECT last_insert_rowid()"))
-        exec_id_with_tasks = row.scalar()
-
-        await conn.execute(
-            text(
-                "INSERT INTO tasktypes"
-                ' (uuid, exec_id, "order", name, is_parallel, children) '
-                "VALUES (:uuid, :eid, 0, 'seeded_step', 0, '[]')"
-            ),
-            {"uuid": tt_uuid.hex, "eid": exec_id_with_tasks},
-        )
-
-        await conn.execute(
-            text(
-                "INSERT INTO tasks (tasktype_uuid, exec_id, start_timestamp) "
-                "VALUES (:tu, :eid, :s)"
-            ),
-            {
-                "tu": tt_uuid.hex,
-                "eid": exec_id_with_tasks,
-                "s": (_NOW + timedelta(seconds=2)).isoformat(),
-            },
-        )
-
-    yield async_dao, (exec_id_with_tasks, tt_uuid)
-
-
-@pytest_asyncio.fixture
-async def taskgroup_seeded_async_dao(async_dao):
-    """Function-scoped fixture: AsyncDAO seeded with TaskGroups for hierarchy tests.
-
-    Seeds:
-      - One Execution.
-      - One parent TaskGroup (order=0, elements=[]).
-      - One child TaskGroup (order=1) whose ``elements`` list contains the
-        parent's UUID (hex, no dashes), establishing the parent-chain used
-        by the recursive CTE in ``get_taskgroups_hierarchy``.
-
-    Yields:
-      (async_dao, (exec_id, parent_tg_uuid, child_tg_uuid))
-    """
-    import json
-
-    parent_uuid = uuid4()
-    child_uuid = uuid4()
-
-    async with async_dao.engine.begin() as conn:
-        await conn.execute(
-            text(
-                "INSERT INTO executions (name, username, start_timestamp,"
-                " metadata_root, artifacts_store_root) "
-                "VALUES (:n, :u, :s, '/tmp/meta', '/tmp/artifacts')"
-            ),
-            {"n": "tg_pipe", "u": "bob", "s": _NOW.isoformat()},
-        )
-        row = await conn.execute(text("SELECT last_insert_rowid()"))
-        exec_id = row.scalar()
-
-        # parent's elements list references child so the recursive CTE walks down
-        await conn.execute(
-            text(
-                "INSERT INTO taskgroups"
-                ' (uuid, exec_id, "order", name, elements) '
-                "VALUES (:uuid, :eid, 0, 'parent_grp', :elems)"
-            ),
-            {
-                "uuid": parent_uuid.hex,
-                "eid": exec_id,
-                "elems": json.dumps([parent_uuid.hex]),
-            },
-        )
-
-        await conn.execute(
-            text(
-                "INSERT INTO taskgroups"
-                ' (uuid, exec_id, "order", name, elements) '
-                "VALUES (:uuid, :eid, 1, 'child_grp', :elems)"
-            ),
-            {"uuid": child_uuid.hex, "eid": exec_id, "elems": json.dumps([])},
-        )
-
-    yield async_dao, (exec_id, parent_uuid, child_uuid)
+    await dao.engine.dispose()
 
 
 @pytest.fixture(autouse=True)

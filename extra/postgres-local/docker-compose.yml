@@ -1,0 +1,28 @@
+services:
+  postgres:
+    image: postgres:18.4-alpine3.24
+    container_name: postgres-local
+
+    ports:
+      - "${POSTGRES_EXTERNAL_PORT:-5432}:${POSTGRES_INTERNAL_PORT:-5432}"
+
+    environment:
+      POSTGRES_USER: "${POSTGRES_USER:-postgres}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-postgres}"
+      POSTGRES_DB: "${POSTGRES_DB:-postgres}"
+
+    volumes:
+      - ${LOCAL_PGSQL_DATA:-${RP_ASSETS_CACHE:-$HOME/.cache/retrain-pipelines}}/postgres-data:/var/lib/postgresql
+
+    restart: unless-stopped
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-postgres}"
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s

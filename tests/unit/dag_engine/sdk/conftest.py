@@ -1,57 +1,26 @@
 """
-SDK specific fixtures for the unit-test subtree.
+SDK-specific fixtures for the integration-test subtree.
+
+NOTE: ``isolated_async_dao`` from the parent ``dag_engine/conftest.py``
+is available to all dag_engine subtests (including this sdk subtree)
+via normal pytest fixture inheritance.
 
 Provides:
-  ``isolated_async_dao``: function-scoped fixture that creates a
-    file-based SQLite database and sets both ``RP_METADATASTORE_URL``
-    and ``RP_METADATASTORE_ASYNC_URL`` to point to it. Used by SDK
-    tests where the SDK creates its own ``AsyncDAO`` instances
-    internally via ``Config.get_metadatastore_async_url()``.
-    Yields a sync engine for ORM seeding (DAO listeners are disabled
-    via ``disable_all_dao_listeners``).
-  ``query_counter``: function-scoped fixture that attaches a
-    ``before_cursor_execute`` listener to the ``sqlalchemy.Engine``
-    class so that every engine—including those created internally by
-    ``AsyncDAO`` via ``create_async_engine``—is observed.  Yields a
-    lightweight counter with a ``reset()`` method.  No mocking or
-    patching of application code is required.
-  ``make_row``: Helper to fabricate ORM-like namespace rows.
-  ``write_disk_artifact``: Helper to write cloudpickle artifacts using
-    project file_utils transparently across local and S3 backends.
+  ``query_counter``: function-scoped; attaches a ``before_cursor_execute``
+    listener to ``sqlalchemy.Engine`` so every engine - including those
+    created internally by ``AsyncDAO`` - is observed.  Yields a lightweight
+    counter with a ``reset()`` method.
+  ``make_row``: helper to fabricate ORM-like namespace rows.
+  ``write_disk_artifact``: helper to write cloudpickle artifacts via
+    project file_utils, transparently across local and S3 backends.
 """
 
 import cloudpickle
 import pytest
-from sqlalchemy import Engine, create_engine, event
+from sqlalchemy import Engine, event
 from types import SimpleNamespace
 
-from retrain_pipelines.dag_engine.db.model import Base
 from retrain_pipelines.utils.file_utils import write_binary_file
-
-
-@pytest.fixture
-def isolated_async_dao(tmp_path, monkeypatch, disable_all_dao_listeners):
-    """File-based SQLite with both sync and async env vars set.
-
-    Used by SDK tests where the SDK creates its own ``AsyncDAO`` instances
-    internally via ``Config.get_metadatastore_async_url()``. Yields a sync
-    engine for ORM seeding. ``disable_all_dao_listeners`` dynamically disables
-    all DAO event listeners, allowing direct ORM inserts without triggering
-    HTTP requests.
-    """
-    db_path = tmp_path / "async_test.db"
-    url = f"sqlite:///{db_path}"
-    async_url = f"sqlite+aiosqlite:///{db_path}"
-
-    monkeypatch.setenv("RP_METADATASTORE_URL", url)
-    monkeypatch.setenv("RP_METADATASTORE_ASYNC_URL", async_url)
-
-    engine = create_engine(url)
-    Base.metadata.create_all(engine)
-
-    yield engine
-
-    engine.dispose()
 
 
 @pytest.fixture

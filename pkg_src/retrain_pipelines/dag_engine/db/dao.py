@@ -7,7 +7,20 @@ from functools import lru_cache
 from uuid import UUID
 
 import requests
-from sqlalchemy import QueuePool, Uuid, and_, case, create_engine, desc, event, func, select, text
+from sqlalchemy import (
+    QueuePool,
+    String,
+    Uuid,
+    and_,
+    case,
+    cast,
+    create_engine,
+    desc,
+    event,
+    func,
+    select,
+    text,
+)
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import aliased, object_session, scoped_session, sessionmaker
 
@@ -39,6 +52,21 @@ class DAOBase:
     def __init__(self, db_url, is_async=False):
         if is_async:
             self.engine = create_async_engine(db_url, future=True)
+
+            # Enforce FK constraints on SQLite (off by default)
+            if "sqlite" in db_url:
+                # AsyncEngine does not support event.listens_for directly
+                # for the "connect" event ; it raises
+                # ``NotImplementedError("asynchronous events are not implemented
+                # at this time")``. The underlying sync Engine is accessible
+                # via the ``.sync_engine`` property and supports the connect
+                # event normally, so we attach the pragma listener there.
+                @event.listens_for(self.engine.sync_engine, "connect")
+                def set_sqlite_fk_pragma(dbapi_conn, connection_record):
+                    cursor = dbapi_conn.cursor()
+                    cursor.execute("PRAGMA foreign_keys=ON")
+                    cursor.close()
+
             self.session_factory = sessionmaker(
                 bind=self.engine,
                 expire_on_commit=False,
@@ -64,6 +92,8 @@ class DAOBase:
                     cursor.execute("PRAGMA busy_timeout=60000")
                     cursor.execute("PRAGMA synchronous=NORMAL")
                     cursor.execute("PRAGMA cache_size=-64000")
+                    cursor.execute("PRAGMA foreign_keys=ON")  # Enforce FK constraints
+                    #                                           (off by default)
                     cursor.close()
 
             else:
@@ -859,11 +889,9 @@ class AsyncDAO(DAOBase):
 
             SELECT tg.*
             FROM taskgroups tg
-            JOIN parent_chain pc ON EXISTS (
-                SELECT 1
-                FROM json_each(tg.elements)
-                WHERE REPLACE(json_each.value, '-', '') = pc.uuid
-            )
+            JOIN parent_chain pc ON
+                REPLACE(CAST(tg.elements AS TEXT), '-', '')
+                LIKE '%' || REPLACE(CAST(pc.uuid AS TEXT), '-', '') || '%'
         )
         SELECT * FROM parent_chain ORDER BY "order";
         """
@@ -877,13 +905,18 @@ class AsyncDAO(DAOBase):
             out = []
             for row in rows:
                 mapping = row._mapping
+                ui_css_raw = mapping.get("ui_css")
                 out.append({
                     "uuid": (
                         # bring back dashes
-                        str(UUID(hex=mapping["uuid"]))
+                        str(UUID(str(mapping["uuid"])))
                     ),
                     "name": mapping.get("name"),
-                    "ui_css": json.loads(mapping.get("ui_css")) if mapping.get("ui_css") else None,
+                    "ui_css": (
+                        json.loads(ui_css_raw) if isinstance(ui_css_raw, str) else ui_css_raw
+                    )
+                    if ui_css_raw
+                    else None,
                 })
 
             return out
@@ -1242,6 +1275,19 @@ class AsyncDAO(DAOBase):
             for element_str in tg.elements:
                 if element_str in tg_by_uuid:
                     queue.append(tg_by_uuid[element_str])
+                else:
+                    # Case "an element references a UUID not
+                    # present among this execution's taskgroups".
+                    # Shall never happen.
+                    logger.warning(
+                        f"TaskGroup element '{element_str}' referenced by "
+                        f"'{tg.name}' (uuid={tg.uuid}) not found among "
+                        f"execution {execution_id}'s taskgroups."
+                    )
+
+        # Cast rank to text for cross-DB JSON comparison.
+        # PostgreSQL does not support = on json columns.
+        rank_str = json.dumps(rank) if not isinstance(rank, str) else rank
 
         # Select Task alongside the TaskType extension fields needed to build TaskExt.
         stmt = (
@@ -1257,7 +1303,7 @@ class AsyncDAO(DAOBase):
             .where(
                 and_(
                     Task.exec_id == execution_id,
-                    Task.rank == rank,
+                    cast(Task.rank, String) == rank_str,
                     TaskType.taskgroup_uuid.in_(descendant_uuids),
                 )
             )

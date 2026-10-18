@@ -1,3 +1,4 @@
+from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -78,7 +79,9 @@ class TestAlembicCapture:
 
 
 class TestRunAlembicUpgradeOnce:
-    def test_upgrade_runs_and_sets_flag_non_notebook(self, mock_rich_controller):
+    def test_upgrade_runs_and_sets_flag_non_notebook(
+        self, mock_rich_controller, metadatastore_url
+    ):
         """First call performs upgrade, detects 'Running upgrade', prints output."""
         fake_alembic_capture = contextmanager_yielding("Running upgrade 1 -> 2\n")
 
@@ -146,7 +149,6 @@ class TestRunAlembicUpgradeOnce:
 def contextmanager_yielding(value):
     """Build a context-manager function that yields an object whose
     .getvalue() returns `value`, for use as a drop-in alembic_capture stub."""
-    from contextlib import contextmanager
 
     @contextmanager
     def _cm(cfg):

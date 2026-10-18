@@ -875,10 +875,10 @@ class DAG(BaseModel):
         # so canonical exec_id-based disk access resolves correctly.
         link_params_defaults_to_exec(tmp, exec_id)
         tasktypes_list, taskgroups_list = self.to_elements_lists()
-        for i, tasktype in enumerate(tasktypes_list):
-            dao.add_tasktype(exec_id=exec_id, order=i, **tasktype)
         for i, taskgroup in enumerate(taskgroups_list):
             dao.add_taskgroup(exec_id=exec_id, order=i, **taskgroup)
+        for i, tasktype in enumerate(tasktypes_list):
+            dao.add_tasktype(exec_id=exec_id, order=i, **tasktype)
         dao.dispose()
 
         # Update context
@@ -990,7 +990,11 @@ class DAG(BaseModel):
         while stack:
             current = stack.pop()
             if isinstance(current, TaskGroup):
+                # Handle case where DAG root(s) is a TaskGroup,
+                # including nested TaskGroups (extend stack
+                # with elements, not just parents).
                 stack.extend(current.parents)
+                stack.extend(current.elements)
             elif current not in all_tasks:
                 all_tasks.add(current)
                 stack.extend(current.parents)
@@ -1047,12 +1051,7 @@ def task(func=None, *, merge_func=None, ui_css=None):
             func=f, is_parallel=False, merge_func=merge_func, docstring=f.__doc__, ui_css=ui_css
         )
 
-        @functools.wraps(f)
-        def wrapper(*args, **kwargs):
-            return f(*args, **kwargs)
-
-        wrapper._task = t
-        return t  # Return the TaskType object instead of the wrapper
+        return t
 
     return decorator(func) if func else decorator
 
@@ -1063,12 +1062,7 @@ def parallel_task(func=None, ui_css=None):
     def decorator(f):
         t = TaskType(func=f, is_parallel=True, merge_func=None, docstring=f.__doc__, ui_css=ui_css)
 
-        @functools.wraps(f)
-        def wrapper(*args, **kwargs):
-            return f(*args, **kwargs)
-
-        wrapper._task = t
-        return t  # Return the TaskType object instead of the wrapper
+        return t
 
     return decorator(func) if func else decorator
 

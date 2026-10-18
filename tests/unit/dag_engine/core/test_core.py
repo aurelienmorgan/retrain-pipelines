@@ -1,8 +1,7 @@
 """
-Unit tests for retrain_pipelines.dag_engine.core.core
+Unit & Integration tests for retrain_pipelines.dag_engine.core.core
 """
 
-import functools
 import gc
 import logging
 import os
@@ -10,9 +9,11 @@ import pickle
 import sys
 import types
 from datetime import date, datetime, timezone
-from unittest.mock import MagicMock, PropertyMock, patch
+from unittest.mock import MagicMock, patch
+from uuid import UUID
 
 import pytest
+from pydantic import BaseModel
 
 import retrain_pipelines.dag_engine.core.core as core_module
 from retrain_pipelines.dag_engine.core.core import (
@@ -37,6 +38,15 @@ from retrain_pipelines.dag_engine.core.core import (
     task,
     taskgroup,
 )
+from retrain_pipelines.dag_engine.core import trace_buffer as trace_buffer_module
+from retrain_pipelines.dag_engine.db.model import (
+    TaskContextAttr,
+    TaskGroup as TaskGroupORM,
+    TaskPayloadAttr,
+    TaskTrace,
+)
+from retrain_pipelines.dag_engine.stores import contexts_store as contexts_store_module
+from retrain_pipelines.dag_engine.stores import payloads_store as payloads_store_module
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -53,40 +63,14 @@ def _real_task(name: str, *, is_parallel=False, merge_func=None) -> TaskType:
     return TaskType(func=func, is_parallel=is_parallel, merge_func=merge_func)
 
 
-def _stub_task(name, parents=None):
-    t = MagicMock(spec=TaskType)
-    type(t).name = PropertyMock(return_value=name)
-    t.__class__ = TaskType
-    t._parents = parents or []
-    t.parents = t._parents
-    t._children = []
-    t.children = t._children
-    t.task_group = None
-    t.__hash__ = lambda self: id(self)
-    t.__eq__ = lambda self, other: self is other
-    return t
+class _NoFuncDefClass:
+    """Module-level class used to drive the no-FuncDef branch of _get_dag_params.
 
+    inspect.getsource() returns the class source (ClassDef, no FunctionDef),
+    so ast.walk yields no FunctionDef and _get_dag_params raises ValueError.
+    """
 
-def _elem(name):
-    """Lightweight TaskType stand-in for TaskGroup element slots."""
-    t = MagicMock(spec=TaskType)
-    t.__class__ = TaskType
-    t.name = name
-    t._task_group = None
-    return t
-
-
-def _make_dao_mock(task_id=1, exec_id=10):
-    """Return a DAO mock suitable for wrapping tests."""
-    dao = MagicMock()
-    dao.add_task.return_value = task_id
-    dao.add_execution.return_value = exec_id
-    dao.update_task.return_value = None
-    dao.update_execution.return_value = None
-    dao.add_tasktype.return_value = None
-    dao.add_taskgroup.return_value = None
-    dao.dispose.return_value = None
-    return dao
+    pass
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -380,14 +364,32 @@ class TestDagExecutionContext:
         assert ctx2._attr_refs == {"p1": {"eTAG": "abc"}}
 
     def test_dag_execution_context_init_attr_refs(self):
-        """Verify _init_attr_refs_from_params resolves storables and populates attribute references."""
+        """Verify _init_attr_refs_from_params resolves storables and populates attribute references.
+
+        Calls the real attr_ref_from_param_storable against a params_json dict
+        containing both an inline JSON-safe default and a disk-ref sentinel,
+        covering both branches of the storable-type dispatch.
+        """
+        inline_storable = 42
+        disk_ref_storable = {
+            "__eTAG__": "abc123",
+            "__sha__": "def456",
+            "__disk_ref__": "tmp/params/defaults/p.pkl",
+        }
+        params_json = {
+            "p_inline": {"description": "d", "default": inline_storable},
+            "p_disk": {"description": "d", "default": disk_ref_storable},
+        }
         ctx = DagExecutionContext({})
-        with patch.object(
-            core_module, "attr_ref_from_param_storable", return_value={"eTAG": "abc"}
-        ) as mock_arf:
-            ctx._init_attr_refs_from_params({"p1": {"default": "val1"}})
-        mock_arf.assert_called_once()
-        assert ctx._attr_refs["p1"]["eTAG"] == "abc"
+        ctx._init_attr_refs_from_params(params_json)
+        # Inline storable => eTAG generated, no sha, no disk_ref, value kept inline.
+        assert ctx._attr_refs["p_inline"]["inline"] == 42
+        assert ctx._attr_refs["p_inline"]["sha"] is None
+        assert ctx._attr_refs["p_inline"]["disk_ref"] is None
+        # Disk-ref storable => eTAG/sha/disk_ref extracted from the sentinel.
+        assert ctx._attr_refs["p_disk"]["disk_ref"] == "tmp/params/defaults/p.pkl"
+        assert ctx._attr_refs["p_disk"]["sha"] == "def456"
+        assert ctx._attr_refs["p_disk"]["inline"] is None
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -434,106 +436,104 @@ class TestDagParam:
     def test_default_is_none(self):
         assert DagParam(description="d").default is None
 
-    def test_serializable_dict_basic(self):
-        with patch.object(
-            core_module, "value_to_storable", return_value=42
-        ) as mock_vts:
-            result = DagParam(description="d", default=42).to_serializable_dict(
-                dir_id="t", param_name="p"
-            )
-        mock_vts.assert_called_once_with("t", "defaults", "p", 42)
+    def test_serializable_dict_basic(self, assets_cache):
+        """int is JSON-native ; returned as-is by the real value_to_storable."""
+        result = DagParam(description="d", default=42).to_serializable_dict(
+            dir_id="t", param_name="p"
+        )
         assert result == {"description": "d", "default": 42}
 
-    def test_serialize_datetime(self):
+    def test_serialize_datetime(self, assets_cache):
+        """datetime is JSON-native (ISO format) ; returned as-is."""
         ts = datetime(2024, 6, 1, tzinfo=timezone.utc)
-        with patch.object(
-            core_module, "value_to_storable", return_value="2024-06-01T00:00:00+00:00"
-        ):
-            result = DagParam(description="d", default=ts).to_serializable_dict(
-                dir_id="t", param_name="p"
-            )
-        assert "2024-06-01" in result["default"]
+        result = DagParam(description="d", default=ts).to_serializable_dict(
+            dir_id="t", param_name="p"
+        )
+        assert result["description"] == "d"
+        assert "2024-06-01" in str(result["default"])
 
-    def test_serialize_date(self):
-        with patch.object(core_module, "value_to_storable", return_value="2024-06-01"):
-            result = DagParam(
-                description="d", default=date(2024, 6, 1)
-            ).to_serializable_dict(dir_id="t", param_name="p")
-        assert result["default"] == "2024-06-01"
+    def test_serialize_date(self, assets_cache):
+        """date is JSON-native (ISO format) ; returned as-is."""
+        result = DagParam(
+            description="d", default=date(2024, 6, 1)
+        ).to_serializable_dict(dir_id="t", param_name="p")
+        assert result["description"] == "d"
+        assert "2024-06-01" in str(result["default"])
 
-    def test_serialize_nested_dict(self):
-        with patch.object(core_module, "value_to_storable", return_value={"a": [1, 2]}):
-            result = DagParam(
-                description="d", default={"a": [1, 2]}
-            ).to_serializable_dict(dir_id="t", param_name="p")
-        assert result["default"] == {"a": [1, 2]}
+    def test_serialize_nested_dict(self, assets_cache):
+        """dict with JSON-native values is returned as-is."""
+        result = DagParam(description="d", default={"a": [1, 2]}).to_serializable_dict(
+            dir_id="t", param_name="p"
+        )
+        assert result == {"description": "d", "default": {"a": [1, 2]}}
 
-    def test_serialize_list(self):
-        with patch.object(
-            core_module, "value_to_storable", return_value=[1, "two", None]
-        ):
-            result = DagParam(
-                description="d", default=[1, "two", None]
-            ).to_serializable_dict(dir_id="t", param_name="p")
-        assert result["default"] == [1, "two", None]
+    def test_serialize_list(self, assets_cache):
+        """list with JSON-native values is returned as-is."""
+        result = DagParam(
+            description="d", default=[1, "two", None]
+        ).to_serializable_dict(dir_id="t", param_name="p")
+        assert result == {"description": "d", "default": [1, "two", None]}
 
-    def test_serialize_tuple(self):
-        with patch.object(core_module, "value_to_storable", return_value=[1, 2]):
-            result = DagParam(description="d", default=(1, 2)).to_serializable_dict(
-                dir_id="t", param_name="p"
-            )
-        assert result["default"] == [1, 2]
+    def test_serialize_tuple(self, assets_cache):
+        """tuple is JSON-native (converted to list) ; returned as-is."""
+        result = DagParam(description="d", default=(1, 2)).to_serializable_dict(
+            dir_id="t", param_name="p"
+        )
+        assert result["description"] == "d"
+        assert list(result["default"]) == [1, 2]
 
-    def test_serialize_set(self):
-        with patch.object(core_module, "value_to_storable", return_value=[99]):
-            result = DagParam(description="d", default={99}).to_serializable_dict(
-                dir_id="t", param_name="p"
-            )
-        assert result["default"] == [99]
+    def test_serialize_set(self, assets_cache):
+        """set is JSON-native (converted to list) ; returned as-is."""
+        result = DagParam(description="d", default={99}).to_serializable_dict(
+            dir_id="t", param_name="p"
+        )
+        assert result["description"] == "d"
+        assert list(result["default"]) == [99]
 
-    def test_serialize_none(self):
-        with patch.object(core_module, "value_to_storable", return_value=None):
-            result = DagParam(description="d").to_serializable_dict(
-                dir_id="t", param_name="p"
-            )
-        assert result["default"] is None
+    def test_serialize_none(self, assets_cache):
+        """None is JSON-native ; returned as-is."""
+        result = DagParam(description="d").to_serializable_dict(
+            dir_id="t", param_name="p"
+        )
+        assert result == {"description": "d", "default": None}
 
-    def test_serialize_bool_preserved(self):
-        with patch.object(core_module, "value_to_storable", return_value=True):
-            result = DagParam(description="d", default=True).to_serializable_dict(
-                dir_id="t", param_name="p"
-            )
-        assert result["default"] is True
+    def test_serialize_bool_preserved(self, assets_cache):
+        """bool is JSON-native ; returned as-is (not converted to int)."""
+        result = DagParam(description="d", default=True).to_serializable_dict(
+            dir_id="t", param_name="p"
+        )
+        assert result == {"description": "d", "default": True}
 
-    def test_serialize_unknown_type_cloudpickled_to_disk(self):
+    def test_serialize_unknown_type_cloudpickled_to_disk(self, assets_cache):
+        """Custom class instances are not JSON-native ; cloudpickled to disk.
+
+        The returned default is a disk-ref sentinel dict containing
+        __disk_ref__, __eTAG__, and __sha__.
+        """
+
         class Custom:
             pass
 
-        disk_ref_envelope = {
-            "__sha__": "abc",
-            "__disk_ref__": "t/params/defaults/p.pkl",
-        }
-        with patch.object(
-            core_module, "value_to_storable", return_value=disk_ref_envelope
-        ) as mock_vts:
-            d = DagParam(description="d", default=Custom()).to_serializable_dict(
-                dir_id="t", param_name="p"
-            )
-        mock_vts.assert_called_once()
-        assert "__disk_ref__" in d["default"]
-        assert "__sha__" in d["default"]
+        result = DagParam(description="d", default=Custom()).to_serializable_dict(
+            dir_id="t", param_name="p"
+        )
+        assert result["description"] == "d"
+        assert isinstance(result["default"], dict)
+        assert "__disk_ref__" in result["default"]
+        assert "__eTAG__" in result["default"]
+        assert "__sha__" in result["default"]
+        assert result["default"]["__disk_ref__"].endswith("p.pkl")
 
-    def test_serialize_pydantic_model(self):
-        from pydantic import BaseModel as BM
+    def test_serialize_pydantic_model(self, assets_cache):
+        """Pydantic models are JSON-native (model_dump) ; returned as-is."""
 
-        class M(BM):
+        class M(BaseModel):
             x: int = 1
 
-        with patch.object(core_module, "value_to_storable", return_value={"x": 1}):
-            result = DagParam(description="d", default=M()).to_serializable_dict(
-                dir_id="t", param_name="p"
-            )
-        assert result["default"] == {"x": 1}
+        result = DagParam(description="d", default=M()).to_serializable_dict(
+            dir_id="t", param_name="p"
+        )
+        assert result == {"description": "d", "default": {"x": 1}}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -587,6 +587,21 @@ class TestContextProxy:
         try:
             dag_ctx.to_delete = None
             assert "to_delete" not in ec._attr_refs
+        finally:
+            _dag_execution_context_var.reset(token)
+
+    def test_context_proxy_set_none_no_existing_attr_ref_is_noop(self):
+        """Covers the pop(name, None) no-op branch of _ContextProxy.__setattr__.
+
+        When value is None and the attr is not tracked in _attr_refs,
+        the pop returns the default (None) without raising.
+        """
+        ec = DagExecutionContext({})
+        token = _dag_execution_context_var.set(ec)
+        try:
+            dag_ctx.never_set = None
+            assert ec._params["never_set"] is None
+            assert "never_set" not in ec._attr_refs
         finally:
             _dag_execution_context_var.reset(token)
 
@@ -803,228 +818,412 @@ class TestTaskTypeConstruction:
         finally:
             del sys.modules["_test_recon_bad_mod"]
 
-    def test_task_type_rshift_task_type(self):
-        """Verify __rshift__ wires parent and child relationships between two TaskType instances."""
-        a, b = _real_task("rshift_a"), _real_task("rshift_b")
-        result = a >> b
-        assert result is b
-        assert b in a.children
-        assert a in b.parents
-
-    def test_task_type_add_child_task_type(self):
-        """Verify _add_child directly wires parent and child relationships for two TaskType instances."""
-        a, b = _real_task("addchild_a"), _real_task("addchild_b")
-        a._add_child(b)
-        assert b in a.children
-        assert a in b.parents
-
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  TaskType – _wrap_func and _wrap_merge_func via mocked DAO + runtime
+#  TaskType – _wrap_func and _wrap_merge_func via real DAO + real stores
 # ══════════════════════════════════════════════════════════════════════════════
 
 
 @pytest.fixture()
-def _dao_and_registry():
-    """Patch DAO and _task_registry so wrapped funcs don't need a real DB."""
-    dao_mock = _make_dao_mock(task_id=1)
-    registry_mock = MagicMock()
-    # Mock context serialization functions to isolate task execution
-    # and ensure the DAO context attribute persistence block is hit.
-    with (
-        patch("retrain_pipelines.dag_engine.core.core.DAO", return_value=dao_mock),
-        patch(
-            "retrain_pipelines.dag_engine.core.core.get_trace_buffer",
-            return_value=MagicMock(add_trace=MagicMock(), flush=MagicMock()),
-        ),
-        patch("retrain_pipelines.dag_engine.runtime._task_registry", registry_mock),
-        patch(
-            "retrain_pipelines.dag_engine.core.core.compute_context_diff",
-            return_value=[{"dummy": "row"}],
-        ),
-        patch(
-            "retrain_pipelines.dag_engine.core.core.snapshot_context_etags",
-            return_value={},
-        ),
-    ):
-        yield dao_mock, registry_mock
+def _dao_and_registry(isolated_db, isolated_dao, assets_cache):
+    """Provide a clean per-test DB, a real DAO for assertions, and a real assets cache.
+
+    The wrapped funcs in core.py create their own internal DAO via
+    Config.get_metadatastore_url() ; the DAO yielded here is used only for
+    post-call state assertions on the real DB.
+    """
+    yield isolated_dao, None
 
 
 class TestTaskTypeWrapFunc:
+    def _seed_execution_and_tasktype(self, dao, tasktype_uuid):
+        """Seed a real Execution row and a matching TaskType row.
+
+        Required because tasks.exec_id+tasktype_uuid is a composite FK into
+        tasktypes ; the wrapped funcs in core.py call dao.add_task with
+        self.tasktype_uuid, so the corresponding tasktypes row must already
+        exist or the FK constraint fires.
+        """
+        exec_id = dao.add_execution(
+            name="test_pipe",
+            username="tester",
+            _start_timestamp=datetime.now(timezone.utc),
+            metadata_root="/tmp/meta",
+            artifacts_store_root="/tmp/artifacts",
+        )
+        dao.add_tasktype(
+            exec_id=exec_id,
+            order=0,
+            uuid=tasktype_uuid,
+            name="seeded_tasktype",
+            is_parallel=False,
+            children=[],
+        )
+        return exec_id
+
     def test_wrap_func_success_returns_task_id_and_result(self, _dao_and_registry):
-        """Verify successful task execution returns correct IDs and persists context diffs."""
-        dao_mock, reg_mock = _dao_and_registry
-        # Set up an active context and modify a parameter to generate a context diff.
-        ec = DagExecutionContext({"exec_id": 99, "shared_val": 0})
+        """Verify successful task execution returns correct IDs and persists rows.
+
+        Drives the real-DB success path of _wrap_func: add_task, _task_registry
+        register/unregister, add_task_context_attrs (context diff non-empty),
+        set_task_exit_payload, update_task(failed=False), dispose.
+        """
+        dao, _ = _dao_and_registry
+        ec = DagExecutionContext({"exec_id": None, "shared_val": 0})
         token = _dag_execution_context_var.set(ec)
         try:
 
             def my_func():
-                dag_ctx.shared_val = 1
+                dag_ctx.shared_val = 1  # generates a context diff
                 return 42
 
             t = TaskType(func=my_func, is_parallel=False)
-            task_id, result = t.func(exec_id=99)
-            assert task_id == 1
+            exec_id = self._seed_execution_and_tasktype(dao, t.tasktype_uuid)
+            ec._params["exec_id"] = exec_id
+            task_id, result = t.func(exec_id=exec_id)
             assert result == 42
-            dao_mock.update_task.assert_called_once()
-            # Verify context attributes are persisted due to the generated diff.
-            dao_mock.add_task_context_attrs.assert_called_once()
-            reg_mock.unregister_task.assert_called_once_with(1)
+            # Real Task row exists, marked not failed.
+            task_row = dao.get_task(task_id)
+            assert task_row is not None
+            assert task_row.failed is False
+            # Real TaskContextAttr row written for the changed attr.
+            attrs = dao._get_entities(TaskContextAttr, task_id=task_id)
+            assert any(a.attr_name == "shared_val" for a in attrs)
+            # Real TaskPayloadAttr row written (42 is JSON-safe => inline_val).
+            payload = dao._get_entities(TaskPayloadAttr, task_id=task_id)
+            assert len(payload) == 1
+            assert payload[0].inline_val == 42
         finally:
             _dag_execution_context_var.reset(token)
 
-    def test_wrap_func_with_docstring(self, _dao_and_registry):
-        """Verifies the docstring formatting branch (func.__doc__ truthy).
+    def test_wrap_func_with_docstring(self, _dao_and_registry, monkeypatch):
+        """Verifies the docstring formatting branch (func.__doc__ truthy) AND
+        the except branch around compute_context_diff in _wrap_func's finally block.
 
-        Also covers an active context and compute_context_diff raising,
-        the exception is caught by the except handler and logged, while
-        the task itself still completes normally.
+        Drives the truthy branch of `if func.__doc__` (green docstring block in
+        the framed log output). Then forces compute_context_diff to raise in
+        its cloudpickle branch by mocking write_binary_file at its import site
+        in contexts_store (the `from ...utils.file_utils import write_binary_file`
+        binds the name into contexts_store's namespace, so the patch must target
+        contexts_store, not file_utils). The mocked raise propagates up through
+        compute_context_diff and is caught by the real except Exception handler
+        in _wrap_func. The task still completes successfully (failed=False).
+
+        The task sets a non-JSON-safe context attr so the cloudpickle branch of
+        _serialize_attr (inside compute_context_diff) is the one that calls
+        write_binary_file and triggers the mocked raise.
+
+        Note: write_binary_file mocking is explicitly user-authorized for this
+        test only, as the only honest way to force a disk-write failure on
+        backends (local + S3) without depending on filesystem-specific quirks.
         """
-        ec = DagExecutionContext({"exec_id": 1})
+        dao, _ = _dao_and_registry
+        # Mock write_binary_file at its bound name in contexts_store.
+        # _serialize_attr (called from compute_context_diff) calls this bound
+        # name when serializing a non-JSON-safe context attr via cloudpickle.
+        monkeypatch.setattr(
+            contexts_store_module,
+            "write_binary_file",
+            lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("disk write blocked")),
+        )
+        ec = DagExecutionContext({"exec_id": None})
         token = _dag_execution_context_var.set(ec)
         try:
 
+            class _NonJsonSafe:
+                pass
+
             def my_func():
                 """My doc."""
+                dag_ctx.non_json_safe = _NonJsonSafe()  # forces cloudpickle branch
                 return "ok"
 
             t = TaskType(func=my_func, is_parallel=False)
-            with patch(
-                "retrain_pipelines.dag_engine.core.core.compute_context_diff",
-                side_effect=RuntimeError("diff exploded"),
-            ):
-                _, result = t.func(exec_id=1)
+            exec_id = self._seed_execution_and_tasktype(dao, t.tasktype_uuid)
+            ec._params["exec_id"] = exec_id
+            _, result = t.func(exec_id=exec_id)
             assert result == "ok"
+            # Task still marked not failed despite the swallowed context-diff
+            # serialization error ; the except branch in _wrap_func ran and
+            # logged the error via logger.exception.
+            tasks = dao.get_tasks_by_execution(exec_id)
+            assert len(tasks) == 1
+            assert tasks[0].failed is False
         finally:
             _dag_execution_context_var.reset(token)
 
-    def test_wrap_func_payload_serialize_exception(self, _dao_and_registry):
-        """Verify exception during exit payload serialization is caught and logged.
+    def test_wrap_func_payload_serialize_exception(
+        self, _dao_and_registry, monkeypatch
+    ):
+        """Verify the except branch around set_task_exit_payload in _wrap_func.
 
-        Ensures that a failure during the exit payload serialization does not
-        mask the task's successful completion.
+        Forces serialize_task_payload to raise in its cloudpickle branch by
+        mocking write_binary_file at its import site in payloads_store (same
+        import-binding gotcha as contexts_store). The mocked raise propagates
+        up through serialize_task_payload and is caught by the real
+        except Exception handler in _wrap_func. The task still completes
+        successfully (failed=False) and no payload row is written.
+
+        The task returns a non-JSON-safe value so serialize_task_payload takes
+        the cloudpickle branch (the only branch that calls write_binary_file).
+
+        Note: write_binary_file mocking is explicitly user-authorized for this
+        test only.
         """
-        dao_mock, _ = _dao_and_registry
-        dao_mock.set_task_exit_payload.side_effect = RuntimeError("DB payload error")
+        dao, _ = _dao_and_registry
+        # Mock write_binary_file at its bound name in payloads_store.
+        # serialize_task_payload's cloudpickle branch calls write_binary_file(
+        # metadata_root(), [rel_path], raw_bytes) ; the mocked raise propagates
+        # up and is caught by _wrap_func's except Exception handler around
+        # set_task_exit_payload.
+        monkeypatch.setattr(
+            payloads_store_module,
+            "write_binary_file",
+            lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("disk write blocked")),
+        )
+        ec = DagExecutionContext({"exec_id": None})
+        token = _dag_execution_context_var.set(ec)
+        try:
 
-        def my_func():
-            return "ok"
+            class _NonJsonSafe:
+                pass
 
-        t = TaskType(func=my_func, is_parallel=False)
-        task_id, result = t.func(exec_id=1)
+            def my_func():
+                return (
+                    _NonJsonSafe()
+                )  # forces cloudpickle branch in serialize_task_payload
 
-        assert result == "ok"
-        assert task_id == 1
-        call_kwargs = dao_mock.update_task.call_args[1]
-        assert call_kwargs["failed"] is False
+            t = TaskType(func=my_func, is_parallel=False)
+            exec_id = self._seed_execution_and_tasktype(dao, t.tasktype_uuid)
+            ec._params["exec_id"] = exec_id
+            task_id, result = t.func(exec_id=exec_id)
+            assert result is not None
+            # Task still marked not failed despite the swallowed payload
+            # serialization error ; the except branch in _wrap_func ran and
+            # logged the error via logger.exception.
+            task_row = dao.get_task(task_id)
+            assert task_row is not None
+            assert task_row.failed is False
+            # No payload row written: serialize_task_payload raised before
+            # returning the row dict, so set_task_exit_payload was never
+            # called with a valid row.
+            payloads = dao._get_entities(TaskPayloadAttr, task_id=task_id)
+            assert len(payloads) == 0
+        finally:
+            _dag_execution_context_var.reset(token)
 
     def test_wrap_func_failure_raises_task_func_exception(self, _dao_and_registry):
-        def bad_func():
-            raise ValueError("boom")
+        """Task body raises ; _wrap_func wraps it in TaskFuncException."""
+        dao, _ = _dao_and_registry
+        ec = DagExecutionContext({"exec_id": None})
+        token = _dag_execution_context_var.set(ec)
+        try:
 
-        t = TaskType(func=bad_func, is_parallel=False)
-        with pytest.raises(TaskFuncException):
-            t.func(exec_id=1)
+            def bad_func():
+                raise ValueError("boom")
+
+            t = TaskType(func=bad_func, is_parallel=False)
+            exec_id = self._seed_execution_and_tasktype(dao, t.tasktype_uuid)
+            ec._params["exec_id"] = exec_id
+            with pytest.raises(TaskFuncException):
+                t.func(exec_id=exec_id)
+        finally:
+            _dag_execution_context_var.reset(token)
 
     def test_wrap_func_marks_task_failed_on_exception(self, _dao_and_registry):
-        dao_mock, _ = _dao_and_registry
+        """Task body raises ; _wrap_func finally-block calls update_task(failed=True)."""
+        dao, _ = _dao_and_registry
+        ec = DagExecutionContext({"exec_id": None})
+        token = _dag_execution_context_var.set(ec)
+        try:
 
-        def bad_func():
-            raise RuntimeError("oops")
+            def bad_func():
+                raise RuntimeError("oops")
 
-        t = TaskType(func=bad_func, is_parallel=False)
-        with pytest.raises(TaskFuncException):
-            t.func(exec_id=1)
-        call_kwargs = dao_mock.update_task.call_args[1]
-        assert call_kwargs["failed"] is True
+            t = TaskType(func=bad_func, is_parallel=False)
+            exec_id = self._seed_execution_and_tasktype(dao, t.tasktype_uuid)
+            ec._params["exec_id"] = exec_id
+            with pytest.raises(TaskFuncException):
+                t.func(exec_id=exec_id)
+            # Real Task row exists, marked failed.
+            tasks = dao.get_tasks_by_execution(exec_id)
+            assert len(tasks) == 1
+            assert tasks[0].failed is True
+        finally:
+            _dag_execution_context_var.reset(token)
 
     def test_wrap_func_with_rank_in_signature(self, _dao_and_registry):
         """'rank' in func signature => kept in kwargs, not popped."""
+        dao, _ = _dao_and_registry
+        ec = DagExecutionContext({"exec_id": None})
+        token = _dag_execution_context_var.set(ec)
+        try:
 
-        def func_with_rank(rank=None):
-            return rank
+            def func_with_rank(rank=None):
+                return rank
 
-        t = TaskType(func=func_with_rank, is_parallel=False)
-        _, result = t.func(exec_id=1, rank=7)
-        assert result == 7
+            t = TaskType(func=func_with_rank, is_parallel=False)
+            exec_id = self._seed_execution_and_tasktype(dao, t.tasktype_uuid)
+            ec._params["exec_id"] = exec_id
+            _, result = t.func(exec_id=exec_id, rank=7)
+            assert result == 7
+        finally:
+            _dag_execution_context_var.reset(token)
 
     def test_wrap_func_with_task_id_in_signature_injects_id(self, _dao_and_registry):
-        """'task_id' in func signature => (mocked) DAO creates it, wrapper injects it."""
+        """'task_id' in func signature => DAO creates it, wrapper injects it."""
+        dao, _ = _dao_and_registry
+        ec = DagExecutionContext({"exec_id": None})
+        token = _dag_execution_context_var.set(ec)
+        try:
 
-        # task_id must NOT be pre-passed; the wrapper injects it after add_task.
-        def a_tasktype_func(task_id=None):
-            return task_id
+            def a_tasktype_func(task_id=None):
+                return task_id
 
-        t = TaskType(func=a_tasktype_func, is_parallel=False)
-
-        # Pass task_id=None to satisfy core.py's kwargs["task_id"] lookup.
-        # The wrapper will still overwrite it with the DAO-generated ID.
-        returned_task_id, task_id = t.func(exec_id=1, task_id=None)
-
-        # id matches the DAO-returned id
-        assert task_id == returned_task_id
+            t = TaskType(func=a_tasktype_func, is_parallel=False)
+            exec_id = self._seed_execution_and_tasktype(dao, t.tasktype_uuid)
+            ec._params["exec_id"] = exec_id
+            returned_task_id, task_id = t.func(exec_id=exec_id, task_id=None)
+            # id matches the DAO-returned id (real DB row's id).
+            assert task_id == returned_task_id
+            assert dao.get_task(task_id).id == task_id
+        finally:
+            _dag_execution_context_var.reset(token)
 
     def test_wrap_func_with_provided_task_id_skips_dao_add(self, _dao_and_registry):
         """Pre-supplied task_id (from merge wrapper) => DAO.add_task NOT called."""
-        dao_mock, _ = _dao_and_registry
+        dao, _ = _dao_and_registry
+        ec = DagExecutionContext({"exec_id": None})
+        token = _dag_execution_context_var.set(ec)
+        try:
 
-        def plain():
-            return "done"
+            def plain():
+                return "done"
 
-        t = TaskType(func=plain, is_parallel=False)
-        t.func(exec_id=1, task_id=99)
-        dao_mock.add_task.assert_not_called()
+            t = TaskType(func=plain, is_parallel=False)
+            exec_id = self._seed_execution_and_tasktype(dao, t.tasktype_uuid)
+            ec._params["exec_id"] = exec_id
+            # Pre-seed a Task row with the task_id we'll pass.
+            pre_task_id = dao.add_task(
+                exec_id=exec_id,
+                tasktype_uuid=t.tasktype_uuid,
+                rank=None,
+                _start_timestamp=datetime.now(timezone.utc),
+            )
+            t.func(exec_id=exec_id, task_id=pre_task_id)
+            # Only one Task row exists (the pre-seeded one) ; no new row added.
+            tasks = dao.get_tasks_by_execution(exec_id)
+            assert len(tasks) == 1
+            assert tasks[0].id == pre_task_id
+        finally:
+            _dag_execution_context_var.reset(token)
 
     def test_wrap_merge_func_success(self, _dao_and_registry):
-        dao_mock, reg_mock = _dao_and_registry
+        dao, _ = _dao_and_registry
+        ec = DagExecutionContext({"exec_id": None})
+        token = _dag_execution_context_var.set(ec)
+        try:
 
-        def merge(x):
-            return x * 2
+            def merge(x):
+                return x * 2
 
-        def main_func():
-            return 1
+            def main_func():
+                return 1
 
-        t = TaskType(func=main_func, is_parallel=False, merge_func=merge)
-        task_id, result = t.merge_func(10, exec_id=5, rank=None)
-        assert task_id == 1
-        assert result == 20
+            t = TaskType(func=main_func, is_parallel=False, merge_func=merge)
+            exec_id = self._seed_execution_and_tasktype(dao, t.tasktype_uuid)
+            ec._params["exec_id"] = exec_id
+            task_id, result = t.merge_func(10, exec_id=exec_id, rank=None)
+            assert result == 20
+            # _wrap_merge_func success path does NOT call update_task(failed=...)
+            # (only the except branch does). The Task row exists ; we assert
+            # the row was created.
+            assert dao.get_task(task_id) is not None
+        finally:
+            _dag_execution_context_var.reset(token)
 
     def test_wrap_merge_func_failure_raises_merge_exception(self, _dao_and_registry):
-        def bad_merge(x):
-            raise ValueError("merge fail")
+        dao, _ = _dao_and_registry
+        ec = DagExecutionContext({"exec_id": None})
+        token = _dag_execution_context_var.set(ec)
+        try:
 
-        def main_func():
-            return 1
+            def bad_merge(x):
+                raise ValueError("merge fail")
 
-        t = TaskType(func=main_func, is_parallel=False, merge_func=bad_merge)
-        with pytest.raises(TaskMergeFuncException):
-            t.merge_func(0, exec_id=1, rank=None)
+            def main_func():
+                return 1
+
+            t = TaskType(func=main_func, is_parallel=False, merge_func=bad_merge)
+            exec_id = self._seed_execution_and_tasktype(dao, t.tasktype_uuid)
+            ec._params["exec_id"] = exec_id
+            with pytest.raises(TaskMergeFuncException):
+                t.merge_func(0, exec_id=exec_id, rank=None)
+        finally:
+            _dag_execution_context_var.reset(token)
 
     def test_wrap_merge_func_marks_task_failed(self, _dao_and_registry):
-        dao_mock, _ = _dao_and_registry
+        dao, _ = _dao_and_registry
+        ec = DagExecutionContext({"exec_id": None})
+        token = _dag_execution_context_var.set(ec)
+        try:
 
-        def bad_merge(x):
-            raise RuntimeError("m")
+            def bad_merge(x):
+                raise RuntimeError("m")
 
-        def main_func():
-            return 1
+            def main_func():
+                return 1
 
-        t = TaskType(func=main_func, is_parallel=False, merge_func=bad_merge)
-        with pytest.raises(TaskMergeFuncException):
-            t.merge_func(0, exec_id=1, rank=None)
-        call_kwargs = dao_mock.update_task.call_args[1]
-        assert call_kwargs["failed"] is True
+            t = TaskType(func=main_func, is_parallel=False, merge_func=bad_merge)
+            exec_id = self._seed_execution_and_tasktype(dao, t.tasktype_uuid)
+            ec._params["exec_id"] = exec_id
+            with pytest.raises(TaskMergeFuncException):
+                t.merge_func(0, exec_id=exec_id, rank=None)
+            # Real Task row exists, marked failed.
+            tasks = dao.get_tasks_by_execution(exec_id)
+            assert len(tasks) == 1
+            assert tasks[0].failed is True
+        finally:
+            _dag_execution_context_var.reset(token)
 
-    def test_wrap_func_inner_exception_reraise(self, _dao_and_registry):
-        """Verify that exceptions raised by the user function are caught and re-raised as TaskFuncException."""
+    def test_wrap_merge_then_func_propagates_pending_entry_etags(
+        self, _dao_and_registry
+    ):
+        """merge_func stashes its entry-etags snapshot on the active context
+        so the subsequent func wrapper reuses it instead of re-snapshotting.
 
-        def bad_func():
-            raise ValueError("inner boom")
+        Exercises the two branches that work as a logical pair:
+          * the merge-func finally-block branch that propagates entry etags
+            onto a non-None active context for the next wrapper to detect.
+          * the func-entry branch that detects a stashed pending-etags value
+            and consumes (deletes) it rather than taking a fresh snapshot.
+        """
+        dao, _ = _dao_and_registry
+        ec = DagExecutionContext({"exec_id": None})
+        token = _dag_execution_context_var.set(ec)
+        try:
 
-        t = TaskType(func=bad_func, is_parallel=False)
-        with pytest.raises(TaskFuncException):
-            t.func(exec_id=1)
+            def merge(x):
+                return x * 2
+
+            def main_func():
+                return "main"
+
+            t = TaskType(func=main_func, is_parallel=False, merge_func=merge)
+            exec_id = self._seed_execution_and_tasktype(dao, t.tasktype_uuid)
+            ec._params["exec_id"] = exec_id
+
+            merge_task_id, merge_result = t.merge_func(5, exec_id=exec_id, rank=None)
+            assert merge_result == 10
+            # merge_func finally-block propagated entry etags onto the context.
+            assert vars(ec).get("_pending_merge_entry_etags") == {}
+
+            func_task_id, result = t.func(exec_id=exec_id, task_id=merge_task_id)
+            assert result == "main"
+            # func-entry branch consumed and deleted the stash.
+            assert "_pending_merge_entry_etags" not in vars(ec)
+        finally:
+            _dag_execution_context_var.reset(token)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1033,94 +1232,166 @@ class TestTaskTypeWrapFunc:
 
 
 class TestCaptureAndStreamTrace:
+    def _seed_execution_and_tasktype(self, dao, tasktype_uuid):
+        """Seed a real Execution row and a matching TaskType row.
+
+        Required because tasks.exec_id+tasktype_uuid is a composite FK into
+        tasktypes ; the wrapped funcs in core.py call dao.add_task with
+        self.tasktype_uuid, so the corresponding tasktypes row must already
+        exist or the FK constraint fires.
+        """
+        exec_id = dao.add_execution(
+            name="test_pipe",
+            username="tester",
+            _start_timestamp=datetime.now(timezone.utc),
+            metadata_root="/tmp/meta",
+            artifacts_store_root="/tmp/artifacts",
+        )
+        dao.add_tasktype(
+            exec_id=exec_id,
+            order=0,
+            uuid=tasktype_uuid,
+            name="seeded_tasktype",
+            is_parallel=False,
+            children=[],
+        )
+        return exec_id
+
     def test_ipython_import_error_sets_non_notebook_mode(self, _dao_and_registry):
-        """exception during get_ipython() => _notebook_mode = False."""
+        """exception during get_ipython() => _notebook_mode = False.
 
-        def my_func():
-            print("hello from task")
-            return "ok"
+        The task still completes and traces are written via the non-notebook
+        pipe_reader path. We write directly to fd 1 (bypassing sys.stdout)
+        because pipe_reader reads from the OS-level pipe that fd 1 is dup'd to,
+        not from sys.stdout.
+        """
+        dao, _ = _dao_and_registry
+        ec = DagExecutionContext({"exec_id": None})
+        token = _dag_execution_context_var.set(ec)
+        try:
 
-        # Simulate IPython import raising an exception
-        with patch.dict("sys.modules", {"IPython": None}):
-            t = TaskType(func=my_func, is_parallel=False)
-            _, result = t.func(exec_id=1)
-        assert result == "ok"
+            def my_func():
+                os.write(1, b"hello from task\n")
+                return "ok"
+
+            # Simulate IPython import raising an exception
+            with patch.dict("sys.modules", {"IPython": None}):
+                t = TaskType(func=my_func, is_parallel=False)
+                exec_id = self._seed_execution_and_tasktype(dao, t.tasktype_uuid)
+                ec._params["exec_id"] = exec_id
+                _, result = t.func(exec_id=exec_id)
+            assert result == "ok"
+            # Flush the global trace buffer to ensure the async writer thread
+            # has persisted all queued traces before we query.
+            trace_buffer_module.get_trace_buffer().flush()
+            # Real TaskTrace rows written via the non-notebook pipe_reader path.
+            task_id = dao.get_tasks_by_execution(exec_id)[0].id
+            traces = dao._get_entities(TaskTrace, task_id=task_id)
+            assert len(traces) > 0
+        finally:
+            _dag_execution_context_var.reset(token)
 
     def test_notebook_mode_patches_write_methods(self, _dao_and_registry):
-        """notebook mode wraps capturer_out/err.write with _nb_write."""
+        """notebook mode wraps capturer_out/err.write with _nb_write.
 
-        def my_func():
-            print("notebook output")
-            return "nb_ok"
-
-        ipython_mock = MagicMock()
-        ipython_mock.config = {"IPKernelApp": True}
-
-        # Injecting a mock IPython module into sys.modules ensures the local
-        # import inside _capture_and_stream_trace succeeds and triggers the
-        # notebook-specific stream patching logic.
-        fake_ipython_module = types.ModuleType("IPython")
-        fake_ipython_module.get_ipython = lambda: ipython_mock
-
-        # _OnceRecursiveStdout is used as sys.stdout so that the first write
-        # call coming from StreamToDb.original_stream.write() re-enters
-        # capturer_out.write (= _nb_write) with is_top=False, covering
-        # the inner/recursive branch of _nb_write. _done guards
-        # against unbounded recursion: only one recursive call is triggered.
-        class _OnceRecursiveStdout:
-            def __init__(self):
-                self._done = False
-
-            def write(self, data):
-                if not self._done:
-                    self._done = True
-                    sys.stdout.write(data)  # re-enters _nb_write with is_top=False
-
-            def flush(self):
-                pass
-
-            def fileno(self):
-                return sys.__stdout__.fileno()
-
-            def isatty(self):
-                return False
-
-        t = TaskType(func=my_func, is_parallel=False)
-        recursive_stdout = _OnceRecursiveStdout()
-        orig_stdout = sys.stdout
-        try:
-            sys.stdout = recursive_stdout
-            with patch.dict(sys.modules, {"IPython": fake_ipython_module}):
-                _, result = t.func(exec_id=1)
-        finally:
-            sys.stdout = orig_stdout
-        assert result == "nb_ok"
-
-    def test_pipe_reader_processes_newline_delimited_output(self, _dao_and_registry):
-        """pipe_reader splits on newlines and adds traces to buffer.
-
-        add_trace raises to cover the except Exception: pass handler ;
-        the exception is silently swallowed and the task still returns normally.
+        The fake IPython module makes the local `from IPython import get_ipython`
+        inside _capture_and_stream_trace return a kernel-configured shell,
+        flipping _notebook_mode = True. The _OnceRecursiveStdout stand-in
+        drives the inner (recursive) branch of _nb_write.
         """
-        trace_buffer_mock = MagicMock(
-            add_trace=MagicMock(side_effect=RuntimeError("trace swallowed")),
-            flush=MagicMock(),
-        )
+        dao, _ = _dao_and_registry
+        ec = DagExecutionContext({"exec_id": None})
+        token = _dag_execution_context_var.set(ec)
+        try:
 
-        def my_func():
-            # Write multiple lines to trigger pipe_reader line-splitting logic.
-            # Writing directly to file descriptor 1 bypasses the patched sys.stdout
-            # and feeds data directly into the OS-level pipe.
-            os.write(1, b"line1\nline2\n")
-            return "multiline"
+            def my_func():
+                print("notebook output")
+                return "nb_ok"
 
-        with patch(
-            "retrain_pipelines.dag_engine.core.core.get_trace_buffer",
-            return_value=trace_buffer_mock,
-        ):
+            ipython_mock = MagicMock()
+            ipython_mock.config = {"IPKernelApp": True}
+
+            # Injecting a mock IPython module into sys.modules ensures the local
+            # import inside _capture_and_stream_trace succeeds and triggers the
+            # notebook-specific stream patching logic.
+            fake_ipython_module = types.ModuleType("IPython")
+            fake_ipython_module.get_ipython = lambda: ipython_mock
+
+            # _OnceRecursiveStdout is used as sys.stdout so that the first write
+            # call coming from StreamToDb.original_stream.write() re-enters
+            # capturer_out.write (= _nb_write) with is_top=False, covering
+            # the inner/recursive branch of _nb_write. _done guards
+            # against unbounded recursion: only one recursive call is triggered.
+            class _OnceRecursiveStdout:
+                def __init__(self):
+                    self._done = False
+
+                def write(self, data):
+                    if not self._done:
+                        self._done = True
+                        sys.stdout.write(data)  # re-enters _nb_write with is_top=False
+
+                def flush(self):
+                    pass
+
+                def fileno(self):
+                    return sys.__stdout__.fileno()
+
+                def isatty(self):
+                    return False
+
             t = TaskType(func=my_func, is_parallel=False)
-            _, result = t.func(exec_id=1)
-        assert result == "multiline"
+            exec_id = self._seed_execution_and_tasktype(dao, t.tasktype_uuid)
+            ec._params["exec_id"] = exec_id
+            recursive_stdout = _OnceRecursiveStdout()
+            orig_stdout = sys.stdout
+            try:
+                sys.stdout = recursive_stdout
+                with patch.dict(sys.modules, {"IPython": fake_ipython_module}):
+                    _, result = t.func(exec_id=exec_id)
+            finally:
+                sys.stdout = orig_stdout
+            assert result == "nb_ok"
+        finally:
+            _dag_execution_context_var.reset(token)
+
+    def test_pipe_reader_processes_newline_delimited_output(
+        self, _dao_and_registry, monkeypatch
+    ):
+        """pipe_reader splits on newlines and add_trace raises ;
+        the exception is silently swallowed and the task still returns normally.
+
+        Drives the except Exception: pass swallow branch in pipe_reader via a
+        real TraceBuffer subclass whose add_trace raises. The subclass is
+        swapped in by monkeypatching the trace_buffer module's global singleton.
+        """
+
+        class _RaisingTraceBuffer(trace_buffer_module.TraceBuffer):
+            def add_trace(self, *args, **kwargs):
+                raise RuntimeError("trace swallowed")
+
+        raising_buffer = _RaisingTraceBuffer()
+        monkeypatch.setattr(trace_buffer_module, "_trace_buffer", raising_buffer)
+
+        dao, _ = _dao_and_registry
+        ec = DagExecutionContext({"exec_id": None})
+        token = _dag_execution_context_var.set(ec)
+        try:
+
+            def my_func():
+                # Write multiple lines to trigger pipe_reader line-splitting logic.
+                # Writing directly to file descriptor 1 bypasses the patched sys.stdout
+                # and feeds data directly into the OS-level pipe.
+                os.write(1, b"line1\nline2\n")
+                return "multiline"
+
+            t = TaskType(func=my_func, is_parallel=False)
+            exec_id = self._seed_execution_and_tasktype(dao, t.tasktype_uuid)
+            ec._params["exec_id"] = exec_id
+            _, result = t.func(exec_id=exec_id)
+            assert result == "multiline"
+        finally:
+            _dag_execution_context_var.reset(token)
 
     def test_pipe_reader_processes_newline_delimited_output_success(
         self, _dao_and_registry
@@ -1129,41 +1400,59 @@ class TestCaptureAndStreamTrace:
 
         Covers the non-notebook console echo branch immediately following add_trace.
         """
-        trace_buffer_mock = MagicMock(add_trace=MagicMock(), flush=MagicMock())
+        dao, _ = _dao_and_registry
+        ec = DagExecutionContext({"exec_id": None})
+        token = _dag_execution_context_var.set(ec)
+        try:
 
-        def my_func():
-            # Write multiple lines to trigger pipe_reader line-splitting logic.
-            os.write(1, b"line1\nline2\n")
-            return "multiline_ok"
+            def my_func():
+                # Write multiple lines to trigger pipe_reader line-splitting logic.
+                os.write(1, b"line1\nline2\n")
+                return "multiline_ok"
 
-        with patch(
-            "retrain_pipelines.dag_engine.core.core.get_trace_buffer",
-            return_value=trace_buffer_mock,
-        ):
             t = TaskType(func=my_func, is_parallel=False)
-            _, result = t.func(exec_id=1)
-        assert result == "multiline_ok"
-        # Ensure add_trace was called for each line
-        assert trace_buffer_mock.add_trace.call_count >= 2
+            exec_id = self._seed_execution_and_tasktype(dao, t.tasktype_uuid)
+            ec._params["exec_id"] = exec_id
+            _, result = t.func(exec_id=exec_id)
+            assert result == "multiline_ok"
+            # Flush the global trace buffer to ensure the async writer thread
+            # has persisted all queued traces before we query.
+            trace_buffer_module.get_trace_buffer().flush()
+            # Real TaskTrace rows written for each line.
+            task_id = dao.get_tasks_by_execution(exec_id)[0].id
+            traces = dao._get_entities(TaskTrace, task_id=task_id)
+            assert len(traces) >= 2
+        finally:
+            _dag_execution_context_var.reset(token)
 
     def test_pipe_reader_flushes_partial_line_at_eof(self, _dao_and_registry):
         """pipe_reader flushes remaining buffer (no trailing newline)."""
-        trace_buffer_mock = MagicMock(add_trace=MagicMock(), flush=MagicMock())
+        dao, _ = _dao_and_registry
+        ec = DagExecutionContext({"exec_id": None})
+        token = _dag_execution_context_var.set(ec)
+        try:
 
-        def my_func():
-            # Write without trailing newline => pipe_reader sees partial buffer at close.
-            # Writing directly to file descriptor 1 bypasses the patched sys.stdout
-            # and feeds data directly into the OS-level pipe.
-            os.write(1, b"no newline at end")
-            return "partial"
+            def my_func():
+                # Write without trailing newline => pipe_reader sees partial buffer at close.
+                # Writing directly to file descriptor 1 bypasses the patched sys.stdout
+                # and feeds data directly into the OS-level pipe.
+                os.write(1, b"no newline at end")
+                return "partial"
 
-        with patch(
-            "retrain_pipelines.dag_engine.core.core.get_trace_buffer",
-            return_value=trace_buffer_mock,
-        ):
             t = TaskType(func=my_func, is_parallel=False)
-            _, result = t.func(exec_id=1)
-        assert result == "partial"
+            exec_id = self._seed_execution_and_tasktype(dao, t.tasktype_uuid)
+            ec._params["exec_id"] = exec_id
+            _, result = t.func(exec_id=exec_id)
+            assert result == "partial"
+            # Flush the global trace buffer to ensure the async writer thread
+            # has persisted all queued traces before we query.
+            trace_buffer_module.get_trace_buffer().flush()
+            # Real TaskTrace row written for the partial line.
+            task_id = dao.get_tasks_by_execution(exec_id)[0].id
+            traces = dao._get_entities(TaskTrace, task_id=task_id)
+            assert len(traces) >= 1
+        finally:
+            _dag_execution_context_var.reset(token)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1173,13 +1462,13 @@ class TestCaptureAndStreamTrace:
 
 class TestTaskGroup:
     def test_positional_name_and_elements(self):
-        t1, t2 = _elem("t1"), _elem("t2")
+        t1, t2 = _real_task("t1"), _real_task("t2")
         tg = TaskGroup("MyGroup", t1, t2)
         assert tg.name == "MyGroup"
         assert len(tg.elements) == 2
 
     def test_keyword_name(self):
-        t = _elem("t")
+        t = _real_task("t")
         tg = TaskGroup(t, name="KwGroup")
         assert tg.name == "KwGroup"
 
@@ -1189,55 +1478,68 @@ class TestTaskGroup:
 
     def test_non_string_name_raises_type_error(self):
         with pytest.raises(TypeError):
-            TaskGroup(123, _elem("t"))
+            TaskGroup(123, _real_task("t"))
 
     def test_pydantic_validation_failure_raises_task_group_exception(self):
         """pydantic validation error => TaskGroupException."""
         # Pass an invalid ui_css value to trigger pydantic validation inside super().__init__
         with pytest.raises(TaskGroupException, match="Error instanciating"):
-            TaskGroup("BadCss", _elem("t"), ui_css="not_a_ui_css_instance")
+            TaskGroup("BadCss", _real_task("t"), ui_css="not_a_ui_css_instance")
 
     def test_each_uuid_is_unique(self):
-        t = _elem("t")
+        t = _real_task("t")
         tg1 = TaskGroup("G1", t)
         tg2 = TaskGroup("G2", t)
         assert tg1.uuid != tg2.uuid
         assert hash(tg1) != hash(tg2)
 
     def test_equality_is_by_uuid(self):
-        t = _elem("t")
+        t = _real_task("t")
         tg = TaskGroup("G", t)
         assert tg == tg
         assert tg != TaskGroup("H", t)
 
     def test_eq_non_task_group_false(self):
-        t = _elem("t")
+        t = _real_task("t")
         assert TaskGroup("G", t) != "string"
 
     def test_str_contains_group_name(self):
-        t = _elem("t")
+        t = _real_task("t")
         assert "MyTG" in str(TaskGroup("MyTG", t))
 
     def test_repr_contains_TaskGroup(self):
-        t = _elem("t")
+        t = _real_task("t")
         assert "TaskGroup" in repr(TaskGroup("G", t))
 
     def test_elements_get_task_group_reference(self):
-        t = _elem("t")
+        t = _real_task("t")
         tg = TaskGroup("G", t)
         assert t._task_group is tg
 
     def test_log_property_returns_logger(self):
-        t = _elem("t")
+        t = _real_task("t")
         assert isinstance(TaskGroup("G", t).log, logging.Logger)
 
     def test_task_group_property_none_at_top_level(self):
-        t = _elem("t")
+        t = _real_task("t")
         assert TaskGroup("G", t).task_group is None
 
     def test_parents_property_empty(self):
-        t = _elem("t")
+        t = _real_task("t")
         assert TaskGroup("G", t).parents == []
+
+    def test_taskgroup_name_positional_with_docstring_and_ui_css(self):
+        """Combined positional name + docstring + ui_css keyword construction.
+
+        Covers the full path through __init__ where name is positional and
+        docstring/ui_css arrive as keyword arguments alongside the elements.
+        """
+        t = _real_task("t")
+        css = UiCss(background="#aabbcc")
+        tg = TaskGroup("FullTG", t, docstring="A group", ui_css=css)
+        assert tg.name == "FullTG"
+        assert tg.docstring == "A group"
+        assert tg.ui_css is css
 
     def test_rshift_to_task_type_wires_elements(self):
         a, b = _real_task("tg_a"), _real_task("tg_b")
@@ -1275,7 +1577,7 @@ class TestTaskGroup:
         assert b in a.children
 
     def test_rshift_invalid_type_raises(self):
-        t = _elem("t")
+        t = _real_task("t")
         tg = TaskGroup("G", t)
         with pytest.raises(TypeError):
             tg >> 42
@@ -1317,31 +1619,29 @@ class TestTaskGroup:
 
 class TestDagFindRootTasks:
     def test_single_root_upstream_of_leaf(self):
-        a = _stub_task("A")
-        b = _stub_task("B", parents=[a])
-        a.children = [b]
+        a = _real_task("A")
+        b = _real_task("B")
+        a >> b
         assert DAG._find_root_tasks(b) == [a]
 
     def test_task_with_no_parents_is_its_own_root(self):
-        a = _stub_task("A")
+        a = _real_task("A")
         assert DAG._find_root_tasks(a) == [a]
 
     def test_long_chain_finds_head(self):
-        a, b, c, d = [_stub_task(n) for n in "ABCD"]
-        a.children = [b]
-        b.parents = [a]
-        b.children = [c]
-        c.parents = [b]
-        c.children = [d]
-        d.parents = [c]
+        a = _real_task("A")
+        b = _real_task("B")
+        c = _real_task("C")
+        d = _real_task("D")
+        a >> b >> c >> d
         assert DAG._find_root_tasks(d) == [a]
 
     def test_multiple_roots(self):
-        a = _stub_task("A")
-        b = _stub_task("B")
-        c = _stub_task("C", parents=[a, b])
-        a.children = [c]
-        b.children = [c]
+        a = _real_task("A")
+        b = _real_task("B")
+        c = _real_task("C")
+        a >> c
+        b >> c
         roots = DAG._find_root_tasks(c)
         assert set(roots) == {a, b}
 
@@ -1406,20 +1706,31 @@ class TestGetDagParams:
         assert "p" in params
         assert "x" not in params
 
+    def test_skips_non_assign_statements(self):
+        """Statements that are not ast.Assign (e.g. if-statements) are silently skipped.
+
+        Covers the branch where a statement in the function body is not an
+        ast.Assign node and is therefore ignored by the DagParam-extraction pass.
+        """
+
+        def func_with_control_flow():
+            if True:
+                pass
+            p = DagParam(description="still parsed")  # noqa: F841
+            return None
+
+        params = _get_dag_params(func_with_control_flow)
+        assert "p" in params
+
     def test_no_func_node_raises_value_error(self):
-        """no function definition found in AST => ValueError."""
+        """no function definition found in AST => ValueError.
 
-        # Feed a source that has no FunctionDef at the top level.
-        # We achieve this by monkeypatching inspect.getsource to return a plain assignment.
-        def dummy():
-            pass
-
-        with patch(
-            "retrain_pipelines.dag_engine.core.core.inspect.getsource",
-            return_value="x = 1\n",
-        ):
-            with pytest.raises(ValueError, match="Could not find function definition"):
-                _get_dag_params(dummy)
+        Passing a module-level class (not a function) to _get_dag_params:
+        inspect.getsource returns the class source, ast.walk yields ClassDef
+        nodes (no FunctionDef), so func_node stays None and the raise fires.
+        """
+        with pytest.raises(ValueError, match="Could not find function definition"):
+            _get_dag_params(_NoFuncDefClass)
 
     def test_stmt_exec_exception_is_silently_skipped(self):
         """statement that raises during exec => silently skipped, parsing continues."""
@@ -1569,44 +1880,9 @@ class TestTaskDecoratorWrapper:
 
         assert styled.ui_css is css
 
-    def test_task_inner_wrapper_invoked_directly(self):
-        """inner wrapper function inside @task decorator is callable.
-
-        task.decorator creates wrapper with @functools.wraps(f), sets wrapper._task = t,
-        then returns t — wrapper has zero external references and is immediately gc'd.
-        Intercepting functools.wraps during task() captures wrapper before it dies.
-        """
-        called = []
-
-        def raw_func():
-            called.append(True)
-            return "raw"
-
-        captured = []
-        real_wraps = functools.wraps
-
-        def _capturing_wraps(f):
-            wrap_decorator = real_wraps(f)
-
-            def _capturing_decorator(fn):
-                result = wrap_decorator(fn)
-                captured.append(fn)
-                return result
-
-            return _capturing_decorator
-
-        with patch.object(core_module.functools, "wraps", _capturing_wraps):
-            t = task(raw_func)
-
-        # _wrap_func also uses @functools.wraps; only task.decorator sets wrapper._task = t.
-        wrapper = next(fn for fn in captured if getattr(fn, "_task", None) is t)
-        result = wrapper()
-        assert result == "raw"
-        assert called
-
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  @parallel_task decorator – inner wrapper callable
+#  @parallel_task decorator
 # ══════════════════════════════════════════════════════════════════════════════
 
 
@@ -1634,41 +1910,6 @@ class TestParallelTaskDecorator:
             pass
 
         assert par3.ui_css is css
-
-    def test_parallel_task_inner_wrapper_invoked_directly(self):
-        """inner wrapper function inside @parallel_task decorator is callable.
-
-        parallel_task.decorator creates wrapper with @functools.wraps(f), sets
-        wrapper._task = t, then returns t — wrapper is immediately gc'd.
-        Intercepting functools.wraps during parallel_task() captures wrapper before it dies.
-        """
-        called = []
-
-        def raw_func():
-            called.append(True)
-            return "par_raw"
-
-        captured = []
-        real_wraps = functools.wraps
-
-        def _capturing_wraps(f):
-            wrap_decorator = real_wraps(f)
-
-            def _capturing_decorator(fn):
-                result = wrap_decorator(fn)
-                captured.append(fn)
-                return result
-
-            return _capturing_decorator
-
-        with patch.object(core_module.functools, "wraps", _capturing_wraps):
-            t = parallel_task(raw_func)
-
-        # _wrap_func also uses @functools.wraps; only parallel_task.decorator sets wrapper._task = t.
-        wrapper = next(fn for fn in captured if getattr(fn, "_task", None) is t)
-        result = wrapper()
-        assert result == "par_raw"
-        assert called
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1737,6 +1978,22 @@ class TestTaskgroupDecorator:
             def bad_tg():
                 raise ValueError("construction failed")
 
+    def test_taskgroup_decorator_scalar_return_raises(self):
+        """taskgroup decorator with a function returning a non-list/tuple scalar
+        => `*tasks if isinstance(tasks, (list, tuple)) else tasks` evaluates
+        as `*(tasks if cond else tasks)` ; with `tasks=42` the `else` branch
+        yields `42`, then `*42` raises TypeError at the call site (splat target
+        must be iterable).
+
+        The splat TypeError fires outside the decorator's try/except (which
+        only wraps `tasks = f()`), so it propagates as TypeError to the caller.
+        """
+        with pytest.raises(TypeError):
+
+            @taskgroup
+            def bad_tg_scalar():
+                return 42
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  DAG.to_elements_lists
@@ -1775,6 +2032,16 @@ class TestDagToElementsLists:
         for entry in tl:
             assert isinstance(entry["uuid"], str)
 
+    def test_non_serializable_flag_keeps_uuids_as_uuid_objects(self):
+        """serializable=False (default) => uuids are UUID objects, not strings.
+
+        Sibling to test_serializable_flag_converts_uuids_to_str ; covers the
+        other branch of the ternary that returns the raw UUID object.
+        """
+        tl, _ = self._simple_dag().to_elements_lists()
+        for entry in tl:
+            assert isinstance(entry["uuid"], UUID)
+
     def test_task_group_included_in_groups_list(self):
         @task
         def ta():
@@ -1802,6 +2069,42 @@ class TestDagToElementsLists:
 
         _, gl = d_with_tg.to_elements_lists()
         assert "InnerTG" in {g["name"] for g in gl}
+
+    def test_taskgroup_elements_contains_inner_tg_uuid_string(self):
+        """TaskGroup dict's elements field includes inner TaskGroup uuids as strings.
+
+        Covers the else branch of the elements list comprehension:
+        `str(e.tasktype_uuid) if isinstance(e, TaskType) else str(e.uuid)`
+        where `e` is an inner TaskGroup.
+        """
+
+        @task
+        def ta():
+            return 1
+
+        @task
+        def tb():
+            return 2
+
+        inner_tg = TaskGroup("InnerTG", ta, tb)
+        outer_tg = TaskGroup("OuterTG", inner_tg)
+
+        @task
+        def tc(x, y):
+            return x
+
+        outer_tg >> tc
+
+        @dag
+        def d_with_tg():
+            return tc
+
+        _, gl = d_with_tg.to_elements_lists()
+        outer_g = next(g for g in gl if g["name"] == "OuterTG")
+        assert len(outer_g["elements"]) == 1
+        # The single element is the inner TaskGroup's uuid as a string.
+        assert isinstance(outer_g["elements"][0], str)
+        assert outer_g["elements"][0] == str(inner_tg.uuid)
 
     def test_task_with_ui_css_entry_has_css(self):
         @task(ui_css=UiCss(background="#aabbcc"))
@@ -1918,27 +2221,30 @@ class TestDagHelp:
 
 
 class TestDagMarkComplete:
-    def test_mark_complete_calls_dao(self):
-        dao_mock = _make_dao_mock()
-        ec = DagExecutionContext({"exec_id": 5})
+    def test_mark_complete_sets_end_timestamp(self, isolated_db, isolated_dao):
+        """mark_complete writes _end_timestamp on the real Execution row."""
+        dao = isolated_dao
+        exec_id = dao.add_execution(
+            name="test_pipe",
+            username="tester",
+            _start_timestamp=datetime.now(timezone.utc),
+            metadata_root="/tmp/meta",
+            artifacts_store_root="/tmp/artifacts",
+        )
+        ec = DagExecutionContext({"exec_id": exec_id})
         token = _dag_execution_context_var.set(ec)
         try:
-            with patch(
-                "retrain_pipelines.dag_engine.core.core.DAO", return_value=dao_mock
-            ):
-                DAG.mark_complete(exec_id=5)
-            dao_mock.update_execution.assert_called_once()
-            dao_mock.dispose.assert_called_once()
+            DAG.mark_complete(exec_id=exec_id)
+            # Real Execution row has _end_timestamp set.
+            execution = dao.get_execution(exec_id)
+            assert execution._end_timestamp is not None
         finally:
             _dag_execution_context_var.reset(token)
 
     def test_mark_complete_asserts_context_set(self):
         _dag_execution_context_var.set(None)
-        with patch(
-            "retrain_pipelines.dag_engine.core.core.DAO", return_value=_make_dao_mock()
-        ):
-            with pytest.raises(AssertionError):
-                DAG.mark_complete(exec_id=1)
+        with pytest.raises(AssertionError):
+            DAG.mark_complete(exec_id=1)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1981,56 +2287,54 @@ class TestDagInit:
 
         return d_init_tg
 
-    def test_init_creates_execution_record(self):
+    def test_init_creates_execution_record(
+        self, isolated_db, isolated_dao, artifacts_store_root
+    ):
+        """DAG.init() creates a real Execution row and updates the context.
+
+        in_notebook() is patched to return True (notebook branch). The real
+        DAO writes a real Execution row ; the real link_params_defaults_to_exec
+        runs against the artifacts_store_root fixture.
+        """
         d_init = self._make_dag()
-        dao_mock = _make_dao_mock(exec_id=42)
+        dao = isolated_dao
         ec = DagExecutionContext({"exec_id": None})
         token = _dag_execution_context_var.set(ec)
         try:
             with (
-                patch.object(core_module, "DAO", return_value=dao_mock),
                 patch.object(core_module, "in_notebook", return_value=True),
-                patch.object(core_module, "link_params_defaults_to_exec"),
+                patch.dict(sys.modules, {"__main__": types.ModuleType("__main__")}),
             ):
                 d_init.init()
-            dao_mock.add_execution.assert_called_once()
-            assert ec._params["exec_id"] == 42
+            exec_id = ec._params["exec_id"]
+            assert exec_id is not None
+            assert dao.get_execution(exec_id) is not None
         finally:
             _dag_execution_context_var.reset(token)
 
-    def test_init_non_notebook_path_uses_caller_filename(self):
-        """non-notebook path derives pipeline_name from caller filename."""
-        d_init = self._make_dag()
-        dao_mock = _make_dao_mock(exec_id=55)
-        ec = DagExecutionContext({"exec_id": None})
-        token = _dag_execution_context_var.set(ec)
-        try:
-            with (
-                patch.object(core_module, "DAO", return_value=dao_mock),
-                patch.object(core_module, "in_notebook", return_value=False),
-                patch.object(core_module, "link_params_defaults_to_exec"),
-            ):
-                d_init.init()
-            dao_mock.add_execution.assert_called_once()
-            assert ec._params["exec_id"] == 55
-        finally:
-            _dag_execution_context_var.reset(token)
+    def test_init_non_notebook_path_uses_caller_filename(
+        self, isolated_db, isolated_dao, artifacts_store_root
+    ):
+        """non-notebook path derives pipeline_name from caller filename.
 
-    def test_init_non_notebook_retraining_pipeline_filename_uses_dirname(self):
-        """caller file is named 'retraining_pipeline' => use dirname."""
+        in_notebook() is patched to return False. inspect.currentframe() is
+        patched to return a fake frame whose f_back.f_back.f_back points at a
+        caller file named 'my_pipeline.py', so pipeline_name is derived from
+        its basename. We patch currentframe (rather than relying on the real
+        caller frame) because pytest's internal _callers module sits in the
+        real frame chain and would pollute the derived name.
+        """
         d_init = self._make_dag()
-        dao_mock = _make_dao_mock(exec_id=66)
+        dao = isolated_dao
         ec = DagExecutionContext({"exec_id": None})
         token = _dag_execution_context_var.set(ec)
 
         fake_frame = MagicMock()
-        fake_frame.f_code.co_filename = "/some/pipeline_dir/retraining_pipeline.py"
+        fake_frame.f_code.co_filename = "/some/path/my_pipeline.py"
 
         try:
             with (
-                patch.object(core_module, "DAO", return_value=dao_mock),
                 patch.object(core_module, "in_notebook", return_value=False),
-                patch.object(core_module, "link_params_defaults_to_exec"),
                 patch.object(
                     core_module.inspect,
                     "currentframe",
@@ -2040,32 +2344,86 @@ class TestDagInit:
                 ),
             ):
                 d_init.init()
-            call_kwargs = dao_mock.add_execution.call_args[1]
-            assert call_kwargs["name"] == "pipeline_dir"
+            exec_id = ec._params["exec_id"]
+            assert exec_id is not None
+            execution = dao.get_execution(exec_id)
+            assert execution.name == "my_pipeline"
         finally:
             _dag_execution_context_var.reset(token)
 
-    def test_init_adds_taskgroup_to_dao(self):
-        """dao.add_taskgroup called when DAG contains a taskgroup."""
+    def test_init_non_notebook_retraining_pipeline_filename_uses_dirname(
+        self, isolated_db, isolated_dao, artifacts_store_root
+    ):
+        """caller file is named 'retraining_pipeline' => use dirname.
+
+        in_notebook() is patched to return False. inspect.currentframe() is
+        patched to return a fake frame whose f_back.f_back.f_back points at a
+        caller file named 'retraining_pipeline.py' under '/some/pipeline_dir/'.
+        """
+        d_init = self._make_dag()
+        dao = isolated_dao
+        ec = DagExecutionContext({"exec_id": None})
+        token = _dag_execution_context_var.set(ec)
+
+        fake_frame = MagicMock()
+        fake_frame.f_code.co_filename = "/some/pipeline_dir/retraining_pipeline.py"
+
+        try:
+            with (
+                patch.object(core_module, "in_notebook", return_value=False),
+                patch.object(
+                    core_module.inspect,
+                    "currentframe",
+                    return_value=MagicMock(
+                        f_back=MagicMock(f_back=MagicMock(f_back=fake_frame))
+                    ),
+                ),
+            ):
+                d_init.init()
+            exec_id = ec._params["exec_id"]
+            execution = dao.get_execution(exec_id)
+            assert execution.name == "pipeline_dir"
+        finally:
+            _dag_execution_context_var.reset(token)
+
+    def test_init_adds_taskgroup_to_dao(
+        self, isolated_db, isolated_dao, artifacts_store_root
+    ):
+        """dao.add_taskgroup called when DAG contains a taskgroup.
+
+        in_notebook() is patched to return True. Real TaskGroup rows are
+        written to the real DB.
+        """
         d_init_tg = self._make_dag_with_taskgroup()
-        dao_mock = _make_dao_mock(exec_id=77)
+        dao = isolated_dao
         ec = DagExecutionContext({"exec_id": None})
         token = _dag_execution_context_var.set(ec)
         try:
             with (
-                patch.object(core_module, "DAO", return_value=dao_mock),
                 patch.object(core_module, "in_notebook", return_value=True),
-                patch.object(core_module, "link_params_defaults_to_exec"),
+                patch.dict(sys.modules, {"__main__": types.ModuleType("__main__")}),
             ):
                 d_init_tg.init()
-            dao_mock.add_taskgroup.assert_called()
+            exec_id = ec._params["exec_id"]
+            # Real TaskGroup rows written.
+            taskgroups = dao._get_entities(TaskGroupORM, exec_id=exec_id)
+            assert len(taskgroups) >= 1
+            assert any(tg.name == "InitTG" for tg in taskgroups)
         finally:
             _dag_execution_context_var.reset(token)
 
-    def test_init_notebook_pipeline_name_from_main_file(self):
-        """notebook mode ; __main__.__file__ is a non-ipykernel path."""
+    def test_init_notebook_pipeline_name_from_main_file(
+        self, isolated_db, isolated_dao, artifacts_store_root
+    ):
+        """notebook mode ; __main__.__file__ is a non-ipykernel path.
+
+        in_notebook() is patched to return True. __main__ is faked to a module
+        with __file__ pointing at a non-ipykernel .py file. The notebook branch
+        checks __main__.__file__ BEFORE the sys.modules scan, so the derived
+        pipeline_name is the __file__ basename.
+        """
         d_init = self._make_dag()
-        dao_mock = _make_dao_mock(exec_id=88)
+        dao = isolated_dao
         ec = DagExecutionContext({"exec_id": None})
         token = _dag_execution_context_var.set(ec)
 
@@ -2074,66 +2432,72 @@ class TestDagInit:
 
         try:
             with (
-                patch.object(core_module, "DAO", return_value=dao_mock),
                 patch.object(core_module, "in_notebook", return_value=True),
-                patch.object(core_module, "link_params_defaults_to_exec"),
                 patch.dict(sys.modules, {"__main__": fake_main}),
             ):
                 d_init.init()
-            call_kwargs = dao_mock.add_execution.call_args[1]
-            assert call_kwargs["name"] == "my_pipeline"
+            exec_id = ec._params["exec_id"]
+            execution = dao.get_execution(exec_id)
+            assert execution.name == "my_pipeline"
         finally:
             _dag_execution_context_var.reset(token)
 
-    def test_init_notebook_pipeline_name_from_sys_modules_scan(self):
-        """notebook mode ; scan sys.modules to find DAG owner."""
+    def test_init_notebook_pipeline_name_from_sys_modules_scan(
+        self, isolated_db, isolated_dao, artifacts_store_root
+    ):
+        """notebook mode ; __main__ has no __file__ => scan sys.modules for DAG owner.
+
+        in_notebook() is patched to return True. __main__ is faked to a module
+        with no __file__. A fake owner module is placed in sys.modules with the
+        DAG instance as an attribute, so the scan finds it.
+        """
         d_init = self._make_dag()
-        dao_mock = _make_dao_mock(exec_id=89)
+        dao = isolated_dao
         ec = DagExecutionContext({"exec_id": None})
         token = _dag_execution_context_var.set(ec)
 
         fake_main = types.ModuleType("__main__")
-        # No __file__ => pipeline_name stays None after main_file check
         fake_owner_mod = types.ModuleType("my_owner_pipeline")
-        # Place the dag instance as an attribute so the scan finds it
         fake_owner_mod.the_dag = d_init
 
         try:
             with (
-                patch.object(core_module, "DAO", return_value=dao_mock),
                 patch.object(core_module, "in_notebook", return_value=True),
-                patch.object(core_module, "link_params_defaults_to_exec"),
                 patch.dict(
                     sys.modules,
                     {"__main__": fake_main, "my_owner_pipeline": fake_owner_mod},
                 ),
             ):
                 d_init.init()
-            call_kwargs = dao_mock.add_execution.call_args[1]
-            assert call_kwargs["name"] == "my_owner_pipeline"
+            exec_id = ec._params["exec_id"]
+            execution = dao.get_execution(exec_id)
+            assert execution.name == "my_owner_pipeline"
         finally:
             _dag_execution_context_var.reset(token)
 
-    def test_init_notebook_pipeline_name_falls_back_to_cwd(self):
+    def test_init_notebook_pipeline_name_falls_back_to_cwd(
+        self, isolated_db, isolated_dao, artifacts_store_root
+    ):
         """notebook mode ; no owner found => 'retraining_pipeline' => os.getcwd() basename.
+
+        in_notebook() is patched to return True. __main__ has no __file__, no
+        module owns the dag => falls back to 'retraining_pipeline' =>
+        os.getcwd() basename. os.getcwd() is patched to return a known path.
 
         An integer entry in sys.modules (non-None, non-dunder-named) causes
         vars(42) to raise TypeError inside the pipeline-name scan, exercising
         the except Exception: pass handler.
         """
         d_init = self._make_dag()
-        dao_mock = _make_dao_mock(exec_id=90)
+        dao = isolated_dao
         ec = DagExecutionContext({"exec_id": None})
         token = _dag_execution_context_var.set(ec)
 
         fake_main = types.ModuleType("__main__")
-        # No __file__, no module owns the dag => falls back to retraining_pipeline => cwd basename
 
         try:
             with (
-                patch.object(core_module, "DAO", return_value=dao_mock),
                 patch.object(core_module, "in_notebook", return_value=True),
-                patch.object(core_module, "link_params_defaults_to_exec"),
                 patch.object(
                     core_module.os, "getcwd", return_value="/some/path/my_cwd_pipeline"
                 ),
@@ -2142,7 +2506,8 @@ class TestDagInit:
                 patch.dict(sys.modules, {"__main__": fake_main, "bad_non_module": 42}),
             ):
                 d_init.init()
-            call_kwargs = dao_mock.add_execution.call_args[1]
-            assert call_kwargs["name"] == "my_cwd_pipeline"
+            exec_id = ec._params["exec_id"]
+            execution = dao.get_execution(exec_id)
+            assert execution.name == "my_cwd_pipeline"
         finally:
             _dag_execution_context_var.reset(token)

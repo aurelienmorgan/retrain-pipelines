@@ -249,13 +249,13 @@ For instance&nbsp;:
 # install from source (dev mode)
     git clone https://github.com/aurelienmorgan/retrain-pipelines.git
     cd retrain-pipelines
-    pip install -e pkg_src[dev,pgsql,local]
+    pip install -e pkg_src[dev]
     pre-commit install
 
-> Docker Compose is required to run unit tests that involve S3 (we test via MinIO).
+> Docker Compose is required to run integration tests (i.e. S3 [tested via MinIO] and PostgreSQL).
 
 # install from remote source
-    pip install "retrain-pipelines[dev,pgsql,local] @ git+https://github.com/aurelienmorgan/retrain-pipelines.git@master#subdirectory=pkg_src"
+    pip install "retrain-pipelines[dev] @ git+https://github.com/aurelienmorgan/retrain-pipelines.git@master#subdirectory=pkg_src"
 
 # launch tests
     pre-commit run --all-files -v

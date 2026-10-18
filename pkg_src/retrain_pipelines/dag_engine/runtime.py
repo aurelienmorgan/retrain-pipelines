@@ -264,6 +264,12 @@ def _topological_sort(tasks: list[TaskType]) -> list[TaskType | TaskGroup]:
             if in_degree[child] == 0:
                 queue.append(child)
 
+    # Handle case where DAG is a TaskGroup with no
+    # successor nor predecessor.
+    if not order and all_tasks:
+        groups = {t.task_group for t in all_tasks if t.task_group is not None}
+        order.extend(groups)
+
     return order
 
 

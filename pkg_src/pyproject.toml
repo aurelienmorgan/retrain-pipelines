@@ -81,6 +81,11 @@ local = [
     "tzlocal>=5.3.1",
     "pyngrok>=7.5.1"
 ]
+pgsql = [
+    "psycopg2-binary>=2.9.10",
+    "asyncpg>=0.31.0"
+]
+# dev always pulls in local + pgsql
 dev = [
     "sqlite-web",
     "pytest>=8.3.3",
@@ -88,13 +93,14 @@ dev = [
     "pytest-cov>=7.1.0",
     "pytest-asyncio>=1.4.0",
     "pytest-timeout>=2.4.0",
+    "pytest-xdist>=3.8.0",
     "ruff>=0.15.12",
     "mypy>=2.0.0",
-    "pre-commit>=4.6.0"
-]
-pgsql = [
-    "psycopg2-binary>=2.9.10",
-    "asyncpg>=0.31.0"
+    "pre-commit>=4.6.0",
+
+    # include local and pgsql groups
+    "local",
+    "pgsql"
 ]
 
 [tool.setuptools_scm]

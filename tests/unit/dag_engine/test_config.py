@@ -1,11 +1,34 @@
 """
-Unit tests for the `config` module.
+Unit and Integration tests for the `config` module.
 """
 
 import os
 import pytest
 
 from retrain_pipelines.dag_engine.config import Config, NotSupportedError
+from retrain_pipelines.utils.s3_utils import is_s3_path
+
+
+@pytest.fixture(params=["local", "s3"])
+def artifacts_root(request, tmp_path, monkeypatch, bucket_name):
+    """Parametrized fixture routing RP_ARTIFACTS_STORE to local or S3."""
+    if request.param == "local":
+        path = str(tmp_path / "artifacts")
+    else:
+        path = f"s3://{bucket_name}/artifacts/"
+    monkeypatch.setenv("RP_ARTIFACTS_STORE", path)
+    yield path
+
+
+@pytest.fixture(params=["local", "s3"])
+def logs_root(request, tmp_path, monkeypatch, bucket_name):
+    """Parametrized fixture routing RP_WEB_SERVER_LOGS to local or S3."""
+    if request.param == "local":
+        path = str(tmp_path / "logs")
+    else:
+        path = f"s3://{bucket_name}/logs/"
+    monkeypatch.setenv("RP_WEB_SERVER_LOGS", path)
+    yield path
 
 
 class TestEnsureDir:
@@ -55,21 +78,15 @@ class TestAssetsCacheRoot:
         assert root == expected
         assert (tmp_path / ".cache" / "retrain-pipelines").exists()
 
-    def test_env_var(self, tmp_path, monkeypatch):
+    def test_env_var(self, assets_cache):
         """Assets cache root should be taken from RP_ASSETS_CACHE env var."""
-        custom_path = tmp_path / "custom_cache"
-        monkeypatch.setenv("RP_ASSETS_CACHE", str(custom_path))
         root = Config.get_assets_cache_root()
-        expected = str(custom_path) + os.sep
-        assert root == expected
-        assert custom_path.exists()
-
-    def test_s3_path(self, bucket_name, monkeypatch):
-        """Assets cache root should handle S3 URIs and ensure bucket exists."""
-        s3_uri = f"s3://{bucket_name}/cache/"
-        monkeypatch.setenv("RP_ASSETS_CACHE", s3_uri)
-        root = Config.get_assets_cache_root()
-        assert root == s3_uri
+        if is_s3_path(assets_cache):
+            assert root == assets_cache
+        else:
+            expected = assets_cache + os.sep
+            assert root == expected
+            assert os.path.exists(assets_cache)
 
 
 class TestArtifactsStoreRoot:
@@ -84,21 +101,15 @@ class TestArtifactsStoreRoot:
         assert root == expected
         assert (cache_path / "artifacts").exists()
 
-    def test_env_var(self, tmp_path, monkeypatch):
+    def test_env_var(self, artifacts_root):
         """Artifacts store root should be taken from RP_ARTIFACTS_STORE env var."""
-        custom_path = tmp_path / "custom_artifacts"
-        monkeypatch.setenv("RP_ARTIFACTS_STORE", str(custom_path))
         root = Config.get_artifacts_store_root()
-        expected = str(custom_path) + os.sep
-        assert root == expected
-        assert custom_path.exists()
-
-    def test_s3_path(self, bucket_name, monkeypatch):
-        """Artifacts store root should handle S3 URIs and ensure bucket exists."""
-        s3_uri = f"s3://{bucket_name}/artifacts/"
-        monkeypatch.setenv("RP_ARTIFACTS_STORE", s3_uri)
-        root = Config.get_artifacts_store_root()
-        assert root == s3_uri
+        if is_s3_path(artifacts_root):
+            assert root == artifacts_root
+        else:
+            expected = artifacts_root + os.sep
+            assert root == expected
+            assert os.path.exists(artifacts_root)
 
 
 class TestWebServerLogsRoot:
@@ -113,21 +124,15 @@ class TestWebServerLogsRoot:
         assert root == expected
         assert (cache_path / "logs" / "web_server").exists()
 
-    def test_env_var(self, tmp_path, monkeypatch):
+    def test_env_var(self, logs_root):
         """Web server logs root should be taken from RP_WEB_SERVER_LOGS env var."""
-        custom_path = tmp_path / "custom_logs"
-        monkeypatch.setenv("RP_WEB_SERVER_LOGS", str(custom_path))
         root = Config.get_web_server_logs_root()
-        expected = str(custom_path) + os.sep
-        assert root == expected
-        assert custom_path.exists()
-
-    def test_s3_path(self, bucket_name, monkeypatch):
-        """Web server logs root should handle S3 URIs and ensure bucket exists."""
-        s3_uri = f"s3://{bucket_name}/logs/"
-        monkeypatch.setenv("RP_WEB_SERVER_LOGS", s3_uri)
-        root = Config.get_web_server_logs_root()
-        assert root == s3_uri
+        if is_s3_path(logs_root):
+            assert root == logs_root
+        else:
+            expected = logs_root + os.sep
+            assert root == expected
+            assert os.path.exists(logs_root)
 
 
 class TestPorts:
@@ -171,43 +176,42 @@ class TestWebServerURL:
 class TestMetadataStoreURL:
     """Tests for `get_metadatastore_url`."""
 
-    def test_default(self, tmp_path, monkeypatch):
+    def test_default(self, assets_cache, monkeypatch):
         """Default metadata store URL should be sqlite:// with timeout and assets cache."""
-        cache_path = tmp_path / "cache"
-        monkeypatch.setenv("RP_ASSETS_CACHE", str(cache_path))
         monkeypatch.delenv("RP_METADATASTORE_URL", raising=False)
-        url = Config.get_metadatastore_url()
-        # get_assets_cache_root returns path with trailing separator, so we include it
-        expected = f"sqlite:///{cache_path}{os.sep}local_metadatastore.db?timeout=10.0"
-        assert url == expected
+        if is_s3_path(assets_cache):
+            with pytest.raises(NotSupportedError):
+                Config.get_metadatastore_url()
+        else:
+            url = Config.get_metadatastore_url()
+            expected = (
+                f"sqlite:///{assets_cache}{os.sep}local_metadatastore.db?timeout=10.0"
+            )
+            assert url == expected
 
-    def test_env_var(self, monkeypatch):
+    def test_env_var(self, tmp_path, monkeypatch):
         """Metadata store URL should be taken from RP_METADATASTORE_URL env var."""
+        monkeypatch.setenv("RP_ASSETS_CACHE", str(tmp_path))
         custom_url = "postgresql://user:pass@host/db"
         monkeypatch.setenv("RP_METADATASTORE_URL", custom_url)
         assert Config.get_metadatastore_url() == custom_url
 
-    def test_invalid_sqlite_parent_raises(self, monkeypatch):
+    def test_invalid_sqlite_parent_raises(self, tmp_path, monkeypatch):
         """Should raise FileNotFoundError if SQLite parent directory does not exist."""
+        monkeypatch.setenv("RP_ASSETS_CACHE", str(tmp_path))
         monkeypatch.setenv(
             "RP_METADATASTORE_URL", "sqlite:///nonexistent_dir/db.sqlite"
         )
         with pytest.raises(FileNotFoundError):
             Config.get_metadatastore_url()
 
-    def test_s3_cache_no_url_raises(self, bucket_name, monkeypatch):
-        """Should raise NotSupportedError if cache is S3 and no metadatastore URL is set."""
-        monkeypatch.setenv("RP_ASSETS_CACHE", f"s3://{bucket_name}/")
-        monkeypatch.delenv("RP_METADATASTORE_URL", raising=False)
-        with pytest.raises(NotSupportedError):
-            Config.get_metadatastore_url()
-
 
 class TestAsyncMetadataStoreURL:
     """Tests for `get_metadatastore_async_url`."""
 
-    def test_env_var_direct(self, monkeypatch):
+    def test_env_var_direct(self, tmp_path, monkeypatch):
         """If RP_METADATASTORE_ASYNC_URL is set, it should be returned as-is."""
+        monkeypatch.setenv("RP_ASSETS_CACHE", str(tmp_path))
         async_url = "postgresql+asyncpg://user:pass@host/db"
         monkeypatch.setenv("RP_METADATASTORE_ASYNC_URL", async_url)
         assert Config.get_metadatastore_async_url() == async_url
@@ -225,31 +229,37 @@ class TestAsyncMetadataStoreURL:
         expected = f"sqlite+aiosqlite:///{cache_path}local.db"
         assert async_url == expected
 
-    def test_derived_postgresql(self, monkeypatch):
+    def test_derived_postgresql(self, tmp_path, monkeypatch):
         """Async URL derived from postgresql:// should become postgresql+asyncpg://."""
+        monkeypatch.setenv("RP_ASSETS_CACHE", str(tmp_path))
         monkeypatch.delenv("RP_METADATASTORE_ASYNC_URL", raising=False)
         monkeypatch.setenv("RP_METADATASTORE_URL", "postgresql://user:pass@host/db")
         async_url = Config.get_metadatastore_async_url()
         assert async_url == "postgresql+asyncpg://user:pass@host/db"
 
-    def test_derived_postgres(self, monkeypatch):
+    def test_derived_postgres(self, tmp_path, monkeypatch):
         """Async URL derived from postgres:// should become postgresql+asyncpg://."""
+        monkeypatch.setenv("RP_ASSETS_CACHE", str(tmp_path))
         monkeypatch.delenv("RP_METADATASTORE_ASYNC_URL", raising=False)
         monkeypatch.setenv("RP_METADATASTORE_URL", "postgres://user:pass@host/db")
         async_url = Config.get_metadatastore_async_url()
         assert async_url == "postgresql+asyncpg://user:pass@host/db"
 
-    def test_unsupported_scheme_raises(self, monkeypatch):
+    def test_unsupported_scheme_raises(self, tmp_path, monkeypatch):
         """An unsupported database scheme should raise NotSupportedError."""
+        monkeypatch.setenv("RP_ASSETS_CACHE", str(tmp_path))
         monkeypatch.delenv("RP_METADATASTORE_ASYNC_URL", raising=False)
         monkeypatch.setenv("RP_METADATASTORE_URL", "mysql://user:pass@host/db")
         with pytest.raises(NotSupportedError) as exc_info:
             Config.get_metadatastore_async_url()
         assert "mysql" in str(exc_info.value)
 
-    def test_s3_cache_no_url_raises(self, bucket_name, monkeypatch):
+    def test_s3_cache_no_url_raises(self, assets_cache, monkeypatch):
         """Should raise NotSupportedError if cache is S3 and no async metadatastore URL is set."""
-        monkeypatch.setenv("RP_ASSETS_CACHE", f"s3://{bucket_name}/")
+        if not is_s3_path(assets_cache):
+            pytest.skip(
+                "NotSupportedError is specific to S3 cache without explicit URL"
+            )
         monkeypatch.delenv("RP_METADATASTORE_ASYNC_URL", raising=False)
         monkeypatch.delenv("RP_METADATASTORE_URL", raising=False)
         with pytest.raises(NotSupportedError):

@@ -9,7 +9,10 @@ from functools import lru_cache
 
 from IPython.display import HTML, clear_output, display
 
+from ...utils.file_utils import build_path
+from ...utils.s3_utils import is_s3_path, parse_s3_uri
 from ..config import Config
+from .utils.server_logs import S3RotatingLogHandler
 
 logger = logging.getLogger()
 
@@ -185,10 +188,10 @@ def _webconsole_start_notebook(port: int) -> None:
     execs_reset_for_restart()
     exec_reset_for_restart()
 
-    log_dir = Config.get_web_server_logs_root()
-    access_log_path = os.path.join(log_dir, "access.log") if log_dir else None
-    error_log_path = os.path.join(log_dir, "error.log") if log_dir else None
-    live_log_path = os.path.join(log_dir, "live_console.log") if log_dir else None
+    log_root = Config.get_web_server_logs_root()
+    access_log_path = build_path(log_root, ("access.log",))
+    error_log_path = build_path(log_root, ("error.log",))
+    live_log_path = build_path(log_root, ("live_console.log",))
 
     import re
 
@@ -215,16 +218,43 @@ def _webconsole_start_notebook(port: int) -> None:
             return _ANSI_RE.sub(_plain, record.getMessage())
 
     if live_log_path:
-        os.makedirs(os.path.dirname(live_log_path), exist_ok=True)
+        _live_handler: _FlushingS3RotatingLogHandler | _FlushingRotatingFileHandler  # noqa: F821
 
-        class _FlushingRotatingFileHandler(logging.handlers.TimedRotatingFileHandler):
-            def emit(self, record):
-                super().emit(record)
-                self.flush()
+        if is_s3_path(live_log_path):
+            bucket, key = parse_s3_uri(live_log_path)
 
-        _live_handler = _FlushingRotatingFileHandler(
-            live_log_path, when="midnight", backupCount=7, encoding="utf-8"
-        )
+            class _FlushingS3RotatingLogHandler(S3RotatingLogHandler):
+                def emit(self, record):
+                    super().emit(record)
+                    self.flush()
+
+                def write_raw(self, data: str) -> None:
+                    with self._lock:
+                        self._buffer.write(data)
+                        self._flush_locked()
+
+            _live_handler = _FlushingS3RotatingLogHandler(
+                bucket=bucket,
+                key=key,
+                backup_count=7,
+            )
+        else:
+            os.makedirs(os.path.dirname(live_log_path), exist_ok=True)
+
+            class _FlushingRotatingFileHandler(logging.handlers.TimedRotatingFileHandler):
+                def emit(self, record):
+                    super().emit(record)
+                    self.flush()
+
+                def write_raw(self, data: str) -> None:
+                    if self.stream is not None:
+                        self.stream.write(data)
+                        self.flush()
+
+            _live_handler = _FlushingRotatingFileHandler(
+                live_log_path, when="midnight", backupCount=7, encoding="utf-8"
+            )
+
         _live_handler.setLevel(logging.DEBUG)
         _live_handler.setFormatter(_PlainFormatter())
         logging.getLogger().addHandler(_live_handler)
@@ -281,10 +311,9 @@ def _webconsole_start_notebook(port: int) -> None:
         f"<tr><td>{name}</td>"
         + '<td style="white-space:nowrap">'
         + "tail -n 50 -f \"<a href='"
-        + f"file://{os.path.abspath(p)}"
+        + (p if is_s3_path(p) else f"file://{os.path.abspath(p)}")
         + f"' target='_blank'>{p}</a>\"</td></tr>"
         for name, p in logs
-        if p
     )
     display(
         HTML(f"""
@@ -320,8 +349,7 @@ def _webconsole_start_notebook(port: int) -> None:
             def write(self, data):
                 if threading.current_thread() is _main._server_thread:
                     try:
-                        _live_handler.stream.write(data)
-                        _live_handler.stream.flush()
+                        _live_handler.write_raw(data)
                     except (ValueError, AttributeError):
                         pass
                 else:
@@ -330,7 +358,7 @@ def _webconsole_start_notebook(port: int) -> None:
             def flush(self):
                 self._original.flush()
                 try:
-                    _live_handler.stream.flush()
+                    _live_handler.flush()
                 except (ValueError, AttributeError):
                     pass
 
@@ -342,8 +370,7 @@ def _webconsole_start_notebook(port: int) -> None:
 
         def _write_termination_line():
             try:
-                _live_handler.stream.write(_SERVER_TERMINATED_MSG)
-                _live_handler.stream.flush()
+                _live_handler.write_raw(_SERVER_TERMINATED_MSG)
             except (ValueError, AttributeError):
                 pass
 

@@ -7,6 +7,7 @@ The lru_cache on _notebook_env is cleared between tests.
 """
 
 import logging
+import logging.handlers
 import os
 import sys
 import threading
@@ -17,6 +18,9 @@ from unittest.mock import MagicMock, patch
 
 import retrain_pipelines.dag_engine.web_console.main_notebook as nb
 import retrain_pipelines.dag_engine.web_console.main as main_mod
+from retrain_pipelines.dag_engine.web_console.utils.server_logs import (
+    S3RotatingLogHandler,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -379,31 +383,12 @@ class TestWebconsoleStartNotebook:
     def teardown_method(self):
         nb._notebook_env.cache_clear()
 
-    def _base_patches(self, env="local", wait_results=None):
-        """Return a dict of common patches. wait_results: list of bools for _wait_for_server."""
-        if wait_results is None:
-            wait_results = [True, True]
-        return dict(
-            wait=patch.object(nb, "_wait_for_server", side_effect=wait_results),
-            env=patch.object(nb, "_notebook_env", return_value=env),
-            logs_env=patch.dict("os.environ", {"RP_WEB_SERVER_LOGS": ""}),
-            webconsole=patch(
-                "retrain_pipelines.dag_engine.web_console.main._webconsole_start"
-            ),
-            sleep=patch("time.sleep"),
-            display=patch(
-                "retrain_pipelines.dag_engine.web_console.main_notebook.display"
-            ),
-            clear=patch(
-                "retrain_pipelines.dag_engine.web_console.main_notebook.clear_output"
-            ),
-        )
-
-    def test_returns_early_on_server_fail_no_iframe_displayed(self):
+    def test_returns_early_on_server_fail_no_iframe_displayed(
+        self, web_server_logs_root
+    ):
         with (
             patch.object(nb, "_wait_for_server", return_value=False),
             patch.object(nb, "_notebook_env", return_value="local"),
-            patch.dict("os.environ", {"RP_WEB_SERVER_LOGS": "/tmp/rp_test_logs"}),
             patch("retrain_pipelines.dag_engine.web_console.main._webconsole_start"),
             patch(
                 "retrain_pipelines.dag_engine.web_console.main_notebook.display"
@@ -414,11 +399,10 @@ class TestWebconsoleStartNotebook:
         displayed = " ".join(str(c) for c in mock_display.call_args_list)
         assert "iframe" not in displayed.lower()
 
-    def test_displays_iframe_on_local(self):
+    def test_displays_iframe_on_local(self, web_server_logs_root):
         with (
             patch.object(nb, "_wait_for_server", return_value=True),
             patch.object(nb, "_notebook_env", return_value="local"),
-            patch.dict("os.environ", {"RP_WEB_SERVER_LOGS": "/tmp/rp_test_logs"}),
             patch("retrain_pipelines.dag_engine.web_console.main._webconsole_start"),
             patch("time.sleep"),
             patch(
@@ -427,6 +411,8 @@ class TestWebconsoleStartNotebook:
             patch(
                 "retrain_pipelines.dag_engine.web_console.main_notebook.display"
             ) as mock_display,
+            patch("atexit.register"),
+            patch("threading.Thread"),
         ):
             nb._webconsole_start_notebook(port=8000)
 
@@ -437,31 +423,31 @@ class TestWebconsoleStartNotebook:
         )
         assert "iframe" in displayed.lower()
 
-    def test_calls_ngrok_start_on_colab(self):
+    def test_calls_ngrok_start_on_colab(self, web_server_logs_root):
         with (
             patch.object(nb, "_wait_for_server", return_value=True),
             patch.object(nb, "_notebook_env", return_value="colab"),
             patch.object(
                 nb, "_ngrok_start", return_value="https://t.ngrok.io"
             ) as mock_ngrok,
-            patch.dict("os.environ", {"RP_WEB_SERVER_LOGS": "/tmp/rp_test_logs"}),
             patch("retrain_pipelines.dag_engine.web_console.main._webconsole_start"),
             patch("time.sleep"),
             patch("retrain_pipelines.dag_engine.web_console.main_notebook.display"),
             patch(
                 "retrain_pipelines.dag_engine.web_console.main_notebook.clear_output"
             ),
+            patch("atexit.register"),
+            patch("threading.Thread"),
         ):
             nb._webconsole_start_notebook(port=8000)
 
         mock_ngrok.assert_called_once_with(8000)
 
-    def test_shuts_down_and_returns_when_ngrok_fails(self):
+    def test_shuts_down_and_returns_when_ngrok_fails(self, web_server_logs_root):
         with (
             patch.object(nb, "_wait_for_server", return_value=True),
             patch.object(nb, "_notebook_env", return_value="colab"),
             patch.object(nb, "_ngrok_start", return_value=None),
-            patch.dict("os.environ", {"RP_WEB_SERVER_LOGS": "/tmp/rp_test_logs"}),
             patch("retrain_pipelines.dag_engine.web_console.main._webconsole_start"),
             patch("time.sleep"),
             patch(
@@ -474,11 +460,10 @@ class TestWebconsoleStartNotebook:
         displayed = " ".join(str(c) for c in mock_display.call_args_list)
         assert "iframe" not in displayed.lower()
 
-    def test_deactivates_logger_controller_after_iframe(self):
+    def test_deactivates_logger_controller_after_iframe(self, web_server_logs_root):
         with (
             patch.object(nb, "_wait_for_server", return_value=True),
             patch.object(nb, "_notebook_env", return_value="local"),
-            patch.dict("os.environ", {"RP_WEB_SERVER_LOGS": "/tmp/rp_test_logs"}),
             patch("retrain_pipelines.dag_engine.web_console.main._webconsole_start"),
             patch("time.sleep"),
             patch("retrain_pipelines.dag_engine.web_console.main_notebook.display"),
@@ -486,18 +471,21 @@ class TestWebconsoleStartNotebook:
                 "retrain_pipelines.dag_engine.web_console.main_notebook.clear_output"
             ),
             patch.object(main_mod._logger_controller, "deactivate") as mock_deact,
+            patch("atexit.register"),
+            patch("threading.Thread"),
         ):
             nb._webconsole_start_notebook(port=8000)
 
         mock_deact.assert_called()
 
-    def test_returns_early_when_proxy_wait_fails_after_ngrok(self):
+    def test_returns_early_when_proxy_wait_fails_after_ngrok(
+        self, web_server_logs_root
+    ):
         """Second _wait_for_server (proxy check) fails => early return, no iframe."""
         with (
             patch.object(nb, "_wait_for_server", side_effect=[True, False]),
             patch.object(nb, "_notebook_env", return_value="colab"),
             patch.object(nb, "_ngrok_start", return_value="https://t.ngrok.io"),
-            patch.dict("os.environ", {"RP_WEB_SERVER_LOGS": "/tmp/rp_test_logs"}),
             patch("retrain_pipelines.dag_engine.web_console.main._webconsole_start"),
             patch("time.sleep"),
             patch(
@@ -516,68 +504,48 @@ class TestWebconsoleStartNotebook:
         )
         assert "iframe" not in displayed.lower()
 
-    def test_live_log_path_installs_file_handler(self):
+    def test_live_log_path_installs_file_handler(self, web_server_logs_root):
         """RP_WEB_SERVER_LOGS set => file handler added to root logger."""
         root_logger = logging.getLogger()
         handlers_before = list(root_logger.handlers)
 
-        def _fake_handler_init(self, *args, **kwargs):
-            self.stream = MagicMock()
-            self.level = logging.DEBUG
-            self.filters = []
-            self.lock = threading.RLock()
-            self.formatter = None
-            self._name = None
-            self.name = None
-
         with (
             patch.object(nb, "_wait_for_server", return_value=True),
             patch.object(nb, "_notebook_env", return_value="local"),
-            patch.dict("os.environ", {"RP_WEB_SERVER_LOGS": "/tmp/rp_test_logs"}),
             patch("retrain_pipelines.dag_engine.web_console.main._webconsole_start"),
             patch("time.sleep"),
             patch("retrain_pipelines.dag_engine.web_console.main_notebook.display"),
             patch(
                 "retrain_pipelines.dag_engine.web_console.main_notebook.clear_output"
             ),
-            patch(
-                "logging.handlers.TimedRotatingFileHandler.__init__", _fake_handler_init
-            ),
-            patch("logging.handlers.TimedRotatingFileHandler.emit"),
-            patch("os.makedirs"),
+            patch("atexit.register"),
+            patch("threading.Thread"),
         ):
             nb._webconsole_start_notebook(port=8000)
 
+        # Check that a handler was added
+        assert any(
+            isinstance(
+                h, (S3RotatingLogHandler, logging.handlers.TimedRotatingFileHandler)
+            )
+            for h in root_logger.handlers
+        )
         # restore handlers added during the call
         root_logger.handlers = handlers_before
 
-    def test_live_log_path_spawns_cleanup_thread_and_registers_atexit(self):
+    def test_live_log_path_spawns_cleanup_thread_and_registers_atexit(
+        self, web_server_logs_root
+    ):
         """With live_log_path set, a daemon cleanup thread is started and atexit registered."""
-
-        def _fake_handler_init(self, *args, **kwargs):
-            self.stream = MagicMock()
-            self.level = logging.DEBUG
-            self.filters = []
-            self.lock = threading.RLock()
-            self.formatter = None
-            self._name = None
-            self.name = None
-
         with (
             patch.object(nb, "_wait_for_server", return_value=True),
             patch.object(nb, "_notebook_env", return_value="local"),
-            patch.dict("os.environ", {"RP_WEB_SERVER_LOGS": "/tmp/rp_test_logs2"}),
             patch("retrain_pipelines.dag_engine.web_console.main._webconsole_start"),
             patch("time.sleep"),
             patch("retrain_pipelines.dag_engine.web_console.main_notebook.display"),
             patch(
                 "retrain_pipelines.dag_engine.web_console.main_notebook.clear_output"
             ),
-            patch("os.makedirs"),
-            patch(
-                "logging.handlers.TimedRotatingFileHandler.__init__", _fake_handler_init
-            ),
-            patch("logging.handlers.TimedRotatingFileHandler.emit"),
             patch("threading.Thread") as mock_thread_cls,
             patch("atexit.register") as mock_atexit,
         ):
@@ -746,33 +714,21 @@ class TestWebconsoleShutdownNotebook:
 # ---------------------------------------------------------------------------
 
 
-def _run_start_with_live_log():
+def _run_start_with_live_log(web_server_logs_root):
     """Run _webconsole_start_notebook with live_log_path active.
 
-    Stubs TimedRotatingFileHandler.__init__ (no real file) and
-    TimedRotatingFileHandler.emit at the *base-class* level only, so the
-    module's _FlushingRotatingFileHandler subclass emit body still executes.
     Captures and returns:
       - stdout  : the _ServerThreadStream that replaced sys.stdout
       - stderr  : the _ServerThreadStream that replaced sys.stderr
       - atexit_fn   : the callable passed to atexit.register
       - cleanup_fn  : the target callable passed to threading.Thread
-      - handler     : the _FlushingRotatingFileHandler instance added
+      - handler     : the live handler instance added
     """
     import logging.handlers as _lh
 
     captured = {}
     real_stdout = sys.stdout
     real_stderr = sys.stderr
-
-    def _fake_handler_init(self, *args, **kwargs):
-        self.stream = MagicMock()
-        self.level = logging.DEBUG
-        self.filters = []
-        self.lock = threading.RLock()
-        self.formatter = None
-        self._name = None
-        self.name = None
 
     def _capture_atexit(fn):
         captured["atexit_fn"] = fn
@@ -786,21 +742,17 @@ def _run_start_with_live_log():
     with (
         patch.object(nb, "_wait_for_server", return_value=True),
         patch.object(nb, "_notebook_env", return_value="local"),
-        patch.dict("os.environ", {"RP_WEB_SERVER_LOGS": ""}),
         patch("retrain_pipelines.dag_engine.web_console.main._webconsole_start"),
         patch("time.sleep"),
         patch("retrain_pipelines.dag_engine.web_console.main_notebook.display"),
         patch("retrain_pipelines.dag_engine.web_console.main_notebook.clear_output"),
-        patch("os.makedirs"),
-        patch.object(_lh.TimedRotatingFileHandler, "__init__", _fake_handler_init),
-        patch.object(_lh.TimedRotatingFileHandler, "emit", lambda self, r: None),
         patch("atexit.register", side_effect=_capture_atexit),
         patch("threading.Thread", side_effect=_capture_thread),
     ):
         nb._webconsole_start_notebook(port=8000)
-        # Find the handler we just added – it's the only TimedRotatingFileHandler
+        # Find the handler we just added – it's the only TimedRotatingFileHandler or S3RotatingLogHandler
         for h in logging.getLogger().handlers:
-            if isinstance(h, _lh.TimedRotatingFileHandler):
+            if isinstance(h, (S3RotatingLogHandler, _lh.TimedRotatingFileHandler)):
                 captured["handler"] = h
                 break
         captured["stdout"] = sys.stdout
@@ -835,9 +787,11 @@ class TestInnerHelpersLiveLogPath:
 
     # -- _plain / _PlainFormatter.format --
 
-    def test_plain_formatter_format_strips_all_markup_variants(self):
+    def test_plain_formatter_format_strips_all_markup_variants(
+        self, web_server_logs_root
+    ):
         """_PlainFormatter.format() strips Rich markup, │=>|, ─=>-, ANSI=>'' via the real formatter."""
-        captured = _run_start_with_live_log()
+        captured = _run_start_with_live_log(web_server_logs_root)
         h = captured["handler"]
         assert h is not None and h.formatter is not None
         record = logging.LogRecord(
@@ -855,13 +809,12 @@ class TestInnerHelpersLiveLogPath:
         assert "[bold]" not in result
         assert "\x1b" not in result
 
-    # -- _FlushingRotatingFileHandler.emit --
+    # -- _FlushingRotatingFileHandler.emit / _FlushingS3RotatingLogHandler.emit --
 
-    def test_flushing_handler_emit_calls_super_then_flush(self):
-        """_FlushingRotatingFileHandler.emit() on the installed handler hits the module's emit body."""
-        import logging.handlers as _lh
+    def test_live_handler_emit_calls_flush(self, web_server_logs_root):
+        """Live handler emit() hits the module's emit body and flushes."""
 
-        captured = _run_start_with_live_log()
+        captured = _run_start_with_live_log(web_server_logs_root)
         h = captured["handler"]
         assert h is not None
         flushed = []
@@ -874,28 +827,65 @@ class TestInnerHelpersLiveLogPath:
             args=(),
             exc_info=None,
         )
-        with (
-            patch.object(_lh.TimedRotatingFileHandler, "emit", lambda self, r: None),
-            patch.object(h, "flush", side_effect=lambda: flushed.append(True)),
-        ):
+
+        # Both _FlushingRotatingFileHandler and _FlushingS3RotatingLogHandler
+        # override emit to call self.flush()
+        with patch.object(h, "flush", side_effect=lambda: flushed.append(True)):
             h.emit(record)
         assert flushed
 
+    # -- _FlushingRotatingFileHandler.write_raw / _FlushingS3RotatingLogHandler.write_raw --
+
+    def test_handler_write_raw_writes_and_flushes(self, web_server_logs_root):
+        """Covers the write_raw method for both local and S3 live log paths."""
+        captured = _run_start_with_live_log(web_server_logs_root)
+        h = captured["handler"]
+        assert h is not None
+
+        if isinstance(h, S3RotatingLogHandler):
+            h._buffer = MagicMock()
+            h._lock = MagicMock()
+            with patch.object(h, "_flush_locked") as mock_flush:
+                h.write_raw("payload")
+            h._buffer.write.assert_called_with("payload")
+            mock_flush.assert_called_once()
+        else:
+            h.stream = MagicMock()
+            h.write_raw("payload")
+            h.stream.write.assert_called_with("payload")
+            h.stream.flush.assert_called()
+
+    def test_handler_write_raw_skips_when_stream_none(self, web_server_logs_root):
+        """Covers the branch where stream is None (local handler only)."""
+        captured = _run_start_with_live_log(web_server_logs_root)
+        h = captured["handler"]
+        assert h is not None
+
+        if not isinstance(h, S3RotatingLogHandler):
+            h.stream = None
+            h.write_raw("nothing")  # Should not raise
+
     # -- _ServerThreadStream.write --
 
-    def test_server_thread_stream_write_server_branch_happy_path(self):
+    def test_server_thread_stream_write_server_branch_happy_path(
+        self, web_server_logs_root
+    ):
         """write() in server-thread context writes to the handler stream."""
-        captured = _run_start_with_live_log()
+        captured = _run_start_with_live_log(web_server_logs_root)
         stream = captured["stdout"]
         assert hasattr(stream, "_original")
         stream._original = MagicMock()
-        with patch.object(main_mod, "_server_thread", threading.current_thread()):
-            stream.write("server-data")
+        h = captured["handler"]
+
+        with patch.object(h, "write_raw") as mock_write_raw:
+            with patch.object(main_mod, "_server_thread", threading.current_thread()):
+                stream.write("server-data")
+        mock_write_raw.assert_called_once_with("server-data")
         stream._original.write.assert_not_called()
 
-    def test_server_thread_stream_write_non_server_branch(self):
+    def test_server_thread_stream_write_non_server_branch(self, web_server_logs_root):
         """write() outside server-thread context delegates to _original."""
-        captured = _run_start_with_live_log()
+        captured = _run_start_with_live_log(web_server_logs_root)
         stream = captured["stdout"]
         mock_original = MagicMock()
         stream._original = mock_original
@@ -903,64 +893,80 @@ class TestInnerHelpersLiveLogPath:
             stream.write("cell-data")
         mock_original.write.assert_called_once_with("cell-data")
 
-    def test_server_thread_stream_write_server_branch_value_error_suppressed(self):
+    def test_server_thread_stream_write_server_branch_value_error_suppressed(
+        self, web_server_logs_root
+    ):
         """write() server branch: ValueError on handler stream => silently passes."""
-        captured = _run_start_with_live_log()
+        captured = _run_start_with_live_log(web_server_logs_root)
         stream = captured["stdout"]
         stream._original = MagicMock()
         h = captured["handler"]
         assert h is not None
-        h.stream.write.side_effect = ValueError("closed")
-        with patch.object(main_mod, "_server_thread", threading.current_thread()):
-            stream.write("x")  # must not raise
 
-    def test_server_thread_stream_write_server_branch_attribute_error_suppressed(self):
+        with patch.object(h, "write_raw", side_effect=ValueError("closed")):
+            with patch.object(main_mod, "_server_thread", threading.current_thread()):
+                stream.write("x")  # must not raise
+
+    def test_server_thread_stream_write_server_branch_attribute_error_suppressed(
+        self, web_server_logs_root
+    ):
         """write() server branch: AttributeError on handler stream => silently passes."""
-        captured = _run_start_with_live_log()
+        captured = _run_start_with_live_log(web_server_logs_root)
         stream = captured["stdout"]
         stream._original = MagicMock()
         h = captured["handler"]
         assert h is not None
-        h.stream.write.side_effect = AttributeError("gone")
-        with patch.object(main_mod, "_server_thread", threading.current_thread()):
-            stream.write("x")  # must not raise
+
+        with patch.object(h, "write_raw", side_effect=AttributeError("gone")):
+            with patch.object(main_mod, "_server_thread", threading.current_thread()):
+                stream.write("x")  # must not raise
 
     # -- _ServerThreadStream.flush --
 
-    def test_server_thread_stream_flush_calls_original_flush(self):
+    def test_server_thread_stream_flush_calls_original_flush(
+        self, web_server_logs_root
+    ):
         """flush() always calls _original.flush()."""
-        captured = _run_start_with_live_log()
+        captured = _run_start_with_live_log(web_server_logs_root)
         stream = captured["stdout"]
         mock_original = MagicMock()
         stream._original = mock_original
         stream.flush()
         mock_original.flush.assert_called()
 
-    def test_server_thread_stream_flush_value_error_suppressed(self):
+    def test_server_thread_stream_flush_value_error_suppressed(
+        self, web_server_logs_root
+    ):
         """flush(): ValueError on handler stream.flush() => silently passes."""
-        captured = _run_start_with_live_log()
+        captured = _run_start_with_live_log(web_server_logs_root)
         stream = captured["stdout"]
         stream._original = MagicMock()
         h = captured["handler"]
         assert h is not None
-        h.stream.flush.side_effect = ValueError("closed")
-        stream.flush()  # must not raise
 
-    def test_server_thread_stream_flush_attribute_error_suppressed(self):
+        with patch.object(h, "flush", side_effect=ValueError("closed")):
+            stream.flush()  # must not raise
+
+    def test_server_thread_stream_flush_attribute_error_suppressed(
+        self, web_server_logs_root
+    ):
         """flush(): AttributeError on handler stream.flush() => silently passes."""
-        captured = _run_start_with_live_log()
+        captured = _run_start_with_live_log(web_server_logs_root)
         stream = captured["stdout"]
         stream._original = MagicMock()
         h = captured["handler"]
         assert h is not None
-        h.stream.flush.side_effect = AttributeError("gone")
-        stream.flush()  # must not raise
+
+        with patch.object(h, "flush", side_effect=AttributeError("gone")):
+            stream.flush()  # must not raise
 
     # -- _ServerThreadStream.__getattr__ --
 
-    def test_server_thread_stream_getattr_proxies_to_original(self):
+    def test_server_thread_stream_getattr_proxies_to_original(
+        self, web_server_logs_root
+    ):
         """__getattr__ proxies unknown attributes to _original."""
-        captured = _run_start_with_live_log()
+        captured = _run_start_with_live_log(web_server_logs_root)
         stream = captured["stdout"]
         mock_original = MagicMock()
         mock_original.encoding = "utf-8"
@@ -969,35 +975,45 @@ class TestInnerHelpersLiveLogPath:
 
     # -- _write_termination_line (real closure via atexit capture) --
 
-    def test_write_termination_line_value_error_suppressed(self):
-        """_write_termination_line() (real closure): ValueError on closed stream => silently passes."""
-        captured = _run_start_with_live_log()
+    def test_write_termination_line_value_error_suppressed(self, web_server_logs_root):
+        """_write_termination_line() (real closure): ValueError on handler stream => silently passes."""
+        captured = _run_start_with_live_log(web_server_logs_root)
         h = captured["handler"]
         assert h is not None
-        h.stream.write.side_effect = ValueError("closed")
-        captured["atexit_fn"]()  # must not raise
 
-    def test_write_termination_line_attribute_error_suppressed(self):
-        """_write_termination_line() (real closure): AttributeError on closed stream => silently passes."""
-        captured = _run_start_with_live_log()
+        with patch.object(h, "write_raw", side_effect=ValueError("closed")):
+            captured["atexit_fn"]()  # must not raise
+
+    def test_write_termination_line_attribute_error_suppressed(
+        self, web_server_logs_root
+    ):
+        """_write_termination_line() (real closure): AttributeError on handler stream => silently passes."""
+        captured = _run_start_with_live_log(web_server_logs_root)
         h = captured["handler"]
         assert h is not None
-        h.stream.write.side_effect = AttributeError("gone")
-        captured["atexit_fn"]()  # must not raise
+
+        with patch.object(h, "write_raw", side_effect=AttributeError("gone")):
+            captured["atexit_fn"]()  # must not raise
 
     # -- _cleanup_on_shutdown (real closure via threading.Thread target capture) --
 
-    def test_cleanup_on_shutdown_joins_server_thread(self):
+    def test_cleanup_on_shutdown_joins_server_thread(self, web_server_logs_root):
         """_cleanup_on_shutdown() (real closure): joins _server_thread."""
-        captured = _run_start_with_live_log()
+        captured = _run_start_with_live_log(web_server_logs_root)
         mock_server_t = MagicMock()
-        with patch.object(main_mod, "_server_thread", mock_server_t):
+        h = captured["handler"]
+
+        with (
+            patch.object(h, "write_raw"),
+            patch.object(h, "close"),
+            patch.object(main_mod, "_server_thread", mock_server_t),
+        ):
             captured["cleanup_fn"]()
         mock_server_t.join.assert_called_once()
 
     # -- _ServerThreadFilter --
 
-    def test_server_thread_filter_filters_by_current_thread(self):
+    def test_server_thread_filter_filters_by_current_thread(self, web_server_logs_root):
         """
         Verify that _ServerThreadFilter.filter returns True only when the
         current thread is the server thread.
@@ -1007,7 +1023,7 @@ class TestInnerHelpersLiveLogPath:
         threading.current_thread() against _main._server_thread, and this test
         covers both branches of that conditional.
         """
-        captured = _run_start_with_live_log()
+        captured = _run_start_with_live_log(web_server_logs_root)
         handler = captured["handler"]
         assert handler is not None
         assert len(handler.filters) == 1, (

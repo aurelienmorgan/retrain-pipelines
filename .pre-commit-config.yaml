@@ -45,6 +45,6 @@ repos:
         name: pytest unit
         language: system
         pass_filenames: false
-        entry: bash tests/unit/pytest_unit_with_minio.sh
+        entry: bash tests/unit/pytest_integration__minio__postgres.sh
         # Only run when source, or tests stack change.
         files: ^(pkg_src/|tests/)

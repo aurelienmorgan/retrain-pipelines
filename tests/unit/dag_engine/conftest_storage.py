@@ -1,5 +1,5 @@
 """
-Parametrized local filesystem and S3 fixtures for the unit-test subtree.
+Parametrized local filesystem and S3 fixtures for the integration-test subtree.
 
 Provides:
   ``metadata_root``: parametrized fixture providing a local tmp_path

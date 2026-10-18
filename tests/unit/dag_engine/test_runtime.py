@@ -1,4 +1,3 @@
-# test_runtime_1.py
 """
 Unit tests for retrain_pipelines.dag_engine.runtime.
 """
@@ -56,16 +55,6 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 # -----------------------------------------------------------------------------
 #  Shared helpers
 # -----------------------------------------------------------------------------
-
-
-class FailingFlushHandler(logging.Handler):
-    """A logging handler that raises an exception when flush() is called."""
-
-    def flush(self):
-        raise RuntimeError("flush error")
-
-    def emit(self, record):
-        pass
 
 
 def make_task(name, is_parallel=False, merge_func=None):
@@ -452,16 +441,26 @@ class TestUpdateInterruptedTasksInDb:
             assert task.failed is True
 
     def test_happy_path_flush_exception_absorbed(self, runtime_env, isolated_dao):
-        """Covers the except Exception block for h.flush() at the end of _update_interrupted_tasks_in_db."""
-        handler = FailingFlushHandler()
+        """Covers the except Exception block for h.flush() at the end of _update_interrupted_tasks_in_db.
+
+        A NullHandler is attached to the runtime logger and its flush is
+        temporarily patched to raise. Unlike a permanently-failing custom
+        handler, patch.object restores the original no-op flush on exit so
+        the handler weakref that lingers in logging._handlerList cannot
+        poison later tests (e.g. uvicorn's dictConfig shutdown sweep).
+        """
+        handler = logging.NullHandler()
         rt_logger = logging.getLogger(_RT)
         rt_logger.addHandler(handler)
         try:
             t1 = make_task("T1")
             exec_id, task_ids = _setup_dao_with_tasks(isolated_dao, [t1])
-            with patch(
-                f"{_RT}.Config.get_metadatastore_url",
-                return_value=isolated_dao.engine.url,
+            with (
+                patch.object(handler, "flush", side_effect=RuntimeError("flush error")),
+                patch(
+                    f"{_RT}.Config.get_metadatastore_url",
+                    return_value=isolated_dao.engine.url,
+                ),
             ):
                 _update_interrupted_tasks_in_db(task_ids, exec_id=exec_id)
         finally:
@@ -479,12 +478,20 @@ class TestUpdateInterruptedTasksInDb:
             rt_logger.removeHandler(mock_handler)
 
     def test_dao_init_failure_flush_exception_absorbed(self, runtime_env, isolated_dao):
-        """Covers the except Exception block for h.flush() when DAO init fails."""
-        handler = FailingFlushHandler()
+        """Covers the except Exception block for h.flush() when DAO init fails.
+
+        Same NullHandler + patch.object strategy as the happy-path variant:
+        the failing flush is scoped to the with-block so no raising handler
+        survives in logging._handlerList after the test.
+        """
+        handler = logging.NullHandler()
         rt_logger = logging.getLogger(_RT)
         rt_logger.addHandler(handler)
         try:
-            with patch(f"{_RT}.DAO", side_effect=RuntimeError("init fail")):
+            with (
+                patch.object(handler, "flush", side_effect=RuntimeError("flush error")),
+                patch(f"{_RT}.DAO", side_effect=RuntimeError("init fail")),
+            ):
                 _update_interrupted_tasks_in_db([1], exec_id=1)
         finally:
             rt_logger.removeHandler(handler)
@@ -511,6 +518,28 @@ class TestUpdateInterruptedTasksInDb:
 
 class TestSigintHandler:
     def setup_method(self):
+        with _task_registry._lock:
+            _task_registry._running_tasks.clear()
+            _task_registry._interrupted = False
+
+    def teardown_method(self):
+        """Clear _task_registry
+
+        Tests here register tasks via register_task() but never unregister
+        them ; the real ``_sigint_handler`` would call sys.exit, which we patch
+        as a no-op.  setup_method clears at entry; without a matching
+        teardown, the last test's registrations survive into the next class.
+
+        Only matters under xdist: worker processes are reused across test
+        classes, so _task_registry (module-level singleton) leaks from
+        TestSigintHandler into TestExecute.  In isolation each class gets
+        a fresh process and the leak is invisible.
+
+        The leak is also why we'd otherwize observe failures as intermittent:
+        xdist --dist=load assigns tests to workers nondeterministically,
+        so only workers that happen to run a TestSigintHandler test
+        before a TestExecute test end up polluted.
+        """
         with _task_registry._lock:
             _task_registry._running_tasks.clear()
             _task_registry._interrupted = False
@@ -702,6 +731,24 @@ class TestTopologicalSort:
         tg = make_tg("root_tg", elements=[])
         result = _topological_sort([tg])
         assert result == []
+
+    def test_fallback_when_all_tasks_have_nested_task_group(self):
+        """Covers the fallback branch that fills ``order`` when the
+        queue-based traversal emits nothing yet ``all_tasks`` is non-empty.
+
+        This occurs when every task's ``task_group`` is itself nested
+        inside another ``TaskGroup`` (``group.task_group is not None``),
+        so neither the task nor its group is appended during normal
+        traversal.  The fallback then collects the inner groups directly.
+        """
+        t = make_task("T")
+        inner_tg = make_tg("inner", elements=[t])
+        outer_tg = make_tg("outer", elements=[inner_tg])
+        t._task_group = inner_tg
+        inner_tg._task_group = outer_tg
+
+        result = _topological_sort([t])
+        assert result == [inner_tg]
 
 
 # ══════════════════════════════════════════════════════════════════════════════

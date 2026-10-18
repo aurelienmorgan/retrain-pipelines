@@ -1,4 +1,4 @@
-serves for s3-related unit-testing.
+serves for s3-related integration-testing.
 for, e.g., RP_ASSETS_CACHE and/or RP_ARTIFACTS_STORE and/or RP_WEB_SERVER_LOGS
 
 Exposes:
@@ -13,7 +13,7 @@ Note:
   - MinIO is an archived project and is now replaced by MinIO AIStor
   which allows all usages including commercial use,
   as long as it doesn't involve multi-node distributed S3 stores
-  (so, a single-node for unit-tests would be fine).
+  (so, a single-node for integration-tests would be fine).
   In case it later proves any useful, we may consider switching
   to MinIO AIStor or use an alternative such as https://garagehq.deuxfleurs.fr/ .
 
