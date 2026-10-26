@@ -1,5 +1,5 @@
 """
-Unit tests for retrain_pipelines/dag_engine/web_console/main_notebook.py.
+Unit and Integration tests for retrain_pipelines/dag_engine/web_console/main_notebook.py.
 
 Only mocked: real network calls (urlopen, ngrok tunnel), real display output
 (IPython.display calls are verified via patch), and OS env for platform detection.

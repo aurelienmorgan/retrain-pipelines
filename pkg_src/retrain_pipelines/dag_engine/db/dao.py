@@ -881,19 +881,19 @@ class AsyncDAO(DAOBase):
         """
         recursive_sql = """
         WITH RECURSIVE parent_chain AS (
-            SELECT *
+            SELECT *, 0 AS depth
             FROM taskgroups
             WHERE uuid = :start_uuid
 
             UNION ALL
 
-            SELECT tg.*
+            SELECT tg.*, pc.depth + 1 AS depth
             FROM taskgroups tg
             JOIN parent_chain pc ON
                 REPLACE(CAST(tg.elements AS TEXT), '-', '')
                 LIKE '%' || REPLACE(CAST(pc.uuid AS TEXT), '-', '') || '%'
         )
-        SELECT * FROM parent_chain ORDER BY "order";
+        SELECT * FROM parent_chain ORDER BY depth;
         """
         async with self._get_session() as session:
             result = await session.execute(text(recursive_sql), {"start_uuid": taskgroup_uuid.hex})

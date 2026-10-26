@@ -1,4 +1,4 @@
-"""Unit tests for retrain_pipelines.dag_engine.sdk.stores
+"""Unit and Integration tests for retrain_pipelines.dag_engine.sdk.stores
 
 Exercises AttrsDiff, ExecutionParams, TaskExitContext, and TaskExitPayload.
 Achieves 100% line coverage of stores.py by testing all classes and branches.

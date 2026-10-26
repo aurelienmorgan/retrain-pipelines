@@ -255,20 +255,38 @@ def _topological_sort(tasks: list[TaskType]) -> list[TaskType | TaskGroup]:
         group = t.task_group
         if group is None:
             order.append(t)
-        elif group.task_group is None and group not in seen_groups:
-            seen_groups.add(group)
-            order.append(group)
+        else:
+            # Walk up to the outermost TaskGroup so a group that
+            # contains only nested TaskGroups (no direct TaskType)
+            # is still emitted exactly once, in topological position.
+            while group.task_group is not None:
+                group = group.task_group
+            if group not in seen_groups:
+                seen_groups.add(group)
+                order.append(group)
 
         for child in children_map[t]:
             in_degree[child] -= 1
             if in_degree[child] == 0:
                 queue.append(child)
 
+    """
     # Handle case where DAG is a TaskGroup with no
     # successor nor predecessor.
+    # Walk up to the outermost TaskGroup for the same reason
+    # as above: a nested-only structure must emit its
+    # outermost group, not the inner intermediate ones.
     if not order and all_tasks:
-        groups = {t.task_group for t in all_tasks if t.task_group is not None}
+        groups: set = set()
+        for t in all_tasks:
+            if t.task_group is None:
+                continue
+            g = t.task_group
+            while g.task_group is not None:
+                g = g.task_group
+            groups.add(g)
         order.extend(groups)
+    """
 
     return order
 
@@ -314,8 +332,18 @@ def _collect_parent_results(elmt: TaskType | TaskGroup, results: TaskPayload) ->
     parent_results = TaskPayload({})
     if isinstance(elmt, TaskType):
         for p in elmt.parents:
-            if p.name in results:
+            if p.name in results and results[p.name] is not None:
                 parent_results[p.name] = results[p.name]
+            else:
+                # Parent's slot is None or missing ; typically because the parent
+                # is a passthrough TaskType that returned a multi-entry TaskPayload:
+                # the items got propagated into this accumulator under their original
+                # keys (not the parent's name), leaving the parent's own slot None.
+                # Traverse up to collect from this parent's parents (recursively)
+                # so the downstream task still receives the propagated items.
+                sub = _collect_parent_results(p, results)
+                for k, v in sub.items():
+                    parent_results[k] = v
     elif isinstance(elmt, TaskGroup):
         # Since all elements in a TaskGroup share relatives
         # (both parents and children), we look into the first only.
@@ -582,18 +610,25 @@ def _execute_task(
             f"  \N{BULLET} {str(parent_results)}[/]"
         )
 
+    # rank is always forwarded (None or [] at top-level / non-parallel taskgroups,
+    # [idx, ...] inside parallel branches). The TaskType wrapper expects rank to be
+    # present in kwargs whenever the user-declared function signature includes it.
     if parent_results._data:
-        _, result = (
-            t.func(parent_results, rank=rank, exec_id=exec_id, task_id=task_id)
-            if rank
-            else t.func(parent_results, exec_id=exec_id, task_id=task_id)
-        )
+        _, result = t.func(parent_results, rank=rank, exec_id=exec_id, task_id=task_id)
     else:
-        _, result = (
-            t.func(rank=rank, exec_id=exec_id, task_id=task_id)
-            if rank
-            else t.func(exec_id=exec_id, task_id=task_id)
-        )
+        _, result = t.func(rank=rank, exec_id=exec_id, task_id=task_id)
+
+    # A task that returns a 1-entry TaskPayload is returning a wrapper around its
+    # actual result (e.g. a passthrough that hands back the payload it received).
+    # Unwrap it so the inner value is what gets stored under the task's name in
+    # _execute_taskgroup's result-merge loop.
+    # Note: Multi-entry TaskPayloads are NOT # unwrapped here ;
+    # they are propagated item-by-item into the parent accumulator
+    # by _execute_taskgroup's isinstance(...) branch, leaving the
+    # task's own slot at its None init value, which _collect_parent_results
+    # then traverses up the parent chain to recover.
+    if isinstance(result, TaskPayload) and len(result._data) == 1:
+        result = list(result._data.values())[0]
 
     return result
 
@@ -669,7 +704,7 @@ def _execute_taskgroup(
             result[elmt.name] = None
             if isinstance(elmt, TaskType):
                 future = executor.submit(
-                    _execute_task_with_context, context, elmt, parent_results, exec_id, (rank or [])
+                    _execute_task_with_context, context, elmt, parent_results, exec_id, rank
                 )
                 futures[future] = elmt.name
             else:

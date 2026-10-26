@@ -1480,6 +1480,33 @@ class TestTaskGroup:
         with pytest.raises(TypeError):
             TaskGroup(123, _real_task("t"))
 
+    def test_empty_elements_raises_task_group_exception(self):
+        """Covers the empty-elements guard branch of __init__.
+
+        A TaskGroup declared with a name but no constituent elements
+        (e.g. when @taskgroup returns None or an empty tuple) is
+        rejected at construction time.
+        """
+        with pytest.raises(TaskGroupException, match="resolves to no TaskType"):
+            TaskGroup("EmptyTG")
+
+    def test_cycle_raises_task_group_exception(self):
+        """Covers the cycle-detection branch of _has_cycle inside __init__.
+
+        A TaskGroup that transitively contains itself (through a nested
+        TaskGroup element whose elements loop back) is rejected at
+        construction time to prevent infinite recursion during DAG
+        traversal.
+        """
+        t = _real_task("cycle_task")
+        inner = TaskGroup("CycleInner", t)
+        outer = TaskGroup("CycleOuter", inner)
+        # Forge a cycle: inner now references outer, creating
+        # inner -> outer -> inner.
+        inner.elements.append(outer)
+        with pytest.raises(TaskGroupException, match="contains a cycle"):
+            TaskGroup("CycleTrigger", inner)
+
     def test_pydantic_validation_failure_raises_task_group_exception(self):
         """pydantic validation error => TaskGroupException."""
         # Pass an invalid ui_css value to trigger pydantic validation inside super().__init__
@@ -1676,6 +1703,57 @@ class TestDagFindRootTasks:
         roots = DAG._find_root_tasks(leaf)
         # leaf has a parent so it is not a root; root_tg is never added to all_tasks.
         assert isinstance(roots, list)
+
+    def test_drop_unanchored_taskgroups_cleans_phantom_reference(self):
+        """Covers _drop_unanchored_taskgroups: phantom detection."""
+        # Anchor task reachable from the DAG entry point.
+        anchor = _real_task("phantom_anchor")
+
+        # Intermediate TaskGroup wrapping the anchor. This creates the
+        # two-level _task_group chain (anchor -> outer_tg -> phantom_tg)
+        # that makes _chain yield twice when walking the anchor's chain.
+        outer_tg = TaskGroup("OuterTG", anchor)
+
+        # Inner TaskGroup with its own task element; its _task_group
+        # will be reassigned to the phantom group below.
+        inner_elem = _real_task("inner_elem")
+        inner_tg = TaskGroup("InnerPhantomTG", inner_elem)
+
+        # Task not reachable from DAG roots -- makes the phantom group
+        # contain an element outside all_tasks.
+        unreachable = _real_task("unreachable")
+
+        # phantom_tg's __init__ reassigns _task_group on each of its
+        # direct elements (outer_tg, inner_tg, unreachable) to itself.
+        # anchor is nested inside outer_tg, not a direct element, so
+        # anchor._task_group stays outer_tg.
+        phantom_tg = TaskGroup("PhantomTG", outer_tg, inner_tg, unreachable)
+        assert anchor._task_group is outer_tg
+        assert outer_tg._task_group is phantom_tg
+        assert inner_tg._task_group is phantom_tg
+
+        # _find_root_tasks walks anchor._task_group up to outer_tg, then
+        # outer_tg._task_group up to phantom_tg, detects that phantom_tg
+        # contains unreachable (not in all_tasks), and drops it.
+        #
+        # The _chain generator walks anchor's chain (outer_tg then
+        # phantom_tg) to compute which tasks reference the dropped group,
+        # advancing past the first yield because outer_tg != phantom_tg.
+        # _clean then nullifies _task_group on every direct element of
+        # phantom_tg whose uuid matches, recursing into TaskGroup elements.
+        roots = DAG._find_root_tasks(anchor)
+
+        assert anchor in roots
+        # _task_group refs cleaned by _clean on direct elements with uuid match:
+        assert outer_tg._task_group is None
+        assert inner_tg._task_group is None
+        assert unreachable._task_group is None
+        # _clean recursed into outer_tg.elements=[anchor]:
+        #   anchor._task_group is outer_tg, uuid mismatch with phantom_tg -> skipped.
+        assert anchor._task_group is outer_tg
+        # _clean recursed into inner_tg.elements=[inner_elem]:
+        #   inner_elem._task_group is inner_tg, uuid mismatch with phantom_tg -> skipped.
+        assert inner_elem._task_group is inner_tg
 
 
 # ══════════════════════════════════════════════════════════════════════════════

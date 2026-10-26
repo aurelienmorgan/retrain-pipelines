@@ -1,5 +1,5 @@
 """
-Unit tests for retrain_pipelines.dag_engine.runtime.
+Unit and Integration tests for retrain_pipelines.dag_engine.runtime.
 """
 
 import ctypes
@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
+import requests
 
 from retrain_pipelines.dag_engine.core.core import (
     DagExecutionContext,
@@ -116,6 +117,12 @@ _RT = "retrain_pipelines.dag_engine.runtime"
 @task
 def task_T(*args, **kwargs):
     return "T"
+
+
+@task
+def task_single_payload(*args, **kwargs):
+    """Return a 1-entry TaskPayload to exercise the unwrap path."""
+    return TaskPayload({"k": "v"})
 
 
 @task
@@ -726,20 +733,16 @@ class TestTopologicalSort:
         # Neither inner_tg (nested) nor child (has task_group) should appear raw
         assert parent in result
 
-    def test_taskgroup_root_skipped_in_traversal(self):
-        """Covers branch where a root element is a TaskGroup (skipped during stack-based traversal)."""
-        tg = make_tg("root_tg", elements=[])
-        result = _topological_sort([tg])
-        assert result == []
+    def test_nested_taskgroup_single_task_emits_outermost_group(self):
+        """Verify the main loop emits the outermost TaskGroup for a single
+        task nested inside nested TaskGroup(s).
 
-    def test_fallback_when_all_tasks_have_nested_task_group(self):
-        """Covers the fallback branch that fills ``order`` when the
-        queue-based traversal emits nothing yet ``all_tasks`` is non-empty.
-
-        This occurs when every task's ``task_group`` is itself nested
-        inside another ``TaskGroup`` (``group.task_group is not None``),
-        so neither the task nor its group is appended during normal
-        traversal.  The fallback then collects the inner groups directly.
+        The queue-based traversal walks ``group.task_group`` up to the
+        outermost TaskGroup so that a nested-only structure emits its
+        outermost group (not the inner intermediate ones). This exercises
+        the main loop's walk-up branch, not the ``if not order and
+        all_tasks:`` fallback (see the note above for why that fallback
+        is unreachable for valid DAGs).
         """
         t = make_task("T")
         inner_tg = make_tg("inner", elements=[t])
@@ -748,7 +751,19 @@ class TestTopologicalSort:
         inner_tg._task_group = outer_tg
 
         result = _topological_sort([t])
-        assert result == [inner_tg]
+        assert result == [outer_tg]
+
+    def test_non_tasktype_root_in_initial_stack_is_skipped(self):
+        """Covers the type-guard branch in the traversal loop where a
+        non-TaskType node (i.e. a TaskGroup passed directly as a root)
+        is popped from the initial stack and skipped without recursion.
+        """
+        a = make_task("A")
+        tg = make_tg("tg", elements=[make_task("Inner")])
+        # The TaskGroup root is popped and skipped via the type-guard;
+        # only the TaskType root is collected and emitted.
+        result = _topological_sort([tg, a])
+        assert result == [a]
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -787,10 +802,17 @@ class TestFindSubdagEnd:
         ]
         assert _find_subdag_end(order, 1) == 2
 
-    def test_taskgroup_elements_are_skipped(self):
-        tg = make_tg("tg")
-        merge = make_task("M", merge_func=lambda x, **kw: x)
-        order = [make_task("P", is_parallel=True), tg, merge]
+    def test_taskgroup_in_order_is_skipped(self):
+        """Covers the branch where a TaskGroup is encountered while
+        iterating the parallel subdag; it is skipped (continue) without
+        affecting parallel_depth so the scan resumes at the next task.
+        """
+        a = make_task("A", is_parallel=True)
+        tg = make_tg("tg", elements=[make_task("Inner")])
+        m = make_task("M", merge_func=lambda x, **kw: x)
+        order = [a, tg, m]
+        # A bumps parallel_depth to 1; the TaskGroup is skipped;
+        # the merge task brings parallel_depth back to 0 and returns.
         assert _find_subdag_end(order, 0) == 2
 
 
@@ -837,6 +859,24 @@ class TestCollectParentResults:
         tg = make_tg("tg", elements=[elem])
         out = _collect_parent_results(tg, TaskPayload({"P": 7}))
         assert out["P"] == 7
+
+    def test_parent_passthrough_propagates_grandparent_results(self):
+        """Covers the recursive branch where a direct parent's own slot
+        is absent from results (e.g. the parent was a passthrough task
+        that returned a multi-entry TaskPayload), so we traverse up the
+        parent chain to collect the propagated items under their
+        original keys.
+        """
+        grandparent = make_task("Grandparent")
+        parent = make_task("Parent")
+        parent.parents.append(grandparent)
+        t = make_task("T")
+        t.parents.append(parent)
+        # Only the grandparent's slot is populated; the parent's own
+        # slot is missing, forcing the recursive traversal up the
+        # parent chain to recover the propagated item.
+        out = _collect_parent_results(t, TaskPayload({"Grandparent": "v"}))
+        assert out["Grandparent"] == "v"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -899,6 +939,23 @@ class TestExecuteTask:
         try:
             r = _execute_task(t, TaskPayload({"p": 5}), exec_id=exec_id, rank=[0])
             assert r == "T"
+        finally:
+            _dag_execution_context_var.reset(token)
+
+    def test_returned_single_entry_payload_is_unwrapped(
+        self, runtime_env, isolated_dao
+    ):
+        """Covers the unwrap branch where a task returns a 1-entry
+        TaskPayload: the inner value is extracted so downstream
+        consumers receive the actual result rather than the wrapper.
+        """
+        t = task_single_payload
+        exec_id, _ = _setup_dao_with_tasks(isolated_dao, [t])
+        ctx = DagExecutionContext({"exec_id": exec_id})
+        token = _dag_execution_context_var.set(ctx)
+        try:
+            r = _execute_task(t, TaskPayload({}), exec_id=exec_id)
+            assert r == "v"
         finally:
             _dag_execution_context_var.reset(token)
 
@@ -1230,6 +1287,23 @@ class TestExecute:
         with (
             patch(f"{_RT}.requests.head", return_value=MagicMock()),
             patch(f"{_RT}.requests.post", return_value=fake_post_response),
+        ):
+            result, _ = execute(simple_dag)
+        assert result == "result"
+
+    def test_sse_skipped_when_webconsole_unreachable(self, runtime_env, isolated_dao):
+        """Covers the branch where the WebConsole HEAD probe raises a
+        ``RequestException``, causing the SSE streaming server start to
+        be skipped (traces continue to be written to DB by workers
+        regardless).
+
+        Only third-party ``requests`` is patched; the retrain_pipelines
+        SSE server is intentionally not started so its real lifecycle
+        is left untouched.
+        """
+        with patch(
+            f"{_RT}.requests.head",
+            side_effect=requests.exceptions.RequestException("connection refused"),
         ):
             result, _ = execute(simple_dag)
         assert result == "result"

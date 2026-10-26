@@ -667,6 +667,25 @@ class TaskGroup(BaseModel):
         if not isinstance(name, str):
             raise TypeError("The 'name' must be a string.")
 
+        # Reject ``@taskgroup`` mis-declarations: returning ``None`` (no
+        # elements) or returning a chain of TaskGroups that loops back on
+        # itself (would infinitely recurse during DAG construction).
+        def _has_cycle(elements_list, path):
+            for e in elements_list:
+                if isinstance(e, TaskGroup):
+                    if id(e) in path:
+                        raise TaskGroupException(
+                            f"taskgroup `{name}` contains a cycle through taskgroup `{e.name}`"
+                        )
+                    _has_cycle(e.elements, path | {id(e)})
+
+        if not elements:
+            raise TaskGroupException(
+                f"taskgroup `{name}` resolves to no TaskType "
+                "(`@taskgroup` returned None or an empty tuple)"
+            )
+        _has_cycle(elements, set())
+
         # Assign values to kwargs
         kwargs["name"] = name
         kwargs["elements"] = elements
@@ -797,7 +816,7 @@ class DAG(BaseModel):
         super().__init__(*args, roots=roots, **kwargs)
 
     def init(self):
-        """Construct and initialize the DAG instance.
+        """Initialize the DAG execution.
 
         Shall be called programmatically
         by the DAG execution routine.
@@ -999,7 +1018,65 @@ class DAG(BaseModel):
                 all_tasks.add(current)
                 stack.extend(current.parents)
 
+        DAG._drop_unanchored_taskgroups(all_tasks)
+
         return [t for t in all_tasks if not t.parents]
+
+    @staticmethod
+    def _drop_unanchored_taskgroups(all_tasks: set[TaskType]) -> None:
+        """Drop any phantom taskgroup reference.
+
+        ``TaskGroup.__init__`` runs ``elmt._task_group = self``
+        on every element, (note that in case of a TaskType
+        that's shared between two ``@taskgroup`` declarations,
+        then that tasktype ends up pointing at the later one)
+        this is irespective of the taskgroup being part of the DAG.
+        So, for tasktypes declared in the same python kernel as
+        the herein DAG that are not associated to the said
+        herein DAG, we need cleaning its elements'
+        taskgroup-related attributes.
+
+        No-op if all taskgroups in the python kernel
+        are linked to the herein DAG instance.
+        """
+        dropped: set[TaskGroup] = set()
+        for t in all_tasks:
+            tg = t._task_group
+            while tg is not None:
+                if any(isinstance(e, TaskType) and e not in all_tasks for e in tg.elements):
+                    dropped.add(tg)
+                    break
+                tg = tg._task_group
+
+        def _chain(start):
+            cur = start
+            while cur is not None:
+                yield cur
+                cur = cur._task_group
+
+        for tg in dropped:
+            refs = sorted({
+                tt.name for tt in all_tasks if any(_tg is tg for _tg in _chain(tt._task_group))
+            })
+            logger.warning(
+                f"taskgroup `{tg.name}` was referenced by "
+                f"{'tasks' if len(refs) > 1 else 'task'} "
+                "reachable from the DAG roots "
+                f"(i.e. [{', '.join(refs)}]) but is itself "
+                "not part of this DAG."
+            )
+            # Clean the dropped TaskGroup's element identifiers so they
+            # don't collide with the herein DAG's own ``tasktypes`` /
+            # ``taskgroups`` rows at DB registration time.
+
+            def _clean(elmts, _tg=tg):
+                for elmt in elmts:
+                    if elmt._task_group is not None and elmt._task_group.uuid == _tg.uuid:
+                        elmt._task_group = None
+                        if isinstance(elmt, TaskGroup):
+                            _clean(elmt.elements)
+
+            _clean(tg.elements)
 
     def help(self) -> str:
         """Generate help text for DAG parameters."""

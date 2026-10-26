@@ -70,21 +70,17 @@ class TraceBuffer:
             batch = []
             deadline = self._flush_interval
 
-            try:
-                while len(batch) < self._batch_size:
-                    try:
-                        trace = self._queue.get(timeout=deadline)
-                        batch.append(trace)
-                        deadline = 0.01
-                    except queue.Empty:
-                        break
+            while len(batch) < self._batch_size:
+                try:
+                    trace = self._queue.get(timeout=deadline)
+                    batch.append(trace)
+                    deadline = 0.01
+                except queue.Empty:
+                    break
 
-                if batch:
-                    with self._writing_lock:
-                        self._flush_batch(batch)
-
-            except Exception as e:
-                logger.error(f"Error in trace writer loop: {e}", exc_info=True)
+            if batch:
+                with self._writing_lock:
+                    self._flush_batch(batch)
 
     def _flush_batch(self, batch):
         """Write a batch of traces to the database."""
