@@ -1,3 +1,7 @@
+"""
+Unit tests for retrain_pipelines.dag_engine.web_console.utils.execution.gantt_chart.
+"""
+
 import pytest
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -471,6 +475,55 @@ def test_organize_tasks_parallel_lines(make_task_ext):
     assert lines1[(1,)][1].name == "parallel_work_1"
 
 
+def test_organize_tasks_parallel_new_branch_on_existing(make_task_ext):
+    """Covers the branch where a new parallel branch opens on an
+    already-existing parallel sub-DAG (i.e., a second `is_parallel`
+    task arrives with a different rank suffix but the same prefix,
+    before any merge task closes the sub-DAG).
+    """
+    # First parallel task opens a fresh sub-DAG with branch rank (0,).
+    t1 = make_task_ext(
+        id=1,
+        name="parallel_branch_a",
+        is_parallel=True,
+        rank=[0],
+        merge_func=None,
+        taskgroup_uuid=None,
+    )
+    # Second parallel task opens a NEW branch (1,) on the SAME sub-DAG,
+    # i.e. the sub-DAG already exists in `parallel_lines`.
+    t2 = make_task_ext(
+        id=2,
+        name="parallel_branch_b",
+        is_parallel=True,
+        rank=[1],
+        merge_func=None,
+        taskgroup_uuid=None,
+    )
+    # Merge task closes the sub-DAG.
+    t3 = make_task_ext(
+        id=3,
+        name="parallel_merge",
+        is_parallel=False,
+        rank=[],
+        merge_func="merge_func",
+        taskgroup_uuid=None,
+    )
+
+    result = _organize_tasks([t1, t2, t3], [])
+
+    # A single sub-DAG must hold both branches, plus its merging task.
+    assert len(result) == 1
+    pl = result[0]
+    assert isinstance(pl, ParallelLines)
+    lines = pl.lines
+    assert (0,) in lines
+    assert (1,) in lines
+    assert lines[(0,)][0].name == "parallel_branch_a"
+    assert lines[(1,)][0].name == "parallel_branch_b"
+    assert pl.merging_task.name == "parallel_merge"
+
+
 def test_organize_tasks_parallel_with_taskgroup(make_task_ext, make_task_group):
     """Covers: appending a taskgroup to a parallel line."""
     tg_uuid = str(uuid4())
@@ -629,6 +682,54 @@ def test_parallel_grouped_rows(make_task_ext):
     assert len(nested_row.children) == 1
 
 
+def test_parallel_grouped_rows_with_taskgroup(make_task_ext, make_task_group):
+    """Covers the branch in `parallel_grouped_rows` where an element of
+    a parallel line is a taskgroup tuple (i.e., a taskgroup nested
+    inside a parallel branch), rendered via `taskgroup_grouped_rows`.
+    """
+    tg_uuid = str(uuid4())
+    t_uuid = str(uuid4())
+    tg = make_task_group(uuid=tg_uuid, name="ParallelNestedGroup", elements=[t_uuid])
+    t_in_tg = make_task_ext(
+        id=10,
+        name="task_in_group",
+        tasktype_uuid=t_uuid,
+        taskgroup_uuid=tg_uuid,
+    )
+    # Opening parallel task of the sub-DAG; gives `parallel_grouped_rows`
+    # its reference `parralel_task_ext`.
+    opening_task = make_task_ext(
+        id=1,
+        name="p_start",
+        is_parallel=True,
+        rank=[0],
+        merge_func=None,
+        taskgroup_uuid=None,
+    )
+    # Wrap a taskgroup tuple inside the parallel line.
+    pl = ParallelLines(
+        rank=[],
+        lines={(0,): [opening_task, (tg, [t_in_tg])]},
+        merging_task=None,
+    )
+
+    row = parallel_grouped_rows(pl)
+
+    assert isinstance(row, GroupedRows)
+    assert row.name == "Distributed sub-pipeline"
+    # The single parallel-line child must hold the opening task and the taskgroup row.
+    line_row = row.children[0]
+    assert "parallel-line" in line_row.extraClasses
+    assert len(line_row.children) == 2
+    assert line_row.children[0].name == "p_start"
+    nested_tg_row = line_row.children[1]
+    assert nested_tg_row.name == "ParallelNestedGroup"
+    assert "taskgroup" in nested_tg_row.extraClasses
+    # The taskgroup row should contain the inner task.
+    assert len(nested_tg_row.children) == 1
+    assert nested_tg_row.children[0].name == "task_in_group"
+
+
 def test_taskgroup_grouped_rows(make_task_ext, make_task_group):
     tg_uuid = str(uuid4())
     t_uuid = str(uuid4())
@@ -718,3 +819,41 @@ def test_draw_chart(make_task_ext, make_task_group):
     assert "init('gantt-42'" in content
     assert "GanttTimeline" in content
     assert "initFormat" in content
+
+
+def test_draw_chart_with_taskgroup(make_task_ext, make_task_group):
+    """Covers the branch in `draw_chart` where the top-level organized
+    result contains a taskgroup tuple (rendered via
+    `taskgroup_grouped_rows`).
+    """
+    tg_uuid = str(uuid4())
+    t_uuid = str(uuid4())
+    tg = make_task_group(uuid=tg_uuid, name="TopLevelGroup", elements=[t_uuid])
+    t_in_tg = make_task_ext(
+        id=1,
+        name="task_in_group",
+        tasktype_uuid=t_uuid,
+        taskgroup_uuid=tg_uuid,
+    )
+    # A standalone task alongside the taskgroup also exercises the
+    # standalone-task branch in the same draw call.
+    t_standalone = make_task_ext(
+        id=2,
+        name="standalone_task",
+        taskgroup_uuid=None,
+    )
+
+    result = draw_chart(
+        execution_id=7,
+        tasks_list=[t_in_tg, t_standalone],
+        taskgroups_list=[tg],
+    )
+
+    content = str(result)
+    assert "<script>" in content
+    assert "init('gantt-7'" in content
+    # The taskgroup name, standalone task name, and inner task name
+    # must all appear in the rendered rows.
+    assert "TopLevelGroup" in content
+    assert "standalone_task" in content
+    assert "task_in_group" in content

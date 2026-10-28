@@ -35,6 +35,138 @@ function getMaxVisibleLevel(bodyRows) {
     return maxLevel;
 }
 
+function reorderGroupChildren(ganttTimelineObj, groupHeaderRow) {
+    /*
+     * Reorder the direct children of a group so the child with the earliest
+     * start-timestamp comes first.
+     *
+     * The discrepancy, in one sentence:
+     * ganttInsert computes the insert position of a newly-created taskgroup from
+     * the timestamp of the first-arriving task of that taskgroup, and never
+     * re-evaluates that position when a later-arriving task of the same taskgroup
+     * turns out to have an earlier timestamp; _organize_tasks doesn't have this
+     * problem because it sees all tasks up-front, sorted.
+     *
+     * Note:
+     * Consider a parent taskgroup T with two nested taskgroups, TB and TA.
+     * The parent also contains a standalone task. Each nested taskgroup has two
+     * tasks. Their start timestamps (relative to a common base) are:
+     *
+     *     +------------+--------------------------+
+     *     | task       | start_timestamp (ms)     |
+     *     +------------+--------------------------+
+     *     | standalone | ...5924                  |
+     *     | TB1        | ...6145                  |
+     *     | TB2        | ...6162                  |
+     *     | TA1        | ...6149                  |
+     *     | TA2        | ...6144                  |
+     *     +------------+--------------------------+
+     *
+     * During live-stream, SSE fires on task INSERT, in DB insertion order:
+     *
+     *     +----+------------+--------+------------------------------------------------+
+     *     | ## | task       | ts     | event                                          |
+     *     +----+------------+--------+------------------------------------------------+
+     *     | 1  | standalone | ...5924|                                                |
+     *     | 2  | TB1        | ...6145| -> creates TB as a child of T                  |
+     *     | 3  | TA1        | ...6149| -> creates TA as a child of T.                 |
+     *     |    |            |        |    At creation, ganttInsert computes           |
+     *     |    |            |        |    group_index by comparing TA1's ts (6149)    |
+     *     |    |            |        |    against TB1's ts (6145). Since 6149 > 6145, |
+     *     |    |            |        |    TA is placed after TB.                      |
+     *     | 4  | TB2        | ...6162| -> inserted inside the already-existing TB     |
+     *     | 5  | TA2        | ...6144| -> inserted inside the already-existing TA.    |
+     *     |    |            |        |    TA2's ts (6144) is earlier than TB1's ts    |
+     *     |    |            |        |    (6145), so TA's true earliest task is now   |
+     *     |    |            |        |    6144 — earlier than TB's 6145. But the code |
+     *     |    |            |        |    only re-sorts TA's children, never TA's     |
+     *     |    |            |        |    position relative to TB inside T.           |
+     *     +----+------------+--------+------------------------------------------------+
+     *
+     * Result: live-stream leaves TB (earliest 6145) before
+     * TA (earliest 6144).
+     * Expected: TA (earliest 6144) before TB (earliest 6145).
+     *
+     * This function walks every ancestor taskgroup of the inserted task
+     * (deepest first) and re-sorts that taskgroup's direct children by their
+     * earliest descendant start-timestamp, so that TA is moved before TB as
+     * soon as TA2 arrives, matching the post-execution order produced by
+     * _organize_tasks.
+     *
+     * Direct children are identified by data-path: their path is the parent's
+     * path + "." + a single segment (no further dots). For each child the
+     * earliest start-timestamp across itself and all its descendants is
+     * computed; children are sorted by that value ascending, using the numeric
+     * child index as a tiebreaker for equal timestamps.
+     *
+     * No-op when the group has fewer than 2 children or is already in the
+     * correct order.
+     */
+    if (!groupHeaderRow) return;
+    const table = ganttTimelineObj.table;
+    const colIdx = ganttTimelineObj.timelineColumnIndex;
+    const prefix = groupHeaderRow.dataset.path + ".";
+    const children = Array.from(
+        table.querySelectorAll(`tr[data-path^="${prefix}"]`)
+    ).filter(r => r.dataset.path.substring(prefix.length).indexOf('.') === -1);
+    if (children.length <= 1) return;
+    const earliestTs = row => {
+        let min = null;
+        const check = r => {
+            if (r.classList.contains("group-header")) return;
+            const c = r.cells[colIdx];
+            if (c && c.dataset.startTimestamp) {
+                const t = Number(c.dataset.startTimestamp);
+                if (!isNaN(t) && (min === null || t < min)) min = t;
+            }
+        };
+        check(row);
+        table.querySelectorAll(`tr[data-path^="${row.dataset.path}."]`).forEach(check);
+        return min;
+    };
+    const groups = children.map(c => ({
+        row: c,
+        desc: Array.from(table.querySelectorAll(`tr[data-path^="${c.dataset.path}."]`)),
+        ts: earliestTs(c),
+        idx: c.dataset.path.substring(prefix.length)
+    }));
+    groups.sort((a, b) => {
+        const ta = a.ts === null ? Number.MAX_SAFE_INTEGER : a.ts;
+        const tb = b.ts === null ? Number.MAX_SAFE_INTEGER : b.ts;
+        return ta !== tb ? ta - tb : Number(a.idx) - Number(b.idx);
+    });
+    if (groups.every((g, i) => g.row === children[i])) return;
+    console.warn(
+        "reorder existing group children",
+        "groupHeader=", groupHeaderRow.dataset.name,
+        "path=" + groupHeaderRow.dataset.path,
+        "id=" + groupHeaderRow.dataset.id,
+        "reordered:", groups.map(g => ({
+            name: g.row.dataset.name,
+            id: g.row.dataset.id,
+            fromIdx: g.idx,
+            toIdx: groups.indexOf(g),
+            earliestTs: g.ts
+        }))
+    );
+    groups.forEach((g, i) => {
+        if (g.idx === String(i)) return;
+        const oldP = prefix + g.idx + ".";
+        const newP = prefix + i + ".";
+        g.row.dataset.path = prefix + i;
+        g.desc.forEach(d => { d.dataset.path = newP + d.dataset.path.substring(oldP.length); });
+    });
+    let ref = groupHeaderRow.nextElementSibling;
+    while (ref && ref.dataset.path && ref.dataset.path.startsWith(prefix))
+        ref = ref.nextElementSibling;
+    const tbody = table.querySelector('tbody');
+    table.querySelectorAll(`tr[data-path^="${prefix}"]`).forEach(r => r.remove());
+    groups.forEach(g => {
+        tbody.insertBefore(g.row, ref);
+        g.desc.forEach(d => tbody.insertBefore(d, ref));
+    });
+}
+
 
 ////////////////////////////////////////////////////////
 
@@ -852,6 +984,14 @@ function ganttInsert(ganttTimelineObjName, payload, interBarsSpacing) {
         interBarsSpacing
     )
 
+    if (payload.taskgroups_hierarchy && payload.taskgroups_hierarchy.length >= 2) {
+        for (let tg of payload.taskgroups_hierarchy) {
+            const tgId = tg.uuid + (payload.rank ? "." + JSON.stringify(payload.rank) : "");
+            const tgRow = ganttTimelineObj.table.querySelector(`tr[data-id="${tgId}"]`);
+            if (tgRow) reorderGroupChildren(ganttTimelineObj, tgRow);
+        }
+    }
+
     // reset prior odd/even background overlay on groups
     // and apply back
     // (as inserts break prior odd/even distribution)
@@ -897,9 +1037,8 @@ function ganttInsert(ganttTimelineObjName, payload, interBarsSpacing) {
     );
     overrideLabels(ganttTimelineObj, rowsToStyle);
 
-    // update summary on potential (deep) collapsed parent groups
-    if (payload.rank)
-        updateSummaryTimestamps(ganttTimelineObjName, payload.id)
+    // update summary on potential (possibly deep) collapsed parent groups
+    updateSummaryTimestamps(ganttTimelineObjName, payload.id)
 
     ganttTimelineObj.refresh();
 
@@ -975,10 +1114,8 @@ function ganttUpdate(ganttTimelineObjName, payload, interBarsSpacing) {
         bar.classList.add("failed");
     }
 
-    // update summary on potential (deep) collapsed parent groups
-    if (payload.rank)
-        updateSummaryTimestamps(ganttTimelineObjName, payload.id)
+    // update summary on potential collapsed parent groups
+    updateSummaryTimestamps(ganttTimelineObjName, payload.id)
 
     ganttTimelineObj.refresh();
 }
-

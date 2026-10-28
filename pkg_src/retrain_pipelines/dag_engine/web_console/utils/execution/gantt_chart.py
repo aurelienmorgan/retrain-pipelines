@@ -305,11 +305,14 @@ def _organize_tasks(
             ):
                 emitted.add(cast(int, task_ext.id))
                 children.append(task_ext)
-            # Check if we need to emit a nested taskgroup at this position
-            # This happens when we encounter the first task of a child taskgroup
+            # Check if we need to emit a nested taskgroup at this position.
+            # This happens when we encounter the first task (with matching rank)
+            # of a child taskgroup, so that child taskgroups are ordered by their
+            # earliest matching-rank start_timestamp.
             elif (
                 str(task_ext.taskgroup_uuid) in child_taskgroup_uuids
                 and parent_of_taskgroup.get(str(task_ext.taskgroup_uuid)) == tg_uuid
+                and (rank is None or rank == task_ext.rank)
             ):
                 child_tg_uuid = str(task_ext.taskgroup_uuid)
                 if f"{rank or []}-{child_tg_uuid}" not in emitted:
