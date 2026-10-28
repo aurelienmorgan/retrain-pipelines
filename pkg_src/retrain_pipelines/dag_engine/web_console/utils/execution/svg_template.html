@@ -1,3 +1,87 @@
+{#-
+    SVG DAG rendering template.
+
+    Inputs: `nodes` (task graph), `taskgroups`, `id_prefix`,
+      `get_text_pixel_width()` (text measuring).
+      Output: one interactive SVG per render -- task nodes (standard rect;
+      parallel-entry and merge-exit trapezoids), taskgroup and parallel
+      sub-DAG bounding rectangles, arrows, tooltips, interaction scripts.
+
+    Model:
+      - Containers own their content: each bounding-rect <g> nests its whole
+        subtree (underlays, rect, label, member nodes, nested containers,
+        contained arrows); one group transform relocates the subtree.
+      - Paint order is logical order: parents before children, content after
+        its container rect, tooltips last in a canvas-level group.
+      - Arrows never nest inside taskgroups; an arrow nests inside the
+        innermost parallel region enclosing both endpoints, else renders at
+        top level immediately following its source entity.
+
+    Macros:
+      - Shape: trapezoid_entry, trapezoid_exit, node_rect_box,
+        collapse_expand_btn (one primitive each).
+      - Entity: render_node, render_arrow, and dual-mode taskgroup_rect_box /
+        parallel_rect_box. Rect mode draws a single bounding rect, allowing the
+        full mode to render multiple underlays and the base container without
+        duplicating rect attributes or infinitely recursing into content. Full
+        mode renders the complete container <g> and recurses into its content.
+
+    Prepasses (compute only, emit nothing):
+      1. Node depths (DFS); parallel depth per node (+1 entering a region,
+         -1 at its merge) -- drives bounds, regions, arrows.
+      2. Taskgroup nesting levels (iterative relaxation), parent links,
+         top-level taskgroup resolution.
+      3. Parallel region discovery: per-region node lists, merge-to-region map.
+      4. Layout: per-depth Y padding (taskgroup chains summed, parallel
+         regions maxed) for constant arrow length; centered X positions.
+      5. Bounds: taskgroup bounds (member-seeded, nesting-relaxed, tight
+         inner margins, rect-center arrow axis); parallel region bounds.
+      6. X-centering: shift each top-level taskgroup's content so its rect
+        center aligns with the midpoint of its outermost member node centers,
+        compensating for the asymmetry introduced by nested taskgroup
+        padding.
+      7. Containment: innermost region per node, region parent/root chains,
+        region per top-level taskgroup; per-region content lists (direct
+         nodes deduplicated: region lists hold each merge node twice).
+      8. Arrows: classification (one outgoing/incoming pair per top-level
+        taskgroup or parallel region; remainder standard) and distribution
+        (innermost common region, else source-entity anchor).
+      9. Render-time parallel depth per node: node rendering becomes
+        order-independent.
+
+    Render pass: one sweep over `nodes` in DAG order. Each node resolves to
+      its top-level entity -- standalone node, root taskgroup, or root parallel
+      region -- rendered exactly once; containers recurse into content (nested
+      containers, arrows, taskgroups, direct nodes as applicable); entity-owned
+      arrows follow their entity.
+
+    Arrow attachment: in/out arrows always anchor at the rect center of the
+      taskgroup or parallel they point to (middle of the bounding border),
+      independent of the rect's width. This is computed identically at render
+      time (center_x = (min_x+max_x)/2) and at reflow time
+    (updateTaskgroupBounds / updateParallelBounds), so collapse-then-expand
+      cycles restore the original anchor positions exactly.
+
+    Scripts: External JS modules handle tooltip visibility, dragging,
+      collapsing, magnifier, and canvas pan/zoom. They are loaded dynamically
+      by replacing the `<!-- DAG_EXTERNAL_JS -->` marker. A small inline script
+      initializes the `config` and `ctx` objects, resolving all Jinja-injected
+      DOM IDs and layout constants, then calls the `initDag*` functions in
+      strict order. Tooltips are bound via DOM iteration in the JS layer.
+-#}
+{#- Layout constants, accessible to both SVG rendering and the init script -#}
+{%- set spacing_x = 130 %}
+{%- set node_width = 114 %}
+{%- set node_height = 32 %}
+{%- set tg_inner_margin_x = 15 -%}
+{%- set tg_outer_margin_x = 15 -%}
+{%- set tg_label_margin_top = 10 -%}
+{%- set tg_margin_bottom = 4 -%}
+{%- set tg_label_height = 15 -%}
+{%- set parallel_margin_y = 10 -%}
+{%- set parallel_margin_x = 10 -%}
+{%- set tooltip_y_offset = -80 -%}
+{%- set arrow_length_y = 48 -%}
 
 {# Trapezoid and rect macros #}
 {% macro trapezoid_entry(node_width, node_height, top_margin=5, r=6,
@@ -112,61 +196,451 @@
     {%- endif -%}
 {%- endmacro %}
 
-{% macro taskgroup_rect_box(x, y, width, height, cls="", rx=6, ry=6,
-                            fill=None, stroke=None,
-                            stroke_width=1.5, dash="4,4", opacity=1) -%}
-    {% if fill and fill|trim != '' -%}
-        {%- set gradient_id = "glassGradient_" ~ fill|replace("#", "") -%}
-        <defs>
-            <linearGradient id="{{ gradient_id }}" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stop-color="white" stop-opacity="0.6" />
-                <stop offset="30%" stop-color="{{ fill }}" stop-opacity="0.3" />
-                <stop offset="50%" stop-color="{{ fill }}" stop-opacity="0.5" />
-                <stop offset="100%" stop-color="{{ fill }}" stop-opacity="0.4" />
-            </linearGradient>
-        </defs>
-        <rect class="box{% if cls %} {{ cls }}{% endif %}"
-              x="{{ x }}" y="{{ y }}" width="{{ width }}" height="{{ height }}"
-              rx="{{ rx }}" ry="{{ ry }}"
-              style="fill: url(#{{ gradient_id }});
-                     {% if stroke and stroke|trim != '' %}stroke: {{ stroke }};{%- endif %}"
-              stroke-width="{{ stroke_width }}"
-              {% if dash %}stroke-dasharray="{{ dash }}"{% endif %} opacity="{{ opacity }}" />
-    {%- else -%}
-        <rect class="box{% if cls %} {{ cls }}{% endif %}"
-              x="{{ x }}" y="{{ y }}" width="{{ width }}" height="{{ height }}"
-              rx="{{ rx }}" ry="{{ ry }}"
-              style="{% if stroke and stroke|trim != '' %}stroke: {{ stroke }};{%- endif %}"
-              stroke-width="{{ stroke_width }}"
-              {% if dash %}stroke-dasharray="{{ dash }}"{% endif %} opacity="{{ opacity }}" />
-    {%- endif -%}
+{% macro collapse_expand_btn(x, y, width, height, color=None) -%}
+    {#- Render the collapse/expand button as a foreignObject macro -#}
+    <foreignObject class="collapse-expand-fo"
+        x="{{ x }}" y="{{ y }}" width="{{ width }}" height="{{ height }}"
+        style="pointer-events: none; overflow: visible;">
+        <div xmlns="http://www.w3.org/1999/xhtml" class="collapse-expand-btn"
+            style="{% if color and color|trim != '' %}color: {{ color }};{%- endif %}">-</div>
+    </foreignObject>
 {%- endmacro %}
 
-{% macro parallel_rect_box(x, y, width, height, rx=6, ry=6,
+{# Draw nodes #}
+{#- Render one node <g>: per-node underlays, main shape, label.
+    The per-node render parallel depth comes from the render_pds prepass. #}
+{% macro render_node(node) -%}
+    <!-- DEBUG '{{ node.name }}', node.ui_css: {{ node.ui_css }} -->
+    {%- set pos = id_to_pos[node.uuid] %}
+    {%- set render_pd = render_pds[node.uuid] %}
+    {%- if node.merge_func is not none and not node.is_parallel %}
+        <!-- DEBUG: decrease parallel depth - node {{ node.uuid }}
+                    parallel_depth={{ render_pd + 1 }} is_parallel={{ node.is_parallel }}
+                    merge_func={{ node.merge_func is not none }} -->
+    {%- endif %}
+    <!-- DEBUG: node {{ node.uuid }} parallel_depth={{ render_pd }} is_parallel={{ node.is_parallel }} merge_func={{ node.merge_func is not none }} -->
+    {# Render per-node underlays only for nodes NOT part of a taskgroup.
+       If node is in a taskgroup, the underlays were already rendered at the taskgroup level. #}
+    <g class="node" id="node-{{ node.uuid }}" transform="translate({{ pos.x }}, {{ pos.y }})"
+       style="cursor: grab;" data-taskgroup="{{ node.taskgroup_uuid or '' }}">
+        {%- if render_pd > 0 and not node.taskgroup_uuid %}
+            {%- for level in range(render_pd, 0, -1) %}
+                <!-- DEBUG: level {{ level }} {{ node.name }} -->
+                {%- set offset = 3 * level %}
+                <g transform="translate({{ offset }}, {{ offset }})">
+                    {%- if node.is_parallel %}
+                        {{ trapezoid_entry(
+                            node_width, node_height,
+                            fill=node.ui_css.background if node.ui_css and node.ui_css.background else None,
+                            stroke=node.ui_css.border if node.ui_css and node.ui_css.border else None
+                        ) }}
+                    {%- elif node.merge_func is not none %}
+                        {{ trapezoid_exit(
+                            node_width, node_height,
+                            fill=node.ui_css.background if node.ui_css and node.ui_css.background else None,
+                            stroke=node.ui_css.border if node.ui_css and node.ui_css.border else None
+                        ) }}
+                    {%- else %}
+                        {{ node_rect_box(
+                            node_width, node_height,
+                            fill=node.ui_css.background if node.ui_css and node.ui_css.background else None,
+                            stroke=node.ui_css.border if node.ui_css and node.ui_css.border else None
+                        ) }}
+                    {%- endif %}
+                </g>
+            {%- endfor %}
+        {%- endif %}
+
+        {# Render main node shape on top #}
+        {%- if node.is_parallel %}
+            {{ trapezoid_entry(
+                node_width, node_height,
+                fill=node.ui_css.background if node.ui_css and node.ui_css.background else None,
+                stroke=node.ui_css.border if node.ui_css and node.ui_css.border else None
+            ) }}
+        {%- elif node.merge_func is not none %}
+            {{ trapezoid_exit(
+                node_width, node_height,
+                fill=node.ui_css.background if node.ui_css and node.ui_css.background else None,
+                stroke=node.ui_css.border if node.ui_css and node.ui_css.border else None
+            ) }}
+
+            {%- set merge_text = node.merge_func.name -%}
+            {%- set merge_font = "sans-serif" -%}
+            {%- set merge_font_size = 11 -%}
+            {%- set merge_padding_x = 6 -%}
+            {%- set merge_text_width =
+                get_text_pixel_width(merge_text, merge_font, merge_font_size)
+            -%}
+            {%- set merge_rect_width = merge_text_width + 2 * merge_padding_x -%}
+
+            <rect x="0"
+                  y="-3"
+                  width="{{ merge_rect_width }}"
+                  height="10"
+                  fill="url(#glassGradient)"
+                  rx="3" ry="3"
+                  stroke="#ffd700"
+                  stroke-width="0.5"
+                  opacity="0.9" />
+
+            <text class="label"
+                  x="{{ merge_rect_width / 2 }}"
+                  y="5"
+                  text-anchor="middle"
+                  font-family="{{ merge_font }}"
+                  font-size="{{ merge_font_size }}"
+                  style="fill: #ffd700; stroke: none;
+                         filter: drop-shadow(0 0 2px rgba(0,0,0,0.3));">
+                {{ merge_text }}
+            </text>
+        {%- else %}
+            {{ node_rect_box(
+                node_width, node_height,
+                fill=node.ui_css.background if node.ui_css and node.ui_css.background else None,
+                stroke=node.ui_css.border if node.ui_css and node.ui_css.border else None
+            ) }}
+        {%- endif %}
+        <text class="label" x="{{ node_width/2 }}" y="{{ node_height/2 + 3 }}"
+              text-anchor="middle" font-family="sans-serif" font-size="11"
+              {%- if node.ui_css and node.ui_css.color and node.ui_css.color|trim != '' %}
+                  style="fill: {{ node.ui_css.color }};"
+              {%- endif %}
+        >
+            {{ node.name }}
+        </text>
+    </g>
+{%- endmacro %}
+
+{# Draw arrows #}
+{#- Render one arrow: taskgroup link pair, parallel link pair, or standard node link. #}
+{% macro render_arrow(a) -%}
+    {%- if a.cat == 'tg' %}
+        {#- Draw one arrow for each stored pair for incoming/outgoing tg pairs #}
+        {%- set kind = a.kind %}
+        {%- set src_tg = a.p0 %}
+        {%- set tgt_tg = a.p1 %}
+        {%- set src = a.src %}
+        {%- set tgt = a.tgt %}
+        {%- if kind == 'out' and src_tg != '__NONE__' %}
+            {%- set tg_bounds = taskgroup_bounds[src_tg] %}
+            {%- set src_x = tg_bounds.center_x %}
+            {%- set src_y = tg_bounds.container_bottom %}
+            {%- set tgt_x = id_to_pos[tgt].x + node_width/2 %}
+            {%- set tgt_y = src_y + arrow_length_y %}
+            {%- if tgt_tg != '__NONE__' and tgt_tg in taskgroup_bounds %}
+                {%- set tgt_bounds = taskgroup_bounds[tgt_tg] %}
+                {%- set tgt_x = tgt_bounds.center_x %}
+                {%- set tgt_y = tgt_bounds.container_top %}
+                {%- set actual_len = (tgt_y - src_y)|abs %}
+                {%- set factor = (actual_len / arrow_length_y)|round(3) %}
+                <!-- DEBUG ARROW: len={{ actual_len }}, factor={{ factor }} -->
+                <line id="arrow-{{ id_to_taskgroup[src_tg].uuid }}-{{ id_to_taskgroup[tgt_tg].uuid }}"
+                      x1="{{ src_x }}" y1="{{ src_y }}" x2="{{ tgt_x }}" y2="{{ tgt_y }}"
+                      marker-end="url(#arrow)" />
+            {%- else %}
+                {%- set tgt_y = id_to_pos[tgt].y %}
+                {%- set actual_len = (tgt_y - src_y)|abs %}
+                {%- set factor = (actual_len / arrow_length_y)|round(3) %}
+                <!-- DEBUG ARROW: len={{ actual_len }}, factor={{ factor }} -->
+                <line id="arrow-{{ id_to_taskgroup[src_tg].uuid }}-{{ tgt }}"
+                      x1="{{ src_x }}" y1="{{ src_y }}" x2="{{ tgt_x }}" y2="{{ tgt_y }}"
+                      marker-end="url(#arrow)" />
+            {%- endif %}
+        {%- elif kind == 'in' and tgt_tg != '__NONE__' %}
+            {%- if src_tg == '__NONE__' %}
+                {%- set tgt_bounds = taskgroup_bounds[tgt_tg] %}
+                {%- set tgt_x = tgt_bounds.center_x %}
+                {%- set tgt_y = tgt_bounds.container_top %}
+                {%- set src_x = id_to_pos[src].x + node_width/2 %}
+                {%- set src_y = id_to_pos[src].y + node_height %}
+                {%- if merge_to_parallel.get(src, none) in parallel_bounds %}
+                    {#- Case of a taskgroup following a merge node: point arrow from parallel region bounds #}
+                    {%- set p_b = parallel_bounds[merge_to_parallel.get(src, none)] %}
+                    {%- set src_x = (p_b.min_x + p_b.max_x) / 2 %}
+                    {%- set src_y = p_b.max_y + parallel_margin_y %}
+                    {%- set actual_len = (tgt_y - src_y)|abs %}
+                    {%- set factor = (actual_len / arrow_length_y)|round(3) %}
+                    <!-- DEBUG ARROW: len={{ actual_len }}, factor={{ factor }} -->
+                    <line id="arrow-parallel-{{ merge_to_parallel.get(src, none) }}-{{ id_to_taskgroup[tgt_tg].uuid }}"
+                          x1="{{ src_x }}" y1="{{ src_y }}" x2="{{ tgt_x }}" y2="{{ tgt_y }}"
+                          marker-end="url(#arrow)" />
+                {%- else %}
+                    {%- set actual_len = (tgt_y - src_y)|abs %}
+                    {%- set factor = (actual_len / arrow_length_y)|round(3) %}
+                    <!-- DEBUG ARROW: len={{ actual_len }}, factor={{ factor }} -->
+                    <line id="arrow-{{ src }}-{{ id_to_taskgroup[tgt_tg].uuid }}"
+                          x1="{{ src_x }}" y1="{{ src_y }}" x2="{{ tgt_x }}" y2="{{ tgt_y }}"
+                          marker-end="url(#arrow)" />
+                {%- endif %}
+            {%- endif %}
+        {%- endif %}
+    {%- elif a.cat == 'pl' %}
+        {#- Draw one arrow for each stored pair for incoming/outgoing parallel pairs #}
+        {%- set kind = a.kind %}
+        {%- set src_parallel = a.p0 %}
+        {%- set tgt_parallel = a.p1 %}
+        {%- set src = a.src %}
+        {%- set tgt = a.tgt %}
+        {%- if kind == 'out' and src_parallel != '__NONE__' %}
+            {%- set p_bounds = parallel_bounds[src_parallel] %}
+            {%- set src_x = (p_bounds.min_x + p_bounds.max_x) / 2 %}
+            {%- set src_y = p_bounds.max_y + parallel_margin_y %}
+            {%- set tgt_x = id_to_pos[tgt].x + node_width/2 %}
+            {%- set tgt_y = src_y + arrow_length_y %}
+            {%- if tgt_parallel != '__NONE__' and tgt_parallel in parallel_bounds %}
+                {%- set tgt_p_bounds = parallel_bounds[tgt_parallel] %}
+                {%- set tgt_x = (tgt_p_bounds.min_x + tgt_p_bounds.max_x) / 2 %}
+                {%- set tgt_y = tgt_p_bounds.min_y - parallel_margin_y %}
+                {%- set actual_len = (tgt_y - src_y)|abs %}
+                {%- set factor = (actual_len / arrow_length_y)|round(3) %}
+                <!-- DEBUG ARROW: len={{ actual_len }}, factor={{ factor }} -->
+                <line id="arrow-parallel-{{ src_parallel }}-parallel-{{ tgt_parallel }}"
+                      x1="{{ src_x }}" y1="{{ src_y }}" x2="{{ tgt_x }}" y2="{{ tgt_y }}"
+                      marker-end="url(#arrow)" />
+            {%- else %}
+                {%- set tgt_y = id_to_pos[tgt].y %}
+                {%- set actual_len = (tgt_y - src_y)|abs %}
+                {%- set factor = (actual_len / arrow_length_y)|round(3) %}
+                <!-- DEBUG ARROW: len={{ actual_len }}, factor={{ factor }} -->
+                <line id="arrow-parallel-{{ src_parallel }}-{{ tgt }}"
+                      x1="{{ src_x }}" y1="{{ src_y }}" x2="{{ tgt_x }}" y2="{{ tgt_y }}"
+                      marker-end="url(#arrow)" />
+            {%- endif %}
+        {%- elif kind == 'in' and tgt_parallel != '__NONE__' %}
+            {%- if src_parallel == '__NONE__' %}
+                {%- set tgt_p_bounds = parallel_bounds[tgt_parallel] %}
+                {%- set tgt_x = (tgt_p_bounds.min_x + tgt_p_bounds.max_x) / 2 %}
+                {%- set tgt_y = tgt_p_bounds.min_y - parallel_margin_y %}
+                {%- set src_x = id_to_pos[src].x + node_width/2 %}
+                {%- set src_y = id_to_pos[src].y + node_height %}
+                {%- set actual_len = (tgt_y - src_y)|abs %}
+                {%- set factor = (actual_len / arrow_length_y)|round(3) %}
+                <!-- DEBUG ARROW: len={{ actual_len }}, factor={{ factor }} -->
+                <line id="arrow-{{ src }}-parallel-{{ tgt_parallel }}"
+                      x1="{{ src_x }}" y1="{{ src_y }}" x2="{{ tgt_x }}" y2="{{ tgt_y }}"
+                      marker-end="url(#arrow)" />
+            {%- endif %}
+        {%- endif %}
+    {%- else %}
+        {# Draw standard direct node-to-node arrows #}
+        {%- set src = a.src %}
+        {%- set tgt = a.tgt %}
+        {%- set src_pos = id_to_pos[src] %}
+        {%- set tgt_pos = id_to_pos[tgt] %}
+        {%- set src_x = src_pos.x + node_width/2 %}
+        {%- set src_y = src_pos.y + node_height %}
+        {%- set tgt_x = tgt_pos.x + node_width/2 %}
+        {%- set tgt_y = tgt_pos.y %}
+        {%- set actual_len = (tgt_y - src_y)|abs %}
+        {%- set factor = (actual_len / arrow_length_y)|round(3) %}
+        <!-- DEBUG ARROW: len={{ actual_len }}, factor={{ factor }} -->
+        <line id="arrow-{{ src }}-{{ tgt }}"
+            x1="{{ src_x }}" y1="{{ src_y }}" x2="{{ tgt_x }}" y2="{{ tgt_y }}"
+            marker-end="url(#arrow)" />
+    {%- endif %}
+{%- endmacro %}
+
+{# Draw taskgroups containers, per-group parallel-level underlays ("max_parallel_depth" underlays) #}
+{#- Dual-mode macro. Rect mode (tg=None) isolates the <rect> and collapse button
+    rendering, allowing the full mode to draw multiple stacked underlays without
+    duplicating inner content or infinitely recursing. Full mode (tg given) renders
+    the container <g>, parallel-depth underlays, and label, calls rect mode for the
+    base container, then recurses into nested taskgroups and direct member nodes. #}
+{% macro taskgroup_rect_box(x=0, y=0, width=0, height=0, cls="", rx=6, ry=6,
+                            fill=None, stroke=None,
+                            stroke_width=1.5, dash="4,4", opacity=1,
+                            tg=None) -%}
+    {%- if tg %}
+        <!-- DEBUG '{{ tg.name }}', tg.ui_css: {{ tg.ui_css }} -->
+        {%- set tg_coords = taskgroup_bounds.get(tg.uuid) %}
+        {%- if tg_coords %}
+            {%- set current_tg_nesting_level = tg_nesting_levels.get(tg.uuid, 0) %}
+            <!-- DEBUG Rendering taskgroup '{{ tg.name }}' at z-level/nesting_level={{ current_tg_nesting_level }} with bounds {{ tg_coords }} -->
+            {%- set tg_nested_list = [] %}
+            {%- for el_uuid in tg.elements %}
+                {%- if el_uuid in id_to_taskgroup %}
+                    {%- set _ = tg_nested_list.append(el_uuid) %}
+                {%- endif %}
+            {%- endfor %}
+            {%- set parent_tg_uuid = tg_to_parent.get(tg.uuid, '') %}
+            <!-- DEBUG Taskgroup {{ tg.uuid }} data-nodes: {{ taskgroup_nodes[tg.uuid]|join(',') }} -->
+            <!-- DEBUG Taskgroup {{ tg.uuid }} data-nested-taskgroups: {{ tg_nested_list|join(',') }} -->
+            <g class="taskgroup" id="taskgroup-{{ tg.uuid }}" style="cursor: grab;"
+               data-name="{{ tg.name }}"
+               data-nodes="{{ taskgroup_nodes[tg.uuid]|join(',') }}"
+               data-nested-taskgroups="{{ tg_nested_list|join(',') }}"
+               data-parent-taskgroup="{{ parent_tg_uuid }}"
+               data-main-chain-x="{{ tg_coords.center_x }}"
+               data-max-parallel-depth="{{ tg_coords.max_parallel_depth }}">
+
+                {# Only top-level taskgroups render parallel depth underlays. #}
+                {%- set max_pd = tg_coords.max_parallel_depth %}
+                {%- if max_pd > 0 and tg_to_parent.get(tg.uuid) is none %}
+                    {# draw layers from outermost to innermost (higher level first) #}
+                    {%- for level in range(max_pd, 0, -1) %}
+                        <!-- DEBUG rendering underlay level {{ level }} for taskgroup {{ tg.name }} -->
+                        {%- set offset = 3.5 * level %}
+                        <g class="taskgroup-underlay-group" transform="translate({{ offset }}, {{ offset }})">
+                            {{ taskgroup_rect_box(
+                                tg_coords.min_x - tg_inner_margin_x,
+                                tg_coords.min_y - (tg_label_height + tg_label_margin_top),
+                                tg_coords.max_x - tg_coords.min_x + 2*tg_inner_margin_x,
+                                tg_coords.max_y - tg_coords.min_y + tg_label_height + tg_label_margin_top + tg_margin_bottom,
+                                "taskgroup-underlay",
+                                fill=(
+                                    tg.ui_css.background if tg.ui_css and tg.ui_css.background
+                                    else None
+                                ),
+                                stroke=tg.ui_css.border if tg.ui_css and tg.ui_css.border else None
+                            ) }}
+                        </g>
+                    {%- endfor %}
+                {%- endif %}
+
+                {# Draw the base container last using the same macro #}
+                {{ taskgroup_rect_box(
+                    tg_coords.min_x - tg_inner_margin_x,
+                    tg_coords.min_y - (tg_label_height + tg_label_margin_top),
+                    tg_coords.max_x - tg_coords.min_x + 2*tg_inner_margin_x,
+                    tg_coords.max_y - tg_coords.min_y + tg_label_height + tg_label_margin_top + tg_margin_bottom,
+                    "taskgroup-container",
+                    fill=(
+                        tg.ui_css.background if tg.ui_css and tg.ui_css.background
+                        else None
+                    ),
+                    stroke=tg.ui_css.border if tg.ui_css and tg.ui_css.border else None
+                ) }}
+                <text class="taskgroup-label"
+                      x="{{ tg_coords.min_x + (tg_coords.max_x - tg_coords.min_x)/2 }}"
+                      y="{{ tg_coords.min_y - tg_label_margin_top }}"
+                      text-anchor="middle" font-family="sans-serif" font-size="11"
+                      font-weight="bold"
+                      {%- if tg.ui_css and tg.ui_css.color and tg.ui_css.color|trim != '' %}
+                        style="fill: {{ tg.ui_css.color }};"
+                      {%- endif %}
+                >
+                    {{ tg.name }}
+                </text>
+                {# Content: nested taskgroups (recursive), then direct member nodes.
+                   Taskgroups only ever host taskgroups or standalone tasks, never arrows.
+                   Render in exact order of tg.elements to preserve mixed order. #}
+                {%- for el_uuid in tg.elements %}
+                    {%- if el_uuid in id_to_taskgroup %}
+                        {{ taskgroup_rect_box(tg=id_to_taskgroup[el_uuid]) }}
+                    {%- elif el_uuid in id_to_node %}
+                        {{ render_node(id_to_node[el_uuid]) }}
+                    {%- endif %}
+                {%- endfor %}
+            </g>
+        {%- endif %}
+    {%- else %}
+        {% if fill and fill|trim != '' -%}
+            {%- set gradient_id = "glassGradient_" ~ fill|replace("#", "") -%}
+            <defs>
+                <linearGradient id="{{ gradient_id }}" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stop-color="white" stop-opacity="0.6" />
+                    <stop offset="30%" stop-color="{{ fill }}" stop-opacity="0.3" />
+                    <stop offset="50%" stop-color="{{ fill }}" stop-opacity="0.5" />
+                    <stop offset="100%" stop-color="{{ fill }}" stop-opacity="0.4" />
+                </linearGradient>
+            </defs>
+            <rect class="box{% if cls %} {{ cls }}{% endif %}"
+                  x="{{ x }}" y="{{ y }}" width="{{ width }}" height="{{ height }}"
+                  rx="{{ rx }}" ry="{{ ry }}"
+                  style="fill: url(#{{ gradient_id }});
+                         {% if stroke and stroke|trim != '' %}stroke: {{ stroke }};{%- endif %}"
+                  stroke-width="{{ stroke_width }}"
+                  {% if dash %}stroke-dasharray="{{ dash }}"{% endif %} opacity="{{ opacity }}" />
+        {%- else -%}
+            <rect class="box{% if cls %} {{ cls }}{% endif %}"
+                  x="{{ x }}" y="{{ y }}" width="{{ width }}" height="{{ height }}"
+                  rx="{{ rx }}" ry="{{ ry }}"
+                  style="{% if stroke and stroke|trim != '' %}stroke: {{ stroke }};{%- endif %}"
+                  stroke-width="{{ stroke_width }}"
+                  {% if dash %}stroke-dasharray="{{ dash }}"{% endif %} opacity="{{ opacity }}" />
+        {%- endif -%}
+        {#- Draw the collapse/expand button only on the base container to avoid duplicates on underlays -#}
+        {% if cls == "taskgroup-container" -%}
+        {{ collapse_expand_btn(x, y, width, height, stroke) }}
+        {%- endif %}
+    {%- endif %}
+{%- endmacro %}
+
+{# Draw sub-DAG (parallel) containers #}
+{#- Dual-mode macro. Rect mode (node=None) isolates the <rect> and collapse button
+    rendering, preventing infinite recursion and content duplication when the full
+    mode draws the base container. Full mode (node given) renders the container <g>,
+    calls rect mode for the base container, then recurses into nested parallels,
+    contained arrows, contained taskgroups, and contained standalone nodes. #}
+{% macro parallel_rect_box(x=0, y=0, width=0, height=0, rx=6, ry=6,
                            fill=None, stroke="rgb(254, 175, 255)",
-                           stroke_width=1.5, opacity=0.2) -%}
-    {% if fill and fill|trim != '' -%}
-        {%- set gradient_id = "parallelGradient_" ~ fill|replace("#", "") -%}
-        <defs>
-            <linearGradient id="{{ gradient_id }}" x1="0" y1="0" x2="1" y2="1">
-                <stop offset="0%" stop-color="{{ fill }}" stop-opacity="0.2" />
-                <stop offset="100%" stop-color="{{ fill }}" stop-opacity="0.3" />
-            </linearGradient>
-        </defs>
-        <rect class="box parallel-container"
-              x="{{ x }}" y="{{ y }}" width="{{ width }}" height="{{ height }}"
-              rx="{{ rx }}" ry="{{ ry }}"
-              style="fill: url(#{{ gradient_id }});
-                     {% if stroke and stroke|trim != '' %}stroke: {{ stroke }}; stroke-opacity: 1.0;{%- endif %}"
-              stroke-width="{{ stroke_width }}" />
-    {%- else -%}
-        <rect class="box parallel-container"
-              x="{{ x }}" y="{{ y }}" width="{{ width }}" height="{{ height }}"
-              rx="{{ rx }}" ry="{{ ry }}"
-              style="fill: #000000; fill-opacity: {{ opacity }};
-                     {% if stroke and stroke|trim != '' %}stroke: {{ stroke }}; stroke-opacity: 1.0;{%- endif %}"
-              stroke-width="{{ stroke_width }}" />
-    {%- endif -%}
+                           stroke_width=1.5, opacity=0.2,
+                           node=None) -%}
+    {%- if node %}
+        {%- set p_coords = parallel_bounds[node.uuid] %}
+        {%- set level = parallel_depths[node.uuid] %}
+        {%- set max_depth_val = parallel_max_depths.get(node.uuid, level) %}
+        {%- set level_margin_x = parallel_margin_x * (max_depth_val - level + 1) %}
+        <!-- DEBUG rendering parallel {{ node.uuid }} at level {{ level }} with max_depth {{ max_depth_val }} -->
+        <g class="parallel-dag" id="parallel-{{ node.uuid }}"
+           data-contained-nodes="{{ parallel_node_lists[node.uuid]|join(',') }}"
+           data-contained-taskgroups="{{ parallel_contained_tgs[node.uuid]|join(',') }}"
+           data-contained-parallels="{{ parallel_contained_parallels[node.uuid]|join(',') }}"
+           data-direct-nodes="{{ parallel_direct_nodes[node.uuid]|join(',') }}"
+           data-direct-taskgroups="{{ parallel_direct_tgs[node.uuid]|join(',') }}"
+           data-child-parallels="{{ parallel_children[node.uuid]|join(',') }}"
+           data-parallel-level="{{ level }}"
+           data-max-parallel-depth="{{ max_depth_val }}"
+           data-level-margin-x="{{ level_margin_x }}">
+            {{ parallel_rect_box(
+                p_coords.min_x - level_margin_x,
+                p_coords.min_y - parallel_margin_y,
+                p_coords.max_x - p_coords.min_x + 2*level_margin_x,
+                p_coords.max_y - p_coords.min_y + 2*parallel_margin_y,
+                fill=node.ui_css.background if node.ui_css and node.ui_css.background else None
+            ) }}
+            {# Content: nested parallel sub-DAGs (recursive), contained arrows,
+               contained taskgroups, then contained standalone nodes #}
+            {%- for c_uuid in parallel_children[node.uuid] %}
+                {{ parallel_rect_box(node=id_to_node[c_uuid]) }}
+            {%- endfor %}
+            {%- for a_idx in parallel_arrow_indices[node.uuid] %}
+                {{ render_arrow(all_arrows[a_idx]) }}
+            {%- endfor %}
+            {%- for tg_uuid in parallel_direct_tgs[node.uuid] %}
+                {{ taskgroup_rect_box(tg=id_to_taskgroup[tg_uuid]) }}
+            {%- endfor %}
+            {%- for n_uuid in parallel_direct_nodes[node.uuid] %}
+                {{ render_node(id_to_node[n_uuid]) }}
+            {%- endfor %}
+        </g>
+    {%- else %}
+        {% if fill and fill|trim != '' -%}
+            {%- set gradient_id = "parallelGradient_" ~ fill|replace("#", "") -%}
+            <defs>
+                <linearGradient id="{{ gradient_id }}" x1="0" y1="0" x2="1" y2="1">
+                    <stop offset="0%" stop-color="{{ fill }}" stop-opacity="0.2" />
+                    <stop offset="100%" stop-color="{{ fill }}" stop-opacity="0.3" />
+                </linearGradient>
+            </defs>
+            <rect class="box parallel-container"
+                  x="{{ x }}" y="{{ y }}" width="{{ width }}" height="{{ height }}"
+                  rx="{{ rx }}" ry="{{ ry }}"
+                  style="fill: url(#{{ gradient_id }});
+                         {% if stroke and stroke|trim != '' %}stroke: {{ stroke }}; stroke-opacity: 1.0;{%- endif %}"
+                  stroke-width="{{ stroke_width }}" />
+        {%- else -%}
+            <rect class="box parallel-container"
+                  x="{{ x }}" y="{{ y }}" width="{{ width }}" height="{{ height }}"
+                  rx="{{ rx }}" ry="{{ ry }}"
+                  style="fill: #000000; fill-opacity: {{ opacity }};
+                         {% if stroke and stroke|trim != '' %}stroke: {{ stroke }}; stroke-opacity: 1.0;{%- endif %}"
+                  stroke-width="{{ stroke_width }}" />
+        {%- endif -%}
+        {#- Draw the collapse/expand button -#}
+        {{ collapse_expand_btn(x, y, width, height, stroke) }}
+    {%- endif %}
 {%- endmacro %}
 
 <svg id="dag-{{ id_prefix }}">
@@ -184,19 +658,7 @@
         </linearGradient>
     </defs>
 
-    <g id="canvas-group-{{ id_prefix }}" transform="translate(0,0) scale(1)" visibility="hidden">
-        {%- set spacing_x = 130 %}
-        {%- set spacing_y = 80 %}
-        {%- set node_width = 114 %}
-        {%- set node_height = 32 %}
-        {%- set tg_margin_x = 15 -%}
-        {%- set tg_label_margin_top = 10 -%}
-        {%- set tg_margin_bottom = 4 -%}
-        {%- set tg_label_height = 15 -%}
-        {%- set parallel_margin_y = 10 -%}
-        {%- set parallel_margin_x = 10 -%}
-        {%- set tooltip_y_offset = -80 -%}
-
+    <g id="canvas-group-{{ id_prefix }}" transform="translate(0,0) scale(1)">
         {%- set id_to_node = {} %}
         {%- for node in nodes %}
             {%- set _ = id_to_node.update({node.uuid: node}) %}
@@ -207,133 +669,154 @@
             {%- set _ = id_to_taskgroup.update({tg.uuid: tg}) %}
         {%- endfor %}
 
-        {#- Determine parallel-depth by Depth-First Search #}
-        {%- set levels = {} %}
-        {%- macro visit(node_id, depth=0) %}
-            {%- if node_id in levels %}
-                {%- set _ = levels[node_id].append(depth) %}
-            {%- else %}
-                {%- set _ = levels.update({node_id: [depth]}) %}
-            {%- endif %}
-            {%- for child in id_to_node[node_id].children %}
-                {{- visit(child, depth + 1) }}
-            {%- endfor %}
-        {%- endmacro %}
-        {{- visit(nodes[0].uuid) }}
-        {%- set depth_to_nodes = {} %}
-        {%- for node_id, dlist in levels.items() %}
-            {%- set depth = dlist|max %}
-            {%- set _ = depth_to_nodes.update({depth: (depth_to_nodes.get(depth, []) + [node_id])}) %}
-        {%- endfor %}
-        {#- Calculate centered positions #}
-        {%- set max_nodes_per_level = 0 %}
-        {%- for depth, ids in depth_to_nodes.items() %}
-            {%- if ids|length > max_nodes_per_level %}
-                {%- set max_nodes_per_level = ids|length %}
-            {%- endif %}
-        {%- endfor %}
-        {#- Calculate total width needed for the widest level #}
-        {%- set total_width = (max_nodes_per_level - 1) * spacing_x %}
-        {#- Calculate starting offset to center the entire DAG #}
-        {%- set svg_width = 800 %}  {# Approximate SVG viewport width - varies with browser window size #}
-        {%- set dag_start_x = (svg_width - total_width) / 2 %}
-        {%- if dag_start_x < spacing_x %}
-            {%- set dag_start_x = spacing_x %}
-        {%- endif %}
-
-        {%- set id_to_pos = {} %}
-        {%- for depth, ids in depth_to_nodes.items() %}
-            {%- set level_width = (ids|length - 1) * spacing_x %}
-            {%- set level_start_x = dag_start_x + (total_width - level_width) / 2 %}
-            {%- for id in ids %}
-                {%- set i = loop.index0 %}
-                {%- set x = level_start_x + i * spacing_x %}
-                {%- set y = -tooltip_y_offset + depth * spacing_y %} {# DAG top margin = 1*-tooltip_y_offset #}
-                {%- set _ = id_to_pos.update({id: {'x': x, 'y': y} }) %}
+        {#- Map taskgroups to their parent taskgroup #}
+        {%- set tg_to_parent = {} %}
+        {%- for ptg in taskgroups %}
+            {%- for el_uuid in ptg.elements %}
+                {%- if el_uuid in id_to_taskgroup %}
+                    {%- set _ = tg_to_parent.update({el_uuid: ptg.uuid}) %}
+                {%- endif %}
             {%- endfor %}
         {%- endfor %}
+        <!-- DEBUG tg_to_parent: {{ tg_to_parent }} -->
 
-        {#- Determine taskgroup-nesting by Depth-First Search #}
-        {# recursive macro: how deeply is each node wrapped in groups? #}
-        {%- macro nesting(node) %}
-            {%- if node.taskgroup_uuid is not none and node.taskgroup_uuid in id_to_taskgroup %}
-                {{ 1 + (nesting_tg(id_to_taskgroup[node.taskgroup_uuid]) | int) }}
-            {%- else %}
-                0
-            {%- endif %}
-        {%- endmacro %}
-        {%- macro nesting_tg(tg) %}
-            {%- set result = {'value': 0} %}
-            {%- for parent_tg in id_to_taskgroup.values() if tg.uuid in parent_tg.elements %}
-                {%- set _ = result.update({'value': 1 + (nesting_tg(parent_tg) | int) }) %}
-            {% endfor %}
-            {{ result.value }}
-        {%- endmacro %}
-        {%- set id_to_nesting = {} %}
-        {%- for node in nodes %}
-            {%- set _ = id_to_nesting.update({ node.uuid: nesting(node) | int }) %}
-        {%- endfor %}
-        <!-- DEBUG id_to_nesting '{{ id_to_nesting }} -->
-
-        {#- Calculate taskgroup bounds and centers #}
-        {%- set taskgroup_bounds = {} %}
-        {%- set taskgroup_nodes = {} %}
-        {%- for tg in taskgroups %}
-            {%- set tg_coords = {'min_x': 999999, 'max_x': -999999, 'min_y': 999999, 'max_y': -999999} %}
-            {%- set found_nodes = {'found_nodes': false} %}
-            {%- set tg_node_list = [] %}
-            {%- for node in nodes %}
-                {%- if node.taskgroup_uuid == tg.uuid %}
-                    {%- set _ = found_nodes.update({'found_nodes': true}) %}
-                    {%- set _ = tg_node_list.append(node.uuid) %}
-                    {%- set pos = id_to_pos[node.uuid] %}
-                    {%- if pos.x < tg_coords.min_x %}
-                        {%- set _ = tg_coords.update({'min_x': pos.x}) %}
-                    {%- endif %}
-                    {%- if pos.x + node_width > tg_coords.max_x %}
-                        {%- set _ = tg_coords.update({'max_x': pos.x + node_width}) %}
-                    {%- endif %}
-                    {%- if pos.y < tg_coords.min_y %}
-                        {%- set _ = tg_coords.update({'min_y': pos.y}) %}
-                    {%- endif %}
-                    {%- if pos.y + node_height > tg_coords.max_y %}
-                        {%- set _ = tg_coords.update({'max_y': pos.y + node_height}) %}
+        {#- Sort nodes to ensure taskgroup elements order is respected.
+            When a taskgroup is the DAG root (no predecessor), its member tasks
+            are all roots. The BFS in to_elements_lists may not preserve the
+            original taskgroup elements order, leading to random horizontal
+            positions. This prepass assigns a sort index based on the taskgroup
+            elements declaration order, ensuring deterministic layout positions. #}
+        {%- set node_sort_index = {} %}
+        {%- set sort_counter = [0] %}
+        {%- macro assign_sort_index(tg) %}
+            {%- for el_uuid in tg.elements %}
+                {%- if el_uuid in id_to_taskgroup %}
+                    {{- assign_sort_index(id_to_taskgroup[el_uuid]) }}
+                {%- elif el_uuid in id_to_node %}
+                    {%- if el_uuid not in node_sort_index %}
+                        {%- set _ = node_sort_index.update({el_uuid: sort_counter[0]}) %}
+                        {%- set _ = sort_counter.append(sort_counter.pop() + 1) %}
                     {%- endif %}
                 {%- endif %}
             {%- endfor %}
-            {%- if found_nodes.found_nodes %}
-                {%- set center_x = tg_coords.min_x + (tg_coords.max_x - tg_coords.min_x)/2 %}
-                {%- set _ = tg_coords.update({'center_x': center_x,
-                                              'container_top':
-                                                  tg_coords.min_y - (tg_label_height + tg_label_margin_top),
-                                              'container_bottom':
-                                                  tg_coords.max_y + node_height + tg_margin_bottom
-                                                  - (tg_label_height + tg_label_margin_top)}) %}
-                {%- set _ = taskgroup_bounds.update({tg.uuid: tg_coords}) %}
-                {%- set _ = taskgroup_nodes.update({tg.uuid: tg_node_list}) %}
+        {%- endmacro %}
+        {%- for tg in taskgroups %}
+            {%- if tg_to_parent.get(tg.uuid) is none %}
+                {{- assign_sort_index(tg) }}
             {%- endif %}
         {%- endfor %}
+        {%- for node in nodes %}
+            {%- if node.uuid not in node_sort_index %}
+                {%- set _ = node_sort_index.update({node.uuid: sort_counter[0]}) %}
+                {%- set _ = sort_counter.append(sort_counter.pop() + 1) %}
+            {%- endif %}
+        {%- endfor %}
+        {%- set indexed_nodes = [] %}
+        {%- for node in nodes %}
+            {%- set _ = indexed_nodes.append((node_sort_index[node.uuid], node)) %}
+        {%- endfor %}
+        {%- set sorted_indexed_nodes = indexed_nodes|sort(attribute=0) %}
+        {%- set nodes = [] %}
+        {%- for _, node in sorted_indexed_nodes %}
+            {%- set _ = nodes.append(node) %}
+        {%- endfor %}
 
-        {#- --- NEW PREPASS: compute parallel_depth at render time for each node --- #}
+        {#- Compute DAG logical depth and parallel nesting depth in a single DFS pass.
+            `depth_to_nodes` groups nodes by their maximum logical depth (resolving
+            diamond dependencies) to drive Y-padding and layout, while
+            `parallel_depths` tracks parallel nesting to drive bounds and underlays. #}
+        {%- set node_depth = {} %}
+        {%- set depth_to_nodes = {} %}
         {%- set parallel_depths = {} %}
-        {%- macro compute_pd(node_id, depth=0) %}
+        {%- macro compute_depths(node_id, depth, pd) %}
             {%- set node = id_to_node[node_id] %}
             {%- if node.is_parallel %}
-                {%- set depth = depth + 1 %}
+                {%- set pd = pd + 1 %}
             {%- endif %}
             {%- if node.merge_func is not none and not node.is_parallel %}
-                {%- set depth = depth - 1 %}
+                {%- set pd = pd - 1 %}
             {%- endif %}
-            {%- set _ = parallel_depths.update({node_id: depth}) %}
+            {%- set _ = parallel_depths.update({node_id: pd}) %}
+
+            {#- Update logical depth if this path is deeper. This ensures nodes in
+                diamond dependencies are only placed at their maximum depth. #}
+            {%- if node_id not in node_depth or depth > node_depth[node_id] %}
+                {%- if node_id in node_depth %}
+                    {%- set old_depth = node_depth[node_id] %}
+                    {%- if old_depth in depth_to_nodes and node_id in depth_to_nodes[old_depth] %}
+                        {%- set _ = depth_to_nodes[old_depth].remove(node_id) %}
+                    {%- endif %}
+                {%- endif %}
+                {%- set _ = node_depth.update({node_id: depth}) %}
+                {%- if depth not in depth_to_nodes %}
+                    {%- set _ = depth_to_nodes.update({depth: []}) %}
+                {%- endif %}
+                {%- set _ = depth_to_nodes[depth].append(node_id) %}
+            {%- endif %}
+
             {%- for child in node.children %}
-                {{- compute_pd(child, depth) }}
+                {{- compute_depths(child, depth + 1, pd) }}
             {%- endfor %}
         {%- endmacro %}
-        {{- compute_pd(nodes[0].uuid) }}
+        {#- Compute depths for ALL root nodes, not just nodes[0].
+            When a taskgroup is the DAG root, its member tasks are all roots
+            (no predecessors). Previously, only nodes[0] was processed, leaving
+            sibling roots without computed depths/positions, causing
+            UndefinedError in bounds computation (id_to_pos[node.uuid]). #}
+        {%- for node in nodes %}
+            {%- if node.uuid not in node_depth %}
+                {{- compute_depths(node.uuid, 0, 0) }}
+            {%- endif %}
+        {%- endfor %}
+        {%- set max_depth = depth_to_nodes.keys()|max %}
 
-        {#- Calculate sub-DAG bounds (parallel regions) #}
-        {%- set parallel_bounds = {} %}
-        {%- set parallel_max_depths = {} %}
+        {#- Compute taskgroup nesting levels iteratively (Bellman-Ford) to handle arbitrary depth #}
+        {%- set tg_nesting_levels = {} -%}
+        {%- for tg in taskgroups -%}
+            {%- set _ = tg_nesting_levels.update({tg.uuid: 0}) -%}
+        {%- endfor -%}
+        {%- for i in range(taskgroups|length) -%}
+            {%- for tg in taskgroups -%}
+                {%- for ptg in taskgroups -%}
+                    {%- if tg.uuid in ptg.elements -%}
+                        {%- set new_depth = tg_nesting_levels.get(ptg.uuid, 0) + 1 -%}
+                        {%- if new_depth > tg_nesting_levels.get(tg.uuid, 0) -%}
+                            {%- set _ = tg_nesting_levels.update({tg.uuid: new_depth}) -%}
+                        {%- endif -%}
+                    {%- endif -%}
+                {%- endfor -%}
+            {%- endfor -%}
+        {%- endfor -%}
+
+        {%- set max_tg_nesting_level = 0 -%}
+        {%- for nest in tg_nesting_levels.values() -%}
+            {%- if nest > max_tg_nesting_level -%}
+                {%- set max_tg_nesting_level = nest -%}
+            {%- endif -%}
+        {%- endfor %}
+        <!-- DEBUG tg_nesting_levels: {{ tg_nesting_levels }} -->
+        <!-- DEBUG max_tg_nesting_level: {{ max_tg_nesting_level }} -->
+
+        {#- Calculate top-level taskgroup for any node to prevent nested get-in/out arrows #}
+        {%- set id_to_top_level_tg = {} %}
+        {%- macro compute_top_level_tg(node_uuid, tg_uuid) %}
+            {%- if tg_uuid is none %}
+                {%- set _ = id_to_top_level_tg.update({node_uuid: none}) %}
+            {%- elif tg_uuid in tg_to_parent %}
+                {%- set _ = compute_top_level_tg(node_uuid, tg_to_parent[tg_uuid]) -%}
+            {%- else %}
+                {%- set _ = id_to_top_level_tg.update({node_uuid: tg_uuid}) %}
+            {%- endif %}
+        {%- endmacro %}
+        {%- for node in nodes %}
+            {%- set _ = compute_top_level_tg(node.uuid, node.taskgroup_uuid) -%}
+        {%- endfor %}
+
+        {#- Build map of merge nodes to their parallel regions (needed for Y-padding) #}
+        {#- Each parallel region's node list is precomputed here and consumed by the
+            bounds prepass, the containment prepass and the rendering macros. #}
+        {%- set merge_to_parallel = {} %}
+        {%- set parallel_node_lists = {} %}
         {%- for node in nodes %}
             {%- if node.is_parallel %}
                 {# Find the merge node for this parallel region #}
@@ -353,7 +836,7 @@
                 {{- find_merge(node.uuid, merge_found.depth) }}
 
                 {# Collect all nodes between parallel and merge (inclusive) #}
-                {%- set parallel_nodes = [node.uuid] %}
+                {%- set p_nodes_list = [node.uuid] %}
                 {%- if merge_found.node %}
                     {%- macro collect_region_nodes(current_id, merge_id, min_depth, collected) %}
                         {%- set current = id_to_node[current_id] %}
@@ -366,81 +849,482 @@
                             {%- endfor %}
                         {%- endif %}
                     {%- endmacro %}
-                    {{- collect_region_nodes(node.uuid, merge_found.node.uuid, merge_found.depth - 1, parallel_nodes) }}
-                    {%- set _ = parallel_nodes.append(merge_found.node.uuid) %}
+                    {{- collect_region_nodes(node.uuid, merge_found.node.uuid, merge_found.depth - 1, p_nodes_list) }}
+                    {%- set _ = p_nodes_list.append(merge_found.node.uuid) %}
                 {%- endif %}
 
-                {# Calculate bounds accounting for underlays and taskgroup margins #}
-                {%- if parallel_nodes %}
-                    {%- set p_coords = {'min_x': 999999, 'max_x': -999999, 'min_y': 999999, 'max_y': -999999} %}
-                    {%- set max_depth = {'value': parallel_depths[node.uuid]} %}
-                    {%- for p_node_id in parallel_nodes %}
-                        {%- set pos = id_to_pos[p_node_id] %}
-                        {%- set node_obj = id_to_node[p_node_id] %}
-                        {%- set pd = parallel_depths[p_node_id] %}
-                        {%- if pd > max_depth.value %}
-                            {%- set _ = max_depth.update({'value': pd}) %}
-                        {%- endif %}
-                        {%- set underlay_offset = 3 * pd %}
-                        {# If node is in a taskgroup, use taskgroup bounds #}
-                        {%- if node_obj.taskgroup_uuid and node_obj.taskgroup_uuid in taskgroup_bounds %}
-                            {%- set tg_bounds = taskgroup_bounds[node_obj.taskgroup_uuid] %}
-                            {%- set tg_underlay_offset = 3.5 * pd %}
-                            {%- set effective_min_x = tg_bounds.min_x - tg_margin_x - tg_underlay_offset %}
-                            {%- set effective_max_x = tg_bounds.max_x + tg_margin_x + tg_underlay_offset %}
-                            {%- set effective_min_y = tg_bounds.min_y - (tg_label_height + tg_label_margin_top) %}
-                            {%- set effective_max_y = pos.y + underlay_offset %}
-                        {%- else %}
-                            {%- set effective_min_x = pos.x - underlay_offset %}
-                            {%- set effective_max_x = pos.x + node_width + underlay_offset %}
-                            {%- set effective_min_y = pos.y %}
-                            {%- set effective_max_y = pos.y + underlay_offset %}
-                        {%- endif %}
-                        {%- if effective_min_x < p_coords.min_x %}
-                            {%- set _ = p_coords.update({'min_x': effective_min_x}) %}
-                        {%- endif %}
-                        {%- if effective_max_x > p_coords.max_x %}
-                            {%- set _ = p_coords.update({'max_x': effective_max_x}) %}
-                        {%- endif %}
-                        {%- if effective_min_y < p_coords.min_y %}
-                            {%- set _ = p_coords.update({'min_y': effective_min_y}) %}
-                        {%- endif %}
-                        {%- if effective_max_y > p_coords.max_y %}
-                            {%- set _ = p_coords.update({'max_y': effective_max_y}) %}
-                        {%- endif %}
-                    {%- endfor %}
-                    {%- set _ = parallel_bounds.update({node.uuid: p_coords}) %}
-                    {%- set _ = parallel_max_depths.update({node.uuid: max_depth.value}) %}
+                {%- set _ = parallel_node_lists.update({node.uuid: p_nodes_list}) %}
+                {%- if merge_found.node %}
+                    {%- set _ = merge_to_parallel.update({merge_found.node.uuid: node.uuid}) %}
                 {%- endif %}
             {%- endif %}
         {%- endfor %}
 
-        {# Draw sub-DAG (parallel) containers #}
+        {#- Calculate dynamic Y padding for each depth to ensure constant arrow length #}
+        {%- set pt = {} %}
+        {%- set pb = {} %}
+        {%- for d in range(max_depth + 1) %}
+            {%- set _ = pt.update({d: 0}) %}
+            {%- set _ = pb.update({d: 0}) %}
+        {%- endfor %}
+
+        {#- Taskgroup Y padding: SUM label heights and bottom margins along deepest taskgroup chain at each depth #}
+        {%- set tg_chain_lengths = {} %}
+        {%- for node in nodes %}
+            {%- set d = node_depth.get(node.uuid) %}
+            {%- set tg_uuid = node.taskgroup_uuid %}
+            {%- if tg_uuid and d is not none %}
+                {%- set chain_length = tg_nesting_levels.get(tg_uuid, 0) + 1 %}
+                {%- if chain_length > tg_chain_lengths.get(d, 0) %}
+                    {%- set _ = tg_chain_lengths.update({d: chain_length}) %}
+                {%- endif %}
+            {%- endif %}
+        {%- endfor %}
+        {%- for d in range(max_depth + 1) %}
+            {%- set chain_length = tg_chain_lengths.get(d, 0) %}
+            {%- if chain_length > 0 %}
+                {%- set req_pt = chain_length * (tg_label_height + tg_label_margin_top) %}
+                {%- if req_pt > pt.get(d, 0) %}
+                    {%- set _ = pt.update({d: req_pt}) %}
+                {%- endif %}
+                {%- set req_pb = chain_length * tg_margin_bottom %}
+                {%- if req_pb > pb.get(d, 0) %}
+                    {%- set _ = pb.update({d: req_pb}) %}
+                {%- endif %}
+            {%- endif %}
+        {%- endfor %}
+
+        {#- Parallel sub-DAG Y padding (Use MAX instead of SUM) #}
+        {%- for mn_uuid, p_uuid in merge_to_parallel.items() %}
+            {%- set parallel_node = id_to_node.get(p_uuid) %}
+            {%- set merge_node = id_to_node.get(mn_uuid) %}
+            {%- if parallel_node and merge_node %}
+                {%- set d_start = node_depth.get(parallel_node.uuid) %}
+                {%- set d_end = node_depth.get(merge_node.uuid) %}
+                {%- set pd = parallel_depths.get(parallel_node.uuid, 0) %}
+                {%- set underlay_offset = 3 * (pd - 1) %}
+
+                {%- if d_start is not none and d_end is not none %}
+                    {%- if not parallel_node.taskgroup_uuid %}
+                        {%- set req_pt = parallel_margin_y %}
+                        {%- if req_pt > pt.get(d_start, 0) %}
+                            {%- set _ = pt.update({d_start: req_pt}) %}
+                        {%- endif %}
+                    {%- endif %}
+                    {%- if not merge_node.taskgroup_uuid %}
+                        {%- set req_pb = underlay_offset + parallel_margin_y %}
+                        {%- if req_pb > pb.get(d_end, 0) %}
+                            {%- set _ = pb.update({d_end: req_pb}) %}
+                        {%- endif %}
+                    {%- endif %}
+                {%- endif %}
+            {%- endif %}
+        {%- endfor %}
+
+        {#- Calculate centered X positions #}
+        {%- set layout_state = {'max_nodes': 0, 'max_width': 0} %}
+        {%- for depth, ids in depth_to_nodes.items() %}
+            {%- if ids|length > layout_state.get('max_nodes', 0) %}
+                {%- set _ = layout_state.update({'max_nodes': ids|length}) %}
+            {%- endif %}
+            {%- set state = {'prev_tg': none, 'transitions': 0} %}
+            {%- for id in ids %}
+                {%- set node = id_to_node[id] %}
+                {%- set current_tg_uuid = node.taskgroup_uuid %}
+                {%- if not loop.first and current_tg_uuid != state.prev_tg %}
+                    {%- if current_tg_uuid is none or state.prev_tg is none %}
+                        {#- Transition to/from standalone task: 1 margin #}
+                        {%- set _ = state.update({'transitions': state.transitions + 1}) %}
+                    {%- elif tg_to_parent.get(current_tg_uuid) == state.prev_tg or tg_to_parent.get(state.prev_tg) == current_tg_uuid %}
+                        {#- Parent/child transition: 1 margin #}
+                        {%- set _ = state.update({'transitions': state.transitions + 1}) %}
+                    {%- else %}
+                        {#- Sibling transition: 2 margins #}
+                        {%- set _ = state.update({'transitions': state.transitions + 2}) %}
+                    {%- endif %}
+                {%- endif %}
+                {%- set _ = state.update({'prev_tg': current_tg_uuid}) %}
+            {%- endfor %}
+            {%- set level_width = (ids|length - 1) * spacing_x + state.transitions * tg_outer_margin_x %}
+            {%- if level_width > layout_state.get('max_width', 0) %}
+                {%- set _ = layout_state.update({'max_width': level_width}) %}
+            {%- endif %}
+        {%- endfor %}
+        {%- set total_width = layout_state.max_width %}
+        {#- Calculate starting offset to center the entire DAG #}
+        {%- set svg_width = 800 %}  {# Approximate SVG viewport width - varies with browser window size #}
+        {%- set dag_start_x = (svg_width - total_width) / 2 %}
+        {%- if dag_start_x < spacing_x %}
+            {%- set dag_start_x = spacing_x %}
+        {%- endif %}
+
+        {%- set id_to_pos = {} %}
+        {%- set y_state = {'val': 0} %}
+        {%- for d in range(max_depth + 1) %}
+            {%- if d == 0 %}
+                {%- set _ = y_state.update({'val': -tooltip_y_offset + pt.get(d, 0)}) %}
+            {%- else %}
+                {%- set _ = y_state.update({'val': y_state.val + node_height + pb.get(d-1, 0) + arrow_length_y + pt.get(d, 0)}) %}
+            {%- endif %}
+            {%- set current_y = y_state.val %}
+            {%- set ids = depth_to_nodes.get(d, []) %}
+
+            {%- set state = {'prev_tg': none, 'transitions': 0} %}
+            {%- for id in ids %}
+                {%- set node = id_to_node[id] %}
+                {%- set current_tg_uuid = node.taskgroup_uuid %}
+                {%- if not loop.first and current_tg_uuid != state.prev_tg %}
+                    {%- if current_tg_uuid is none or state.prev_tg is none %}
+                        {%- set _ = state.update({'transitions': state.transitions + 1}) %}
+                    {%- elif tg_to_parent.get(current_tg_uuid) == state.prev_tg or tg_to_parent.get(state.prev_tg) == current_tg_uuid %}
+                        {%- set _ = state.update({'transitions': state.transitions + 1}) %}
+                    {%- else %}
+                        {%- set _ = state.update({'transitions': state.transitions + 2}) %}
+                    {%- endif %}
+                {%- endif %}
+                {%- set _ = state.update({'prev_tg': current_tg_uuid}) %}
+            {%- endfor %}
+            {%- set level_width = (ids|length - 1) * spacing_x + state.transitions * tg_outer_margin_x %}
+            {%- set level_start_x = dag_start_x + (total_width - level_width) / 2 %}
+
+            {%- set pos_state = {'prev_tg': none, 'offset': 0} %}
+            {%- for id in ids %}
+                {%- set node = id_to_node[id] %}
+                {%- set current_tg_uuid = node.taskgroup_uuid %}
+                {%- if not loop.first and current_tg_uuid != pos_state.prev_tg %}
+                    {%- if current_tg_uuid is none or pos_state.prev_tg is none %}
+                        {%- set _ = pos_state.update({'offset': pos_state.offset + tg_outer_margin_x}) %}
+                    {%- elif tg_to_parent.get(current_tg_uuid) == pos_state.prev_tg or tg_to_parent.get(pos_state.prev_tg) == current_tg_uuid %}
+                        {%- set _ = pos_state.update({'offset': pos_state.offset + tg_outer_margin_x}) %}
+                    {%- else %}
+                        {%- set _ = pos_state.update({'offset': pos_state.offset + 2 * tg_outer_margin_x}) %}
+                    {%- endif %}
+                {%- endif %}
+                {%- set _ = pos_state.update({'prev_tg': current_tg_uuid}) %}
+                {%- set i = loop.index0 %}
+                {%- set x = level_start_x + i * spacing_x + pos_state.offset %}
+                {%- set y = current_y %}
+                {%- set _ = id_to_pos.update({id: {'x': x, 'y': y} }) %}
+            {%- endfor %}
+        {%- endfor %}
+
+        {#- Calculate taskgroup bounds and centers #}
+        {%- set taskgroup_bounds = {} %}
+        {%- set taskgroup_nodes = {} %}
+        {%- for tg in taskgroups %}
+            <!-- DEBUG calculating initial bounds for '{{ tg.name }}' -->
+            {%- set tg_coords = {'min_x': 999999, 'max_x': -999999, 'min_y': 999999, 'max_y': -999999, 'max_parallel_depth': 0} %}
+            {%- set found_nodes = {'found_nodes': false} %}
+            {%- set found_nested_tgs = {'found': false} %}
+            {%- set tg_node_list = [] %}
+            {%- for el_uuid in tg.elements %}
+                {%- if el_uuid in id_to_taskgroup %}
+                    {%- set _ = found_nested_tgs.update({'found': true}) %}
+                {%- endif %}
+            {%- endfor %}
+            {%- for node in nodes %}
+                {%- if node.taskgroup_uuid == tg.uuid %}
+                    {%- set _ = found_nodes.update({'found_nodes': true}) %}
+                    {%- set _ = tg_node_list.append(node.uuid) %}
+                    {%- set pos = id_to_pos[node.uuid] %}
+                    {%- if pos.x < tg_coords.min_x %}
+                        {%- set _ = tg_coords.update({'min_x': pos.x}) %}
+                    {%- endif %}
+                    {%- if pos.x + node_width > tg_coords.max_x %}
+                        {%- set _ = tg_coords.update({'max_x': pos.x + node_width}) %}
+                    {%- endif %}
+                    {%- if pos.y < tg_coords.min_y %}
+                        {%- set _ = tg_coords.update({'min_y': pos.y}) %}
+                    {%- endif %}
+                    {%- if pos.y + node_height > tg_coords.max_y %}
+                        {%- set _ = tg_coords.update({'max_y': pos.y + node_height}) %}
+                    {%- endif %}
+                    {%- set pd = parallel_depths.get(node.uuid, 0) %}
+                    {%- if pd > tg_coords.max_parallel_depth %}
+                        {%- set _ = tg_coords.update({'max_parallel_depth': pd}) %}
+                    {%- endif %}
+                {%- endif %}
+            {%- endfor %}
+            {%- if found_nodes.found_nodes or found_nested_tgs.found %}
+                {%- set _ = taskgroup_bounds.update({tg.uuid: tg_coords}) %}
+                {%- set _ = taskgroup_nodes.update({tg.uuid: tg_node_list}) %}
+            {%- endif %}
+        {%- endfor %}
+        <!-- DEBUG taskgroup_bounds (initial): {{ taskgroup_bounds }} -->
+
+        {#- Expand bounds to include nested taskgroups (iterative relaxation) #}
+        {%- for i in range(taskgroups|length) %}
+            <!-- DEBUG Iterative bounds expansion pass {{ i }} -->
+            {%- for tg in taskgroups %}
+                {%- if tg.uuid in taskgroup_bounds %}
+                    {%- set tg_bounds = taskgroup_bounds[tg.uuid] %}
+                    {%- for el_uuid in tg.elements %}
+                        {%- if el_uuid in id_to_taskgroup and el_uuid in taskgroup_bounds %}
+                            {%- set child_bounds = taskgroup_bounds[el_uuid] %}
+                            {%- set child_min_x = child_bounds.min_x - tg_inner_margin_x %}
+                            {%- set child_max_x = child_bounds.max_x + tg_inner_margin_x %}
+                            {%- set child_min_y = child_bounds.min_y - (tg_label_height + tg_label_margin_top) %}
+                            {%- set child_max_y = child_bounds.max_y + tg_margin_bottom %}
+                            {%- if child_min_x < tg_bounds.min_x %}
+                                {%- set _ = tg_bounds.update({'min_x': child_min_x}) %}
+                            {%- endif %}
+                            {%- if child_max_x > tg_bounds.max_x %}
+                                {%- set _ = tg_bounds.update({'max_x': child_max_x}) %}
+                            {%- endif %}
+                            {%- if child_min_y < tg_bounds.min_y %}
+                                {%- set _ = tg_bounds.update({'min_y': child_min_y}) %}
+                            {%- endif %}
+                            {%- if child_max_y > tg_bounds.max_y %}
+                                {%- set _ = tg_bounds.update({'max_y': child_max_y}) %}
+                            {%- endif %}
+                            {%- set child_pd = child_bounds.max_parallel_depth %}
+                            {%- if child_pd > tg_bounds.max_parallel_depth %}
+                                {%- set _ = tg_bounds.update({'max_parallel_depth': child_pd}) %}
+                            {%- endif %}
+                        {%- endif %}
+                    {%- endfor %}
+                {%- endif %}
+            {%- endfor %}
+        {%- endfor %}
+        <!-- DEBUG taskgroup_bounds (expanded): {{ taskgroup_bounds }} -->
+
+        {#- Finalize bounds with center and container dimensions.
+            center_x is always the rect center (middle of the bounding border):
+            this is the in/out arrow attachment axis, identical for top-level and
+            nested taskgroups, and is preserved across collapse/expand by the
+            JS updateTaskgroupBounds() recomputation (which also yields rect center). #}
+        {%- for tg in taskgroups %}
+            {%- if tg.uuid in taskgroup_bounds %}
+                {%- set tg_bounds = taskgroup_bounds[tg.uuid] %}
+                {%- set center_x = tg_bounds.min_x + (tg_bounds.max_x - tg_bounds.min_x)/2 %}
+                {%- set _ = tg_bounds.update({'center_x': center_x,
+                                              'container_top':
+                                                  tg_bounds.min_y - (tg_label_height + tg_label_margin_top),
+                                              'container_bottom':
+                                                  tg_bounds.max_y + tg_margin_bottom}) %}
+                <!-- DEBUG Finalized bounds for {{ tg.name }}: {{ tg_bounds }} -->
+            {%- endif %}
+        {%- endfor %}
+
+        {#- X-centering pass: shift each top-level taskgroup's content so its rect
+            center aligns with the midpoint of its outermost member node centers.
+            This compensates for the asymmetry introduced by nested taskgroup
+            padding, ensuring taskgroup centers exactly match standalone nodes. #}
+        {%- for tg in taskgroups %}
+            {%- if tg.uuid in taskgroup_bounds and tg_to_parent.get(tg.uuid) is none %}
+                    {%- set tg_bounds = taskgroup_bounds[tg.uuid] %}
+                    {%- set extreme_nodes = {'min_x': 999999, 'max_x': -999999} %}
+                    {%- for node in nodes %}
+                        {%- if id_to_top_level_tg.get(node.uuid) == tg.uuid %}
+                            {%- set pos = id_to_pos[node.uuid] %}
+                            {%- set center = pos.x + node_width / 2 %}
+                            {%- if center < extreme_nodes.min_x %}
+                                {%- set _ = extreme_nodes.update({'min_x': center}) %}
+                            {%- endif %}
+                            {%- if center > extreme_nodes.max_x %}
+                                {%- set _ = extreme_nodes.update({'max_x': center}) %}
+                            {%- endif %}
+                        {%- endif %}
+                    {%- endfor %}
+                    {%- if extreme_nodes.min_x != 999999 %}
+                        {%- set nodes_midpoint = (extreme_nodes.min_x + extreme_nodes.max_x) / 2 %}
+                        {%- set delta = nodes_midpoint - tg_bounds.center_x %}
+                        {%- if delta|abs > 0.001 %}
+                            {#- Shift all member nodes of this top-level taskgroup (and its nested groups) #}
+                            {%- for node in nodes %}
+                                {%- if id_to_top_level_tg.get(node.uuid) == tg.uuid %}
+                                    {%- set pos = id_to_pos[node.uuid] %}
+                                    {%- set _ = id_to_pos.update({node.uuid: {'x': pos.x + delta, 'y': pos.y}}) %}
+                                {%- endif %}
+                            {%- endfor %}
+                            {#- Shift all nested taskgroup bounds recursively #}
+                            {%- set tg_stack = [tg.uuid] %}
+                            {%- for _ in range(taskgroups|length) %}
+                                {%- if tg_stack|length == 0 %}
+                                    {#- continue #}
+                                {%- else %}
+                                    {%- set cur_tg_uuid = tg_stack[-1] %}
+                                    {%- set _ = tg_stack.pop() %}
+                                    {%- if cur_tg_uuid in taskgroup_bounds %}
+                                        {%- set cur_bounds = taskgroup_bounds[cur_tg_uuid] %}
+                                        {%- set _ = cur_bounds.update({
+                                            'min_x': cur_bounds.min_x + delta,
+                                            'max_x': cur_bounds.max_x + delta,
+                                            'center_x': cur_bounds.center_x + delta
+                                        }) %}
+                                        {%- for child_tg in taskgroups %}
+                                            {%- if child_tg.uuid in id_to_taskgroup and tg_to_parent.get(child_tg.uuid) == cur_tg_uuid %}
+                                                {%- set _ = tg_stack.append(child_tg.uuid) %}
+                                            {%- endif %}
+                                        {%- endfor %}
+                                    {%- endif %}
+                                {%- endif %}
+                            {%- endfor %}
+                        {%- endif %}
+                    {%- endif %}
+            {%- endif %}
+        {%- endfor %}
+
+        {#- Calculate sub-DAG bounds (parallel regions) #}
+        {%- set parallel_bounds = {} %}
+        {%- set parallel_max_depths = {} %}
+        {%- for node in nodes %}
+            {%- if node.is_parallel %}
+                    {%- set p_nodes_list = parallel_node_lists[node.uuid] %}
+                    {# Calculate bounds accounting for underlays and taskgroup margins #}
+                    {%- if p_nodes_list %}
+                        {%- set p_coords = {'min_x': 999999, 'max_x': -999999, 'min_y': 999999, 'max_y': -999999} %}
+                        {%- set max_depth_val = {'value': parallel_depths[node.uuid]} %}
+                        {%- for p_node_id in p_nodes_list %}
+                            {%- set pos = id_to_pos[p_node_id] %}
+                            {%- set node_obj = id_to_node[p_node_id] %}
+                            {%- set pd = parallel_depths[p_node_id] %}
+                            {%- if pd > max_depth_val.value %}
+                                {%- set _ = max_depth_val.update({'value': pd}) %}
+                            {%- endif %}
+                            {%- set underlay_offset = 3 * pd %}
+                            {# If node is in a taskgroup, use taskgroup bounds #}
+                            {%- if node_obj.taskgroup_uuid and node_obj.taskgroup_uuid in taskgroup_bounds %}
+                                {%- set tg_bounds = taskgroup_bounds[node_obj.taskgroup_uuid] %}
+                                {%- set tg_underlay_offset = 3.5 * pd %}
+                                {%- set effective_min_x = tg_bounds.min_x - tg_inner_margin_x - tg_underlay_offset %}
+                                {%- set effective_max_x = tg_bounds.max_x + tg_inner_margin_x + tg_underlay_offset %}
+                                {%- set effective_min_y = tg_bounds.container_top %}
+                                {%- set effective_max_y = tg_bounds.container_bottom %}
+                            {%- else %}
+                                {%- set effective_min_x = pos.x - underlay_offset %}
+                                {%- set effective_max_x = pos.x + node_width + underlay_offset %}
+                                {%- set effective_min_y = pos.y %}
+                                {%- set effective_max_y = pos.y + node_height + underlay_offset %}
+                            {%- endif %}
+                            {%- if effective_min_x < p_coords.min_x %}
+                                {%- set _ = p_coords.update({'min_x': effective_min_x}) %}
+                            {%- endif %}
+                            {%- if effective_max_x > p_coords.max_x %}
+                                {%- set _ = p_coords.update({'max_x': effective_max_x}) %}
+                            {%- endif %}
+                            {%- if effective_min_y < p_coords.min_y %}
+                                {%- set _ = p_coords.update({'min_y': effective_min_y}) %}
+                            {%- endif %}
+                            {%- if effective_max_y > p_coords.max_y %}
+                                {%- set _ = p_coords.update({'max_y': effective_max_y}) %}
+                            {%- endif %}
+                        {%- endfor %}
+                        {%- set _ = parallel_bounds.update({node.uuid: p_coords}) %}
+                        {%- set _ = parallel_max_depths.update({node.uuid: max_depth_val.value}) %}
+                    {%- endif %}
+            {%- endif %}
+        {%- endfor %}
         <!-- DEBUG parallel_bounds keys: {{ parallel_bounds.keys()|list }} -->
         <!-- DEBUG parallel_max_depths: {{ parallel_max_depths }} -->
         <!-- DEBUG parallel_depths: {{ parallel_depths }} -->
+
+        {#- Containment prepass: innermost enclosing parallel region of each node,
+            parent/root chains of parallel regions, and innermost region of each
+            top-level taskgroup. Regions are keyed by their start node uuid. #}
+        {%- set node_regions = {} %}
+        {%- for p_uuid, p_list in parallel_node_lists.items() %}
+            {%- for n_uuid in p_list %}
+                {%- if n_uuid not in node_regions %}
+                    {%- set _ = node_regions.update({n_uuid: []}) %}
+                {%- endif %}
+                {%- set _ = node_regions[n_uuid].append(p_uuid) %}
+            {%- endfor %}
+        {%- endfor %}
+
+        {%- set node_to_parallel = {} %}
+        {%- for n_uuid, p_uuids in node_regions.items() %}
+            {%- set best = {'uuid': none, 'level': -1} %}
+            {%- for p_uuid in p_uuids %}
+                {%- if parallel_depths[p_uuid] > best.level %}
+                    {%- set _ = best.update({'uuid': p_uuid, 'level': parallel_depths[p_uuid]}) %}
+                {%- endif %}
+            {%- endfor %}
+            {%- set _ = node_to_parallel.update({n_uuid: best.uuid}) %}
+        {%- endfor %}
+
+        {%- set parallel_to_parent = {} %}
+        {%- for p_uuid in parallel_node_lists.keys() %}
+                    {%- set best = {'uuid': none, 'level': -1} %}
+                    {%- for q_uuid, q_list in parallel_node_lists.items() %}
+                        {%- if q_uuid != p_uuid and p_uuid in q_list %}
+                            {%- if parallel_depths[q_uuid] > best.level %}
+                                {%- set _ = best.update({'uuid': q_uuid, 'level': parallel_depths[q_uuid]}) %}
+                            {%- endif %}
+                        {%- endif %}
+                    {%- endfor %}
+                    {%- set _ = parallel_to_parent.update({p_uuid: best.uuid}) %}
+        {%- endfor %}
+
+        {%- set max_parallel_nesting = parallel_depths.values()|max %}
+        {%- set parallel_to_root = {} %}
+        {%- for p_uuid in parallel_node_lists.keys() %}
+            {%- set cur = {'uuid': p_uuid} %}
+            {%- for _ in range(max_parallel_nesting + 1) %}
+                {%- if parallel_to_parent.get(cur.uuid) %}
+                    {%- set _ = cur.update({'uuid': parallel_to_parent[cur.uuid]}) %}
+                {%- endif %}
+            {%- endfor %}
+            {%- set _ = parallel_to_root.update({p_uuid: cur.uuid}) %}
+        {%- endfor %}
+
+        {%- set root_tg_regions = {} %}
         {%- for node in nodes %}
-            {%- if node.is_parallel and node.uuid in parallel_bounds %}
-                {%- set p_coords = parallel_bounds[node.uuid] %}
-                {%- set level = parallel_depths[node.uuid] %}
-                {%- set max_depth = parallel_max_depths.get(node.uuid, level) %}
-                {%- set level_margin_x = parallel_margin_x * (max_depth - level + 1) %}
-                <!-- DEBUG rendering parallel {{ node.uuid }} at level {{ level }} with max_depth {{ max_depth }} -->
-                <g class="parallel-dag" id="parallel-{{ node.uuid }}">
-                    {{ parallel_rect_box(
-                        p_coords.min_x - level_margin_x,
-                        p_coords.min_y - parallel_margin_y,
-                        p_coords.max_x - p_coords.min_x + 2*level_margin_x,
-                        p_coords.max_y - p_coords.min_y + node_height + 2*parallel_margin_y,
-                        fill=node.ui_css.background if node.ui_css and node.ui_css.background else None
-                    ) }}
-                </g>
+            {%- set root_tg = id_to_top_level_tg.get(node.uuid) %}
+            {%- if root_tg and node_to_parallel.get(node.uuid) %}
+                {%- set region = node_to_parallel[node.uuid] %}
+                {%- if root_tg not in root_tg_regions or parallel_depths[region] > parallel_depths[root_tg_regions[root_tg]] %}
+                    {%- set _ = root_tg_regions.update({root_tg: region}) %}
+                {%- endif %}
             {%- endif %}
         {%- endfor %}
 
-        {#- Draw arrows #}
+        {#- Per-region content lists #}
+        {%- set parallel_contained_tgs = {} %}
+        {%- set parallel_contained_parallels = {} %}
+        {%- set parallel_children = {} %}
+        {%- set parallel_direct_tgs = {} %}
+        {%- set parallel_direct_nodes = {} %}
+        {%- for p_uuid in parallel_node_lists.keys() %}
+            {# Compute contained elements for dragging data attributes #}
+            {%- set contained_taskgroups = [] %}
+            {%- set contained_parallels = [] %}
+            {%- for n_uuid in parallel_node_lists[p_uuid] %}
+                {%- if id_to_node[n_uuid].taskgroup_uuid and id_to_node[n_uuid].taskgroup_uuid not in contained_taskgroups %}
+                    {%- set _ = contained_taskgroups.append(id_to_node[n_uuid].taskgroup_uuid) %}
+                {%- endif %}
+                {%- if id_to_node[n_uuid].is_parallel and n_uuid != p_uuid %}
+                    {%- set _ = contained_parallels.append(n_uuid) %}
+                {%- endif %}
+            {%- endfor %}
+            {%- set _ = parallel_contained_tgs.update({p_uuid: contained_taskgroups}) %}
+            {%- set _ = parallel_contained_parallels.update({p_uuid: contained_parallels}) %}
+            {%- set _ = parallel_children.update({p_uuid: []}) %}
+            {%- set _ = parallel_direct_tgs.update({p_uuid: []}) %}
+            {%- set _ = parallel_direct_nodes.update({p_uuid: []}) %}
+        {%- endfor %}
+        {%- for tg in taskgroups %}
+            {%- if tg_to_parent.get(tg.uuid) is none and root_tg_regions.get(tg.uuid) %}
+                {%- set _ = parallel_direct_tgs[root_tg_regions[tg.uuid]].append(tg.uuid) %}
+            {%- endif %}
+        {%- endfor %}
+        {%- for p_uuid, p_list in parallel_node_lists.items() %}
+            {%- for n_uuid in p_list %}
+                {%- if id_to_node[n_uuid].is_parallel and parallel_to_parent.get(n_uuid) == p_uuid %}
+                    {%- set _ = parallel_children[p_uuid].append(n_uuid) %}
+                {%- endif %}
+                {#- Region node lists may list the merge node twice (collected during
+                    traversal, then explicitly appended): dedupe here so each node
+                    renders exactly once. data-contained-nodes keeps both entries
+                    by design. #}
+                {%- if not id_to_node[n_uuid].taskgroup_uuid and node_to_parallel.get(n_uuid) == p_uuid and n_uuid not in parallel_direct_nodes[p_uuid] %}
+                    {%- set _ = parallel_direct_nodes[p_uuid].append(n_uuid) %}
+                {%- endif %}
+            {%- endfor %}
+        {%- endfor %}
+
         {#- --- ARROW LOGIC FOR TASKGROUPS --- #}
-        {#- To ensure only one outgoing (and one incoming) arrow per taskgroup: #}
+        {#- To ensure only one outgoing (and one incoming) arrow per top-level taskgroup: #}
         {%- set tg_outs = {} %}
         {%- set tg_ins = {} %}
         {%- set tg_link_pairs = [] %}
@@ -449,340 +1333,154 @@
         {%- set parallel_link_pairs = [] %}
         {%- set normal_arrows = [] %}
 
-        {# Build map of merge nodes to their parallel regions #}
-        {%- set merge_to_parallel = {} %}
         {%- for node in nodes %}
-            {%- if node.is_parallel and node.uuid in parallel_bounds %}
-                {# Find the merge for this parallel #}
-                {%- set merge_found = {'node': none, 'depth': parallel_depths[node.uuid]} %}
-                {%- macro find_merge_for_map(current_id, target_depth) %}
-                    {%- set current = id_to_node[current_id] %}
-                    {%- if current.merge_func is not none and not current.is_parallel and parallel_depths[current_id] == target_depth - 1 %}
-                        {%- set _ = merge_found.update({'node': current}) %}
-                    {%- else %}
-                        {%- for child in current.children %}
-                            {%- if merge_found.node is none %}
-                                {{- find_merge_for_map(child, target_depth) }}
-                            {%- endif %}
-                        {%- endfor %}
-                    {%- endif %}
-                {%- endmacro %}
-                {{- find_merge_for_map(node.uuid, merge_found.depth) }}
-                {%- if merge_found.node %}
-                    {%- set _ = merge_to_parallel.update({merge_found.node.uuid: node.uuid}) %}
-                {%- endif %}
-            {%- endif %}
-        {%- endfor %}
-
-        {%- for node in nodes %}
-            {%- set src_tg = node.taskgroup_uuid %}
+            {%- set src_tg = id_to_top_level_tg.get(node.uuid) %}
             {%- set src_parallel = merge_to_parallel.get(node.uuid, none) %}
             {%- for child_id in node.children %}
-                {%- set child_node = id_to_node[child_id] %}
-                {%- set tgt_tg = child_node.taskgroup_uuid %}
-                {%- set tgt_parallel = none %}
-                {%- if child_node.is_parallel and child_node.uuid in parallel_bounds %}
-                    {%- set tgt_parallel = child_node.uuid %}
-                {%- endif %}
-                {%- if src_tg and tgt_tg and src_tg == tgt_tg %}
-                    {%- set _ = normal_arrows.append((node.uuid, child_id)) %}
-                {%- elif src_tg and (not tgt_tg or src_tg != tgt_tg) %}
-                    {%- set pair = (src_tg, tgt_tg or '__NONE__') %}
-                    {%- if pair not in tg_outs %}
-                        {%- set _ = tg_outs.update({pair: (node.uuid, child_id)}) %}
-                        {%- set _ = tg_link_pairs.append(('out', pair, node.uuid, child_id)) %}
+                {%- set child_node = id_to_node.get(child_id) %}
+                {%- if child_node %}
+                    {%- set tgt_tg = id_to_top_level_tg.get(child_node.uuid) %}
+                    {%- set tgt_parallel = none %}
+                    {%- if child_node.is_parallel and child_node.uuid in parallel_bounds %}
+                        {%- set tgt_parallel = child_node.uuid %}
                     {%- endif %}
-                {%- elif tgt_tg and (not src_tg or src_tg != tgt_tg) %}
-                    {%- set pair = (src_tg or '__NONE__', tgt_tg) %}
-                    {%- if pair not in tg_ins %}
-                        {%- set _ = tg_ins.update({pair: (node.uuid, child_id)}) %}
-                        {%- set _ = tg_link_pairs.append(('in', pair, node.uuid, child_id)) %}
+                    {%- if src_tg and tgt_tg and src_tg == tgt_tg %}
+                        {%- set _ = normal_arrows.append((node.uuid, child_id)) %}
+                    {%- elif src_tg and (not tgt_tg or src_tg != tgt_tg) %}
+                        {%- set pair = (src_tg, tgt_tg or '__NONE__') %}
+                        {%- if pair not in tg_outs %}
+                            {%- set _ = tg_outs.update({pair: (node.uuid, child_id)}) %}
+                            {%- set _ = tg_link_pairs.append(('out', pair, node.uuid, child_id)) %}
+                        {%- endif %}
+                    {%- elif tgt_tg and (not src_tg or src_tg != tgt_tg) %}
+                        {%- set pair = (src_tg or '__NONE__', tgt_tg) %}
+                        {%- if pair not in tg_ins %}
+                            {%- set _ = tg_ins.update({pair: (node.uuid, child_id)}) %}
+                            {%- set _ = tg_link_pairs.append(('in', pair, node.uuid, child_id)) %}
+                        {%- endif %}
+                    {%- elif src_parallel and (not tgt_parallel or src_parallel != tgt_parallel) %}
+                        {%- set pair = (src_parallel, tgt_parallel or '__NONE__') %}
+                        {%- if pair not in parallel_outs %}
+                            {%- set _ = parallel_outs.update({pair: (node.uuid, child_id)}) %}
+                            {%- set _ = parallel_link_pairs.append(('out', pair, node.uuid, child_id)) %}
+                        {%- endif %}
+                    {%- elif tgt_parallel and (not src_parallel or src_parallel != tgt_parallel) %}
+                        {%- set pair = (src_parallel or '__NONE__', tgt_parallel) %}
+                        {%- if pair not in parallel_ins %}
+                            {%- set _ = parallel_ins.update({pair: (node.uuid, child_id)}) %}
+                            {%- set _ = parallel_link_pairs.append(('in', pair, node.uuid, child_id)) %}
+                        {%- endif %}
+                    {%- else %}
+                        {%- set _ = normal_arrows.append((node.uuid, child_id)) %}
                     {%- endif %}
-                {%- elif src_parallel and (not tgt_parallel or src_parallel != tgt_parallel) %}
-                    {%- set pair = (src_parallel, tgt_parallel or '__NONE__') %}
-                    {%- if pair not in parallel_outs %}
-                        {%- set _ = parallel_outs.update({pair: (node.uuid, child_id)}) %}
-                        {%- set _ = parallel_link_pairs.append(('out', pair, node.uuid, child_id)) %}
-                    {%- endif %}
-                {%- elif tgt_parallel and (not src_parallel or src_parallel != tgt_parallel) %}
-                    {%- set pair = (src_parallel or '__NONE__', tgt_parallel) %}
-                    {%- if pair not in parallel_ins %}
-                        {%- set _ = parallel_ins.update({pair: (node.uuid, child_id)}) %}
-                        {%- set _ = parallel_link_pairs.append(('in', pair, node.uuid, child_id)) %}
-                    {%- endif %}
-                {%- else %}
-                    {%- set _ = normal_arrows.append((node.uuid, child_id)) %}
                 {%- endif %}
             {%- endfor %}
         {%- endfor %}
-
-        {#- Draw one arrow for each stored pair for incoming/outgoing tg pairs #}
-        {%- for kind, pair, src, tgt in tg_link_pairs %}
-            {%- set src_tg = pair[0] %}
-            {%- set tgt_tg = pair[1] %}
-            {%- if kind == 'out' and src_tg != '__NONE__' %}
-                {%- set tg_bounds = taskgroup_bounds[src_tg] %}
-                {%- set src_x = tg_bounds.center_x %}
-                {%- set src_y = tg_bounds.container_bottom %}
-                {%- set tgt_x = id_to_pos[tgt].x + node_width/2 %}
-                {%- set tgt_y = id_to_pos[tgt].y %}
-                {%- if tgt_tg != '__NONE__' and tgt_tg in taskgroup_bounds %}
-                    {%- set tgt_bounds = taskgroup_bounds[tgt_tg] %}
-                    {%- set tgt_x = tgt_bounds.center_x %}
-                    {%- set tgt_y = tgt_bounds.container_top %}
-                    <line id="arrow-{{ id_to_taskgroup[src_tg].uuid }}-{{ id_to_taskgroup[tgt_tg].uuid }}"
-                          x1="{{ src_x }}" y1="{{ src_y }}" x2="{{ tgt_x }}" y2="{{ tgt_y }}"
-                          marker-end="url(#arrow)" />
-                {%- else %}
-                    <line id="arrow-{{ id_to_taskgroup[src_tg].uuid }}-{{ tgt }}"
-                          x1="{{ src_x }}" y1="{{ src_y }}" x2="{{ tgt_x }}" y2="{{ tgt_y }}"
-                          marker-end="url(#arrow)" />
-                {%- endif %}
-            {%- elif kind == 'in' and tgt_tg != '__NONE__' %}
-                {%- if src_tg == '__NONE__' %}
-                    {%- set tgt_bounds = taskgroup_bounds[tgt_tg] %}
-                    {%- set tgt_x = tgt_bounds.center_x %}
-                    {%- set tgt_y = tgt_bounds.container_top %}
-                    {%- set src_x = id_to_pos[src].x + node_width/2 %}
-                    {%- set src_y = id_to_pos[src].y + node_height %}
-                    <line id="arrow-{{ src }}-{{ id_to_taskgroup[tgt_tg].uuid }}"
-                          x1="{{ src_x }}" y1="{{ src_y }}" x2="{{ tgt_x }}" y2="{{ tgt_y }}"
-                          marker-end="url(#arrow)" />
-                {%- endif %}
-            {%- endif %}
-        {% endfor -%}
-
-        {#- Draw one arrow for each stored pair for incoming/outgoing parallel pairs #}
         <!-- DEBUG parallel_link_pairs: {{ parallel_link_pairs }} -->
+
+        {#- Arrow distribution prepass: flatten all arrows, assign each to its innermost
+            common enclosing parallel region (if any), and anchor top-level arrows to
+            their top-level source entity. Arrows are never placed inside taskgroups. #}
+        {%- set all_arrows = [] %}
+        {%- for kind, pair, src, tgt in tg_link_pairs %}
+            {%- set _ = all_arrows.append({'cat': 'tg', 'kind': kind, 'p0': pair[0], 'p1': pair[1], 'src': src, 'tgt': tgt}) %}
+        {%- endfor %}
         {%- for kind, pair, src, tgt in parallel_link_pairs %}
-            {%- set src_parallel = pair[0] %}
-            {%- set tgt_parallel = pair[1] %}
-            {%- if kind == 'out' and src_parallel != '__NONE__' %}
-                {%- set p_bounds = parallel_bounds[src_parallel] %}
-                {%- set src_x = (p_bounds.min_x + p_bounds.max_x) / 2 %}
-                {%- set src_y = p_bounds.max_y + node_height + parallel_margin_y %}
-                {%- set tgt_x = id_to_pos[tgt].x + node_width/2 %}
-                {%- set tgt_y = id_to_pos[tgt].y %}
-                {%- if tgt_parallel != '__NONE__' and tgt_parallel in parallel_bounds %}
-                    {%- set tgt_p_bounds = parallel_bounds[tgt_parallel] %}
-                    {%- set tgt_x = (tgt_p_bounds.min_x + tgt_p_bounds.max_x) / 2 %}
-                    {%- set tgt_y = tgt_p_bounds.min_y - parallel_margin_y %}
-                    <line id="arrow-parallel-{{ src_parallel }}-{{ tgt_parallel }}"
-                          x1="{{ src_x }}" y1="{{ src_y }}" x2="{{ tgt_x }}" y2="{{ tgt_y }}"
-                          marker-end="url(#arrow)" />
-                {%- else %}
-                    <line id="arrow-parallel-{{ src_parallel }}-{{ tgt }}"
-                          x1="{{ src_x }}" y1="{{ src_y }}" x2="{{ tgt_x }}" y2="{{ tgt_y }}"
-                          marker-end="url(#arrow)" />
-                {%- endif %}
-            {%- elif kind == 'in' and tgt_parallel != '__NONE__' %}
-                {%- if src_parallel == '__NONE__' %}
-                    {%- set tgt_p_bounds = parallel_bounds[tgt_parallel] %}
-                    {%- set tgt_x = (tgt_p_bounds.min_x + tgt_p_bounds.max_x) / 2 %}
-                    {%- set tgt_y = tgt_p_bounds.min_y - parallel_margin_y %}
-                    {%- set src_x = id_to_pos[src].x + node_width/2 %}
-                    {%- set src_y = id_to_pos[src].y + node_height %}
-                    <line id="arrow-{{ src }}-parallel-{{ tgt_parallel }}"
-                          x1="{{ src_x }}" y1="{{ src_y }}" x2="{{ tgt_x }}" y2="{{ tgt_y }}"
-                          marker-end="url(#arrow)" />
-                {%- endif %}
-            {%- endif %}
-        {% endfor -%}
-
-        {# Draw all standard arrows (within taskgroups or outside any) #}
+            {%- set _ = all_arrows.append({'cat': 'pl', 'kind': kind, 'p0': pair[0], 'p1': pair[1], 'src': src, 'tgt': tgt}) %}
+        {%- endfor %}
         {%- for src, tgt in normal_arrows %}
-            {%- set src_pos = id_to_pos[src] %}
-            {%- set tgt_pos = id_to_pos[tgt] %}
-            <line id="arrow-{{ src }}-{{ tgt }}"
-                x1="{{ src_pos.x + node_width/2 }}" y1="{{ src_pos.y + node_height }}"
-                x2="{{ tgt_pos.x + node_width/2 }}" y2="{{ tgt_pos.y }}"
-                marker-end="url(#arrow)" />
-        {% endfor %}
-
-        {# Draw taskgroups containers, per-group parallel-level underlays #}
-        {%- for tg in taskgroups %}
-            <!-- DEBUG '{{ tg.name }}', tg.ui_css: {{ tg.ui_css }} -->
-            {%- set tg_coords = taskgroup_bounds.get(tg.uuid) %}
-            {%- if tg_coords %}
-                <g class="taskgroup" id="taskgroup-{{ tg.uuid }}" style="cursor: grab;" 
-                   data-name="{{ tg.name }}"
-                   data-nodes="{{ taskgroup_nodes[tg.uuid]|join(',') }}">
-
-                    {# If this taskgroup contains nodes that have parallel layers, draw
-                       one SHIFTED underlay per parallel level for the entire taskgroup.
-                       This replaces per-node underlays for nodes that belong to taskgroups. #}
-                    {%- set tg_node_list = taskgroup_nodes.get(tg.uuid, []) %}
-                    <!-- DEBUG taskgroup {{ tg.uuid }}, tg_node_list: {{ tg_node_list }} -->
-                    {# Compute max parallel depth for this taskgroup using a dict accumulator #}
-                    {%- set max_pd = {'value': 0} %}
-                    {%- for n_uuid in tg_node_list %}
-                        {%- set pd = parallel_depths.get(n_uuid, 0) %}
-                        <!-- DEBUG taskgroup {{ tg.uuid }}, node {{ n_uuid }}, parallel_depths: {{ pd }} -->
-                        {%- if pd > max_pd.value %}
-                            {%- set _ = max_pd.update({'value': pd}) %}
-                        {%- endif %}
-                    {%- endfor %}
-
-                    {%- if max_pd.value > 0 %}
-                        {# draw layers from outermost to innermost (higher level first) #}
-                        {%- for level in range(max_pd.value, 0, -1) %}
-                            {%- set offset = 3.5 * level %}
-                            <g transform="translate({{ offset }}, {{ offset }})">
-                                {{ taskgroup_rect_box(
-                                    tg_coords.min_x - tg_margin_x,
-                                    tg_coords.min_y - (tg_label_height + tg_label_margin_top),
-                                    tg_coords.max_x - tg_coords.min_x + 2*tg_margin_x,
-                                    tg_coords.max_y - tg_coords.min_y + node_height + tg_margin_bottom,
-                                    fill=(
-                                        tg.ui_css.background if tg.ui_css and tg.ui_css.background
-                                        else None
-                                    ),
-                                    stroke=tg.ui_css.border if tg.ui_css and tg.ui_css.border else None
-                                ) }}
-                            </g>
-                        {%- endfor %}
-                    {%- endif %}
-
-                    {# Draw the base container last using the same macro #}
-                    {{ taskgroup_rect_box(
-                        tg_coords.min_x - tg_margin_x,
-                        tg_coords.min_y - (tg_label_height + tg_label_margin_top),
-                        tg_coords.max_x - tg_coords.min_x + 2*tg_margin_x,
-                        tg_coords.max_y - tg_coords.min_y + node_height + tg_margin_bottom,
-                        "taskgroup-container",
-                        fill=(
-                            tg.ui_css.background if tg.ui_css and tg.ui_css.background
-                            else None
-                        ),
-                        stroke=tg.ui_css.border if tg.ui_css and tg.ui_css.border else None
-                    ) }}
-                    <text class="taskgroup-label" 
-                          x="{{ tg_coords.min_x + (tg_coords.max_x - tg_coords.min_x)/2 }}"
-                          y="{{ tg_coords.min_y - tg_label_margin_top }}" 
-                          text-anchor="middle" font-family="sans-serif" font-size="11" 
-                          font-weight="bold"
-                          {%- if tg.ui_css and tg.ui_css.color and tg.ui_css.color|trim != '' %}
-                            style="fill: {{ tg.ui_css.color }};"
-                          {%- endif %}
-                    >
-                        {{ tg.name }}
-                    </text>
-                </g>
-            {%- endif %}
+            {%- set _ = all_arrows.append({'cat': 'nm', 'kind': none, 'p0': none, 'p1': none, 'src': src, 'tgt': tgt}) %}
         {%- endfor %}
 
-        {# Draw nodes #}
-        {%- set state = {'parallel_depth': 0} %}
-        {%- for node in nodes %}
-            <!-- DEBUG '{{ node.name }}', node.ui_css: {{ node.ui_css }} -->
-            {%- set pos = id_to_pos[node.uuid] %}
+        {%- set parallel_arrow_indices = {} %}
+        {%- for p_uuid in parallel_node_lists.keys() %}
+            {%- set _ = parallel_arrow_indices.update({p_uuid: []}) %}
+        {%- endfor %}
+        {%- set arrows_by_owner = {} %}
+        {%- for a in all_arrows %}
+            {%- set a_idx = loop.index0 %}
+            {%- set best = {'uuid': none, 'level': -1} %}
+            {%- for p_uuid in node_regions.get(a.src, []) %}
+                {%- if p_uuid in node_regions.get(a.tgt, []) %}
+                    {%- if parallel_depths[p_uuid] > best.level %}
+                        {%- set _ = best.update({'uuid': p_uuid, 'level': parallel_depths[p_uuid]}) %}
+                    {%- endif %}
+                {%- endif %}
+            {%- endfor %}
+            {%- if best.uuid %}
+                {%- set _ = parallel_arrow_indices[best.uuid].append(a_idx) %}
+            {%- else %}
+                {#- Top-level arrow: anchor it to its top-level source entity #}
+                    {%- if a.cat == 'tg' and a.kind == 'out' %}
+                        {%- set owner = a.p0 %}
+                    {%- elif a.cat == 'pl' and a.kind == 'out' %}
+                        {%- set owner = parallel_to_root[a.p0] %}
+                    {%- else %}
+                        {%- set src_tg = id_to_top_level_tg.get(a.src) %}
+                        {%- if src_tg %}
+                            {%- set owner = src_tg %}
+                        {%- elif node_to_parallel.get(a.src) %}
+                            {%- set owner = parallel_to_root[node_to_parallel[a.src]] %}
+                        {%- else %}
+                            {%- set owner = a.src %}
+                        {%- endif %}
+                    {%- endif %}
+                    {%- if owner not in arrows_by_owner %}
+                        {%- set _ = arrows_by_owner.update({owner: []}) %}
+                    {%- endif %}
+                    {%- set _ = arrows_by_owner[owner].append(a_idx) %}
+                {%- endif %}
+        {%- endfor %}
 
+        {#- Per-node render-time parallel depth, so nodes can render in container order
+            rather than list order #}
+        {%- set render_pds = {} %}
+        {%- set pd_state = {'val': 0} %}
+        {%- for node in nodes %}
             {# Increase parallel depth BEFORE rendering node if parallel #}
             {%- if node.is_parallel %}
-                {%- set _ = state.update({'parallel_depth': state.parallel_depth + 1}) %}
+                {%- set _ = pd_state.update({'val': pd_state.val + 1}) %}
             {%- endif %}
 
             {# Decrease parallel depth BEFORE rendering node if merge #}
             {%- if node.merge_func is not none and not node.is_parallel %}
-                <!-- DEBUG: decrease parallel depth - node {{ node.uuid }}
-                            parallel_depth={{ state.parallel_depth }} is_parallel={{ node.is_parallel }}
-                            merge_func={{ node.merge_func is not none }} -->
-                {%- set _ = state.update({'parallel_depth': state.parallel_depth - 1}) %}
+                {%- set _ = pd_state.update({'val': pd_state.val - 1}) %}
             {%- endif %}
 
-            <!-- DEBUG: node {{ node.uuid }} parallel_depth={{ state.parallel_depth }}
-                        is_parallel={{ node.is_parallel }} merge_func={{ node.merge_func is not none }} -->
-            {# Render per-node underlays only for nodes NOT part of a taskgroup.
-               If node is in a taskgroup, the underlays were already rendered at the taskgroup level. #}
-            <g class="node" id="node-{{ node.uuid }}" transform="translate({{ pos.x }}, {{ pos.y }})" 
-               style="cursor: grab;" data-taskgroup="{{ node.taskgroup_uuid or '' }}">
-                {%- if state.parallel_depth > 0 and not node.taskgroup_uuid %}
-                    {%- for level in range(state.parallel_depth, 0, -1) %}
-                        <!-- DEBUG: level {{ level }} {{ node.name }} -->
-                        {%- set offset = 3 * level %}
-                        <g transform="translate({{ offset }}, {{ offset }})">
-                            {%- if node.is_parallel %}
-                                {{ trapezoid_entry(
-                                    node_width, node_height,
-                                    fill=node.ui_css.background if node.ui_css and node.ui_css.background else None,
-                                    stroke=node.ui_css.border if node.ui_css and node.ui_css.border else None
-                                ) }}
-                            {%- elif node.merge_func is not none %}
-                                {{ trapezoid_exit(
-                                    node_width, node_height,
-                                    fill=node.ui_css.background if node.ui_css and node.ui_css.background else None,
-                                    stroke=node.ui_css.border if node.ui_css and node.ui_css.border else None
-                                ) }}
-                            {%- else %}
-                                {{ node_rect_box(
-                                    node_width, node_height,
-                                    fill=node.ui_css.background if node.ui_css and node.ui_css.background else None,
-                                    stroke=node.ui_css.border if node.ui_css and node.ui_css.border else None
-                                ) }}
-                            {%- endif %}
-                        </g>
-                    {%- endfor %}
-                {%- endif %}
+            {%- set _ = render_pds.update({node.uuid: pd_state.val}) %}
+        {%- endfor %}
 
-                {# Render main node shape on top #}
-                {%- if node.is_parallel %}
-                    {{ trapezoid_entry(
-                        node_width, node_height,
-                        fill=node.ui_css.background if node.ui_css and node.ui_css.background else None,
-                        stroke=node.ui_css.border if node.ui_css and node.ui_css.border else None
-                    ) }}
-                {%- elif node.merge_func is not none %}
-                    {{ trapezoid_exit(
-                        node_width, node_height,
-                        fill=node.ui_css.background if node.ui_css and node.ui_css.background else None,
-                        stroke=node.ui_css.border if node.ui_css and node.ui_css.border else None
-                    ) }}
-
-                    {%- set merge_text = node.merge_func.name -%}
-                    {%- set merge_font = "sans-serif" -%}
-                    {%- set merge_font_size = 11 -%}
-                    {%- set merge_padding_x = 6 -%}
-                    {%- set merge_text_width =
-                        get_text_pixel_width(merge_text, merge_font, merge_font_size)
-                    -%}
-                    {%- set merge_rect_width = merge_text_width + 2 * merge_padding_x -%}
-
-                    <rect x="0"
-                          y="-3"
-                          width="{{ merge_rect_width }}"
-                          height="10"
-                          fill="url(#glassGradient)"
-                          rx="3" ry="3"
-                          stroke="#ffd700"
-                          stroke-width="0.5"
-                          opacity="0.9" />
-
-                    <text class="label"
-                          x="{{ merge_rect_width / 2 }}"
-                          y="5"
-                          text-anchor="middle"
-                          font-family="{{ merge_font }}"
-                          font-size="{{ merge_font_size }}"
-                          style="fill: #ffd700; stroke: none;
-                                 filter: drop-shadow(0 0 2px rgba(0,0,0,0.3));">
-                        {{ merge_text }}
-                    </text>
+        {# Parents render before children (lower z-level for parents) #}
+        {#- Render all top-level entities (standalone nodes, taskgroups, parallel sub-DAGs)
+            in DAG logical order. Each container recursively renders its full content inside
+            its own <g> node; entity-owned top-level arrows follow their entity immediately. #}
+        {%- set rendered_entities = [] %}
+        {%- for node in nodes %}
+            {%- if node.taskgroup_uuid %}
+                {%- set root_tg = id_to_top_level_tg[node.uuid] %}
+                {%- if root_tg_regions.get(root_tg) %}
+                    {%- set entity = ('pl', parallel_to_root[root_tg_regions[root_tg]]) %}
                 {%- else %}
-                    {{ node_rect_box(
-                        node_width, node_height,
-                        fill=node.ui_css.background if node.ui_css and node.ui_css.background else None,
-                        stroke=node.ui_css.border if node.ui_css and node.ui_css.border else None
-                    ) }}
+                    {%- set entity = ('tg', root_tg) %}
                 {%- endif %}
-                <text class="label" x="{{ node_width/2 }}" y="{{ node_height/2 + 3 }}"
-                      text-anchor="middle" font-family="sans-serif" font-size="11"
-                      {%- if node.ui_css and node.ui_css.color and node.ui_css.color|trim != '' %}
-                        style="fill: {{ node.ui_css.color }};"
-                      {%- endif %}
-                >
-                    {{ node.name }}
-                </text>
-            </g>
+            {%- elif node_to_parallel.get(node.uuid) %}
+                {%- set entity = ('pl', parallel_to_root[node_to_parallel[node.uuid]]) %}
+            {%- else %}
+                {%- set entity = ('node', node.uuid) %}
+            {%- endif %}
+            {%- if entity not in rendered_entities %}
+                {%- set _ = rendered_entities.append(entity) %}
+                {%- if entity[0] == 'pl' %}
+                    {{ parallel_rect_box(node=id_to_node[entity[1]]) }}
+                {%- elif entity[0] == 'tg' %}
+                    {{ taskgroup_rect_box(tg=id_to_taskgroup[entity[1]]) }}
+                {%- else %}
+                    {{ render_node(id_to_node[entity[1]]) }}
+                {%- endif %}
+                {%- for a_idx in arrows_by_owner.get(entity[1], []) %}
+                    {{ render_arrow(all_arrows[a_idx]) }}
+                {%- endfor %}
+            {%- endif %}
         {%- endfor %}
 
         {# Draw all tooltips last in a separate group #}
@@ -795,7 +1493,7 @@
                                y="{{ id_to_pos[node.uuid].y + tooltip_y_offset }}"
                                width="200" height="70"
                                style="visibility:hidden; overflow: visible;">
-                    <div style="box-sizing: border-box; padding: 8px; background: #333;
+                    <div xmlns="http://www.w3.org/1999/xhtml" style="box-sizing: border-box; padding: 8px; background: #333;
                                 color: white; border: 1px solid #666; border-radius: 5px;
                                 font-size: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.3);"
                     >
@@ -812,600 +1510,105 @@
                     <foreignObject id="tooltip-taskgroup-{{ tg.uuid }}"
                                    x="{{ tg_coords.min_x if tg_coords else 0 }}"
                                    y="{{ ((tg_coords.min_y - (tg_label_height + tg_label_margin_top)) + tooltip_y_offset)
-                                         if tg_coords else 0 }}" 
+                                         if tg_coords else 0 }}"
                                    width="{{ (tg_coords.max_x - tg_coords.min_x)
                                              if (tg_coords and (tg_coords.max_x -  tg_coords.min_x) > 200)
                                              else 200 }}"
                                    height="70"
                                    style="visibility:hidden; overflow: visible;">
-                        <div style="box-sizing: border-box; padding: 8px; background: #333;
+                        <div xmlns="http://www.w3.org/1999/xhtml" style="box-sizing: border-box; padding: 8px; background: #333;
                                     color: white; border: 1px solid #666; border-radius: 5px;
                                     font-size: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.3);"
-                        >
-                            <strong>{{ tg.name }}</strong><br/>
-                            <em>{{ tg.docstring }}</em>
-                        </div>
-                    </foreignObject>
-                {%- endif %}
-            {%- endfor %}
+                    >
+                                <strong>{{ tg.name }}</strong><br/>
+                                <em>{{ tg.docstring }}</em>
+                            </div>
+                        </foreignObject>
+                    {%- endif %}
+                {%- endfor %}
+            </g>
         </g>
-    </g>
+
+        {# Floating glass toolbar (collapse-all / expand-all / magnifier).
+           Placed as a sibling of canvas-group so pan/zoom never affect it;
+           foreignObject coordinates are in the SVG's own viewport space.
+           The collapse-all / expand-all group only renders when at least one
+           bounding rectangle (taskgroup or parallel sub-DAG) exists, since
+           those items are otherwise no-ops. #}
+        <foreignObject class="dag-toolbar-fo" x="0" y="6" width="100%" height="36">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="dag-toolbar" id="dag-toolbar-{{ id_prefix }}">
+                {%- if taskgroup_bounds|length > 0 or parallel_bounds|length > 0 %}
+                <span class="dag-toolbar-group" id="collapse-expand-group-{{ id_prefix }}">
+                    <span class="dag-toolbar-item" id="collapse-all-{{ id_prefix }}">collapse all</span>
+                    <span class="dag-toolbar-sep">|</span>
+                    <span class="dag-toolbar-item" id="expand-all-{{ id_prefix }}">expand all</span>
+                    <span class="dag-toolbar-sep">|</span>
+                </span>
+                {%- endif %}
+                <span class="dag-toolbar-item dag-toolbar-magnifier" id="magnify-{{ id_prefix }}" title="escape twice to hide">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="11" cy="11" r="7"></circle>
+                        <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                    </svg>
+                </span>
+            </div>
+        </foreignObject>
+
+        {# Magnifier viewport: clones canvas (which nests tooltips) & toolbar dynamically
+           via JS, zooms 2x absolute via viewBox. Placed at highest z-order to overlay
+           tooltips, buttons, and toolbar.
+           Width = 50% of canvas width, height = 2x width (1/2 W/H ratio).
+           Positioned x-centered on cursor and 2/3 of height above cursor.
+           Tooltips are NOT cloned separately: they live inside canvas-group, so the
+           canvas clone already carries them with the correct pan/zoom transform;
+           cloning them separately would produce a phantom copy without that transform. #}
+        <g id="magnifier-{{ id_prefix }}" style="display: none; pointer-events: none;">
+            <defs>
+                <filter id="magnifier-shadow-{{ id_prefix }}" x="-50%" y="-50%" width="200%" height="200%">
+                    <feDropShadow dx="4" dy="4" stdDeviation="3" flood-color="rgba(0,0,0,0.5)" />
+                </filter>
+                <clipPath id="magnifier-clip-{{ id_prefix }}">
+                    <rect id="magnifier-clip-rect-{{ id_prefix }}" x="0" y="0" rx="10" ry="10" />
+                </clipPath>
+            </defs>
+            <g filter="url(#magnifier-shadow-{{ id_prefix }})">
+                <g clip-path="url(#magnifier-clip-{{ id_prefix }})">
+                    <rect id="magnifier-bg-{{ id_prefix }}" x="0" y="0" />
+                    <svg id="magnifier-inner-{{ id_prefix }}" class="magnifier-inner"
+                         x="0" y="0" preserveAspectRatio="none"></svg>
+                </g>
+                <rect id="magnifier-border-{{ id_prefix }}" x="0" y="0" rx="10" ry="10" fill="none" stroke="white" stroke-width="1.5" />
+            </g>
+        </g>
 </svg>
 
+<!-- DAG_EXTERNAL_JS -->
 <script>
-    // Wrap the script body in an IIFE to scope all declarations locally
     (function() {
-        // Node tooltips
-        {%- for node in nodes %}
-            {%- if node.docstring %}
-            (function() {
-                const nodeEl = document.getElementById('node-{{ node.uuid }}');
-                const tooltip = document.getElementById('tooltip-node-{{ node.uuid }}');
-
-                if (tooltip) {
-                    let hoverAnchor = false;
-                    let hoverTooltip = false;
-
-                    const updateVisibility = () => {
-                        tooltip.style.visibility = (hoverAnchor || hoverTooltip) ? 'visible' : 'hidden';
-                    };
-
-                    nodeEl.addEventListener('mouseenter', () => {
-                        hoverAnchor = true;
-                        updateVisibility();
-                    });
-
-                    nodeEl.addEventListener('mouseleave', () => {
-                        hoverAnchor = false;
-                        setTimeout(updateVisibility, 10);
-                    });
-
-                    tooltip.addEventListener('mouseenter', () => {
-                        hoverTooltip = true;
-                        updateVisibility();
-                    });
-
-                    tooltip.addEventListener('mouseleave', () => {
-                        hoverTooltip = false;
-                        setTimeout(updateVisibility, 10);
-                    });
-
-                    tooltip.style.pointerEvents = 'auto';
-                }
-            })();
-            {%- endif %}
-        {%- endfor %}
-
-        // Taskgroup tooltips
-        {%- for tg in taskgroups %}
-            {%- if tg.docstring %}
-            (function() {
-                const taskgroupEl = document.getElementById('taskgroup-{{ tg.uuid }}');
-                const tooltip = document.getElementById('tooltip-taskgroup-{{ tg.uuid }}');
-
-                if (tooltip) {
-                    let hoverAnchor = false;
-                    let hoverTooltip = false;
-
-                    const updateVisibility = () => {
-                        tooltip.style.visibility = (hoverAnchor || hoverTooltip) ? 'visible' : 'hidden';
-                    };
-
-                    taskgroupEl.addEventListener('mouseenter', () => {
-                        hoverAnchor = true;
-                        updateVisibility();
-                    });
-
-                    taskgroupEl.addEventListener('mouseleave', () => {
-                        hoverAnchor = false;
-                        setTimeout(updateVisibility, 10);
-                    });
-
-                    tooltip.addEventListener('mouseenter', () => {
-                        hoverTooltip = true;
-                        updateVisibility();
-                    });
-
-                    tooltip.addEventListener('mouseleave', () => {
-                        hoverTooltip = false;
-                        setTimeout(updateVisibility, 10);
-                    });
-
-                    tooltip.style.pointerEvents = 'auto';
-                }
-            })();
-            {%- endif %}
-        {%- endfor %}
-
-        // Hide all tooltips on ESC keypress
-        document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape') {
-                document.querySelectorAll('[id^="tooltip-"]').forEach(t => {
-                    t.style.visibility = 'hidden';
-                });
-            }
-        });
-    })();
-</script>
-
-<script>
-    // Wrap the script body in an IIFE to scope all declarations locally
-    (function() {
-        /* ***************
-        * Nodes-dragging *
-        *************** */
-        const nodeWidth = {{ node_width }};
-        const nodeHeight = {{ node_height }};
-
-        const tgMarginX = {{ tg_margin_x }};
-        const tgLabelHeight = {{ tg_label_height }};
-        const tgLabelMarginTop = {{ tg_label_margin_top }};
-        const tgMarginBottom = {{ tg_margin_bottom }};
-
-        const tooltipYOffset = {{ tooltip_y_offset }};
-
-        const svg = document.getElementById("dag-{{ id_prefix }}");
-        const canvasGroup = document.getElementById("canvas-group-{{ id_prefix }}");
-
-        // Transform state
-        let currentTransform = {
-            x: 0,
-            y: 0,
-            scale: 1.2 // 120% magnifying at initial load time
+        const config = {
+            id_prefix: "{{ id_prefix }}",
+            nodeWidth: {{ node_width }},
+            nodeHeight: {{ node_height }},
+            arrowLengthY: {{ arrow_length_y }},
+            tgMarginX: {{ tg_inner_margin_x }},
+            tgLabelHeight: {{ tg_label_height }},
+            tgLabelMarginTop: {{ tg_label_margin_top }},
+            tgMarginBottom: {{ tg_margin_bottom }},
+            parallelMarginX: {{ parallel_margin_x }},
+            parallelMarginY: {{ parallel_margin_y }},
+            tooltipYOffset: {{ tooltip_y_offset }}
         };
-
-        let selected = null;
-        let selectedTaskgroup = null;
-        let startMouse = null;               // mouse position at drag start {x, y}
-        let startPos = null;                 // node position at drag start {x, y}
-        let taskgroupStartPositions = null;  // taskgroup position at drag start {x, y}
-
-        function getMouseSVGCoords(evt) {
-            const pt = svg.createSVGPoint();
-            pt.x = evt.clientX;
-            pt.y = evt.clientY;
-            const transformed = pt.matrixTransform(svg.getScreenCTM().inverse());
-
-            // Convert to canvas coordinate system (account for pan and zoom)
-            return {
-                x: (transformed.x - currentTransform.x) / currentTransform.scale,
-                y: (transformed.y - currentTransform.y) / currentTransform.scale
-            };
-        }
-
-        function updateTransform() {
-            canvasGroup.setAttribute(
-                'transform',
-                `translate(${currentTransform.x},
-                           ${currentTransform.y}) scale(${currentTransform.scale})`
-            );
-        }
-
-        function updateLines(elementId, x, y) {
-            // Helper to get position and size info of an element (node or taskgroup)
-            function getPosAndSize(el) {
-                if (!el) return null;
-
-                let posX = 0, posY = 0, width = 0, height = 0;
-
-                // For nodes, position is from transform translate, size fixed as nodeWidth, nodeHeight
-                if (el.classList.contains('node')) {
-                    const transform = el.getAttribute('transform');
-                    if (!transform) return null;
-                    const match = transform.match(/translate\(([-\d.]+),\s*([-\d.]+)\)/);
-                    if (!match) return null;
-                    posX = parseFloat(match[1]);
-                    posY = parseFloat(match[2]);
-                    width = nodeWidth;
-                    height = nodeHeight;
-                }
-                // For taskgroups, position and size come from <rect> inside the group
-                else if (el.classList.contains('taskgroup')) {
-                    const rect = el.querySelector('rect');
-                    if (!rect) return null;
-                    posX = parseFloat(rect.getAttribute('x'));
-                    posY = parseFloat(rect.getAttribute('y'));
-                    width = parseFloat(rect.getAttribute('width'));
-                    height = parseFloat(rect.getAttribute('height'));
-                }
-                // fallback, try transform + nodeWidth/nodeHeight
-                else {
-                    const transform = el.getAttribute('transform');
-                    if (!transform) return null;
-                    const match = transform.match(/translate\(([-\d.]+),\s*([-\d.]+)\)/);
-                    if (!match) return null;
-                    posX = parseFloat(match[1]);
-                    posY = parseFloat(match[2]);
-                    width = nodeWidth;
-                    height = nodeHeight;
-                }
-
-                return { x: posX, y: posY, width: width, height: height };
-            }
-
-            // Update lines where element is source (start)
-            document.querySelectorAll(`line[id^="arrow-${elementId}-"]`).forEach(line => {
-                const targetId = line.id.slice(`arrow-${elementId}-`.length);
-                const targetEl =
-                    document.getElementById('taskgroup-' + targetId) ||
-                    document.getElementById('node-' + targetId);
-
-                if (!targetEl) return;
-
-                const sourceInfo = getPosAndSize(document.getElementById(elementId) || document.getElementById('node-' + elementId) || document.getElementById('taskgroup-' + elementId));
-                if (!sourceInfo) return;
-
-                const targetInfo = getPosAndSize(targetEl);
-                if (!targetInfo) return;
-
-                // Arrow goes from bottom center of source to top center of target
-                const x1 = sourceInfo.x + sourceInfo.width / 2;
-                const y1 = sourceInfo.y + sourceInfo.height;
-                const x2 = targetInfo.x + targetInfo.width / 2;
-                const y2 = targetInfo.y;
-
-                line.setAttribute('x1', x1);
-                line.setAttribute('y1', y1);
-                line.setAttribute('x2', x2);
-                line.setAttribute('y2', y2);
-            });
-
-            // Update lines where element is target (end)
-            document.querySelectorAll(`line[id$="-${elementId}"]`).forEach(line => {
-                // line id format: arrow-source-target
-                const prefix = 'arrow-';
-                const srcId = line.id.slice(prefix.length, -(`-${elementId}`).length);
-                const srcEl =
-                    document.getElementById('taskgroup-' + srcId) ||
-                    document.getElementById('node-' + srcId);
-
-                if (!srcEl) return;
-
-                const sourceInfo = getPosAndSize(srcEl);
-                if (!sourceInfo) return;
-
-                const targetInfo = getPosAndSize(document.getElementById(elementId) || document.getElementById('node-' + elementId) || document.getElementById('taskgroup-' + elementId));
-                if (!targetInfo) return;
-
-                // Arrow goes from bottom center of source to top center of target
-                const x1 = sourceInfo.x + sourceInfo.width / 2;
-                const y1 = sourceInfo.y + sourceInfo.height;
-                const x2 = targetInfo.x + targetInfo.width / 2;
-                const y2 = targetInfo.y;
-
-                line.setAttribute('x1', x1);
-                line.setAttribute('y1', y1);
-                line.setAttribute('x2', x2);
-                line.setAttribute('y2', y2);
-            });
-        }
-
-        function updateTaskgroupBounds(taskgroupId) {
-            const tgEl = document.getElementById(taskgroupId);
-            if (!tgEl) return;
-            const nodes = tgEl.dataset.nodes.split(',');
-            let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-
-            nodes.forEach(nodeId => {
-                const nodeEl = document.getElementById(`node-${nodeId}`);
-                if (!nodeEl) return;
-                const match = nodeEl.getAttribute('transform')
-                    ?.match(/translate\(([-\d.]+),\s*([-\d.]+)\)/);
-                if (!match) return;
-                const x = parseFloat(match[1]);
-                const y = parseFloat(match[2]);
-                minX = Math.min(minX, x);
-                maxX = Math.max(maxX, x + nodeWidth);
-                minY = Math.min(minY, y);
-                maxY = Math.max(maxY, y + nodeHeight);
-            });
-
-            const offsetX = minX - tgMarginX;
-            const offsetY = minY - (tgLabelHeight + tgLabelMarginTop);
-            const width = maxX - minX + 2*tgMarginX;
-            const height = maxY - minY + nodeHeight + tgMarginBottom;
-
-            // Update all rects (underlays + container)
-            tgEl.querySelectorAll('rect').forEach(r => {
-                r.setAttribute('x', offsetX);
-                r.setAttribute('y', offsetY);
-                r.setAttribute('width', width);
-                r.setAttribute('height', height);
-            });
-
-            // Update all labels
-            tgEl.querySelectorAll('text').forEach(t => {
-                t.setAttribute('x', minX + (maxX - minX) / 2);
-                t.setAttribute('y', minY - 10);
-            });
-
-            // Move taskgroup tooltip
-            const tgTooltip = document.getElementById('tooltip-' + taskgroupId);
-            if (tgTooltip) {
-                tgTooltip.setAttribute('x', minX);
-                tgTooltip.setAttribute('y', minY - (tgLabelHeight + tgLabelMarginTop) + tooltipYOffset);
-            }
-        }
-
-        // Dragging logic
-        svg.querySelectorAll('.node').forEach(node => {
-            node.addEventListener('mousedown', (e) => {
-                selected = node;
-                startMouse = getMouseSVGCoords(e);
-
-                const transform = selected.getAttribute('transform');
-                const match = transform.match(/translate\(([-\d.]+),\s*([-\d.]+)\)/);
-                startPos = {
-                    x: parseFloat(match[1]),
-                    y: parseFloat(match[2])
-                };
-
-                selected.style.cursor = 'grabbing';
-                e.preventDefault();
-                e.stopPropagation();
-            });
-        });
-
-        svg.querySelectorAll('.taskgroup-container').forEach(container => {
-            container.addEventListener('mousedown', (e) => {
-                selectedTaskgroup = container.closest('.taskgroup');
-                startMouse = getMouseSVGCoords(e);
-                taskgroupStartPositions = { rects: [], labels: [], underlays: [], nodes: {} };
-
-                selectedTaskgroup.querySelectorAll('rect').forEach(r => {
-                    taskgroupStartPositions.rects.push({
-                        el: r,
-                        x: parseFloat(r.getAttribute('x')),
-                        y: parseFloat(r.getAttribute('y'))
-                    });
-                });
-                selectedTaskgroup.querySelectorAll('text').forEach(t => {
-                    taskgroupStartPositions.labels.push({
-                        el: t,
-                        x: parseFloat(t.getAttribute('x')),
-                        y: parseFloat(t.getAttribute('y'))
-                    });
-                });
-
-                selectedTaskgroup.dataset.nodes.split(',').forEach(nodeId => {
-                    const nodeEl = document.getElementById(`node-${nodeId}`);
-                    if (!nodeEl) return;
-                    const match = nodeEl.getAttribute('transform').match(/translate\(([-\d.]+),\s*([-\d.]+)\)/);
-                    taskgroupStartPositions.nodes[nodeId] = { x: parseFloat(match[1]), y: parseFloat(match[2]) };
-                });
-
-                selectedTaskgroup.style.cursor = 'grabbing';
-                e.preventDefault();
-                e.stopPropagation();
-            });
-        });
-
-        window.addEventListener('mousemove', (e) => {
-            if (selected) {
-                const coords = getMouseSVGCoords(e);
-                const dx = coords.x - startMouse.x;
-                const dy = coords.y - startMouse.y;
-                const newX = startPos.x + dx;
-                const newY = startPos.y + dy;
-
-                selected.setAttribute('transform', `translate(${newX},${newY})`);
-                updateLines(selected.id.replace(/^node-/, ''), newX, newY);
-
-                // Move node tooltip
-                const nodeUuid = selected.id.replace(/^node-/, '');
-                const tooltip = document.getElementById('tooltip-node-' + nodeUuid);
-                if (tooltip) {
-                    tooltip.setAttribute('x', newX);
-                    tooltip.setAttribute('y', newY + tooltipYOffset);
-                }
-
-                // Update taskgroup boundaries
-                const tgId = selected.dataset.taskgroup;
-                if (tgId) {
-                    const taskgroupEl = document.getElementById('taskgroup-' + tgId);
-                    updateTaskgroupBounds('taskgroup-' + tgId);
-                    const rect = taskgroupEl.querySelector('rect');
-                    updateLines(tgId, rect.getAttribute('x'), rect.getAttribute('y'));
-                }
-            } else if (selectedTaskgroup) {
-                const coords = getMouseSVGCoords(e);
-                const dx = coords.x - startMouse.x;
-                const dy = coords.y - startMouse.y;
-
-                taskgroupStartPositions.rects.forEach(r => {
-                    r.el.setAttribute('x', r.x + dx);
-                    r.el.setAttribute('y', r.y + dy);
-                });
-
-                taskgroupStartPositions.labels.forEach(t => {
-                    t.el.setAttribute('x', t.x + dx);
-                    t.el.setAttribute('y', t.y + dy);
-                });
-
-                Object.entries(taskgroupStartPositions.nodes).forEach(([nodeId, start]) => {
-                    const nodeEl = document.getElementById(`node-${nodeId}`);
-                    nodeEl.setAttribute('transform', `translate(${start.x + dx},${start.y + dy})`);
-                    // Move node tooltip
-                    const tooltip = document.getElementById('tooltip-node-' + nodeId);
-                    if (tooltip) {
-                        tooltip.setAttribute('x', start.x + dx);
-                        tooltip.setAttribute('y', start.y + dy + tooltipYOffset);
-                    }
-                });
-
-                updateTaskgroupBounds(selectedTaskgroup.id);
-                updateLines(selectedTaskgroup.id.replace(/^taskgroup-/, ''), null, null);
-            }
-        });
-
-        window.addEventListener('mouseup', () => {
-            if (selected) selected.style.cursor = 'grab';
-            if (selectedTaskgroup) selectedTaskgroup.style.cursor = 'grab';
-            selected = null;
-            selectedTaskgroup = null;
-            startMouse = null;
-            startPos = null;
-            taskgroupStartPositions = null;
-        });
-        /* ************ */
-
-        /* ***************************
-        * DAG-centering at load time *
-        *************************** */
-        function adjustSVGHeight() {
-            const nodes = svg.querySelectorAll('.node');
-            if (!nodes.length) return;
-            let minY = Infinity, maxY = -Infinity;
-            nodes.forEach(node => {
-                const match = node.getAttribute('transform').match(/translate\(([-\d.]+),\s*([-\d.]+)\)/);
-                const y = parseFloat(match[2]);
-                minY = Math.min(minY, y);
-                maxY = Math.max(maxY, y + nodeHeight);
-            });
-
-            // Calculate dagHeight and add top/bottom margin
-            const dagHeight = maxY - minY;
-            const newHeight = (dagHeight + 2 * {{ -tooltip_y_offset}}) * currentTransform.scale; // top & bottom margin, scaled
-
-            // Set new SVG height (in pixels)
-            svg.setAttribute('height', newHeight);
-        }
-
-        function centerDAG() {
-            const nodes = svg.querySelectorAll('.node');
-            if (nodes.length === 0) return;
-
-            let minX = Infinity, maxX = -Infinity;
-            let minY = Infinity;
-
-            nodes.forEach(node => {
-                const transform = node.getAttribute('transform');
-                const match = transform.match(/translate\(([-\d.]+),\s*([-\d.]+)\)/);
-                if (match) {
-                    const x = parseFloat(match[1]);
-                    const y = parseFloat(match[2]);
-
-                    minX = Math.min(minX, x);
-                    maxX = Math.max(maxX, x + nodeWidth);
-                    minY = Math.min(minY, y);
-                }
-            });
-
-            const contentWidth = maxX - minX;
-            const contentCenterX = minX + contentWidth / 2;
-
-            const svgRect = svg.getBoundingClientRect();
-            const viewportCenterX = svgRect.width / 2;
-
-            // Horizontal centering
-            currentTransform.x = viewportCenterX - contentCenterX * currentTransform.scale;
-            // Vertical top alignment (e.g. top of DAG starts at, from top of viewport)
-            const desiredTopOffset = {{ -tooltip_y_offset }} * currentTransform.scale;
-            currentTransform.y = desiredTopOffset - minY * currentTransform.scale;
-
-            updateTransform();
-        }
-
-        adjustSVGHeight();
-        centerDAG();
-        canvasGroup.style.visibility = 'visible';
-        // Also center on resize
-        window.addEventListener('resize', centerDAG);
-        // Also center on becoming visible
-        const intersectionObserver = new IntersectionObserver((entries) => {
-            entries.forEach(entry => {
-                if (entry.isIntersecting) {
-                    centerDAG();
-                }
-            });
-        }, { threshold: 0.01 }); // trigger as soon as a tiny part is visible
-        intersectionObserver.observe(canvasGroup);
-        /* ************************ */
-
-        /* ****************
-        * Canvas-dragging *
-        **************** */
-        let canvasDrag = false;
-        let canvasStartMouse = null;
-        let canvasStartTransform = {x: 0, y: 0};
-
-        svg.addEventListener('mousedown', (e) => {
-            // Only start if not clicking on a node
-            if (e.target === svg) {
-                canvasDrag = true;
-                const pt = svg.createSVGPoint();
-                pt.x = e.clientX;
-                pt.y = e.clientY;
-                canvasStartMouse = pt.matrixTransform(svg.getScreenCTM().inverse());
-
-                canvasStartTransform = {
-                    x: currentTransform.x,
-                    y: currentTransform.y
-                };
-                svg.style.cursor = 'move';
-                e.preventDefault();
-            }
-        });
-
-        window.addEventListener('mousemove', (e) => {
-            if (canvasDrag) {
-                const pt = svg.createSVGPoint();
-                pt.x = e.clientX;
-                pt.y = e.clientY;
-                const coords = pt.matrixTransform(svg.getScreenCTM().inverse());
-
-                const dx = coords.x - canvasStartMouse.x;
-                const dy = coords.y - canvasStartMouse.y;
-
-                currentTransform.x = canvasStartTransform.x + dx;
-                currentTransform.y = canvasStartTransform.y + dy;
-
-                updateTransform();
-            }
-        });
-
-        window.addEventListener('mouseup', () => {
-            if (canvasDrag) {
-                svg.style.cursor = 'default';
-            }
-            canvasDrag = false;
-            canvasStartMouse = null;
-        });
-        /* ************ */
-
-        /* ***************
-        * Canvas-zooming *
-        *************** */
-        svg.addEventListener('wheel', (e) => {
-            if (!e.ctrlKey) return; // Only zoom when Ctrl is held
-            e.preventDefault();
-
-            // Get mouse position in SVG coordinates before zoom
-            const pt = svg.createSVGPoint();
-            pt.x = e.clientX;
-            pt.y = e.clientY;
-            const svgPoint = pt.matrixTransform(svg.getScreenCTM().inverse());
-
-            // Calculate zoom factor
-            const zoomFactor = e.deltaY < 0 ? 1.1 : 0.9;
-            const newScale = Math.max(0.1, Math.min(5, currentTransform.scale * zoomFactor));
-
-            // Calculate the point in canvas coordinates before zoom
-            const canvasPointBefore = {
-                x: (svgPoint.x - currentTransform.x) / currentTransform.scale,
-                y: (svgPoint.y - currentTransform.y) / currentTransform.scale
-            };
-
-            // Update scale
-            currentTransform.scale = newScale;
-
-            // Calculate new translation to keep the mouse point fixed
-            currentTransform.x = svgPoint.x - canvasPointBefore.x * currentTransform.scale;
-            currentTransform.y = svgPoint.y - canvasPointBefore.y * currentTransform.scale;
-
-            updateTransform();
-        });
-        /* ************ */
+        const ctx = { config: config, svg: document.getElementById('dag-' + config.id_prefix) };
+        ctx.canvasGroup = document.getElementById("canvas-group-" + config.id_prefix);
+
+        // Init order:
+        initDagCore(ctx);
+        initDagArrows(ctx);
+        initDagBounds(ctx);
+        initDagMagnifier(ctx);
+        initDagTooltips(ctx);
+        initDagCollapse(ctx);
+        initDagDrag(ctx);
+        initDagCanvas(ctx);
     })();
 </script>
-

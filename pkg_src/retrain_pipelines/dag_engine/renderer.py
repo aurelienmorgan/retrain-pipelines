@@ -135,5 +135,25 @@ def dag_svg(dag: DAG | None = None, execution_id: int | None = None) -> str:
     static_dir = os.path.join(os.path.dirname(__file__), "web_console", "static")
     with open(os.path.join(static_dir, "svg_dag.css"), encoding="utf-8") as f:
         svg_dag_css = f.read()
+    svg_dag_css = "<style>\n" + svg_dag_css + "\n" + "</style>\n"
 
-    return "<style>\n" + svg_dag_css + "\n" + "</style>\n" + rendering_content + "\n"
+    svg_dag_js_list = []
+    for ext_js_line in [
+        "svg_dag_core.js",
+        "svg_dag_arrows.js",
+        "svg_dag_bounds.js",
+        "svg_dag_magnifier.js",
+        "svg_dag_tooltips.js",
+        "svg_dag_collapse.js",
+        "svg_dag_drag.js",
+        "svg_dag_canvas.js",
+    ]:
+        with open(os.path.join(static_dir, ext_js_line), encoding="utf-8") as f:
+            svg_dag_js = f.read()
+        svg_dag_js_list.append("<script>\n" + svg_dag_js + "\n" + "</script>\n")
+
+    rendering_content = rendering_content.replace(
+        "<!-- DAG_EXTERNAL_JS -->", "".join(svg_dag_js_list)
+    )
+
+    return svg_dag_css + rendering_content + "\n"

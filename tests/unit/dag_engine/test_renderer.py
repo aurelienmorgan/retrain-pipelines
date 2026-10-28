@@ -2,6 +2,7 @@
 Unit tests for retrain_pipelines.dag_engine.renderer
 """
 
+import asyncio
 import pytest
 from unittest.mock import AsyncMock, MagicMock, mock_open, patch
 from uuid import uuid4
@@ -21,11 +22,11 @@ def _dag(nodes=None, groups=None):
 
 
 def _env(rendered=""):
-    tpl = MagicMock()
-    tpl.render.return_value = rendered
+    template = MagicMock()
+    template.render.return_value = rendered
     env = MagicMock()
-    env.get_template.return_value = tpl
-    return env, tpl
+    env.get_template.return_value = template
+    return env, template
 
 
 def _dao(tasktypes, taskgroups):
@@ -49,6 +50,17 @@ def _tasktype_stub(tg_uuid=None):
     return tt
 
 
+def _taskgroup_stub():
+    """Build a taskgroup-like stub whose __dict__ carries a UUID field."""
+    tg = MagicMock()
+    tg.__dict__ = {
+        "uuid": uuid4(),
+        "name": "group",
+        "order": 0,
+    }
+    return tg
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  render_svg
 # ══════════════════════════════════════════════════════════════════════════════
@@ -65,8 +77,8 @@ class TestRenderSvg:
     def test_output_file_written(self, tmp_path):
         out = str(tmp_path / "dag.html")
         dag = _dag()
-        env, tpl = _env("<rendered/>")
-        tpl.render.return_value = "<rendered/>"
+        env, template = _env("<rendered/>")
+        template.render.return_value = "<rendered/>"
 
         written = []
 
@@ -110,28 +122,28 @@ class TestDagSvgDagBranch:
 
     def test_id_prefix_five_chars(self):
         dag = _dag()
-        env, tpl = _env()
+        env, template = _env()
         with patch(_OPEN, mock_open(read_data="")), patch(_ENV, return_value=env):
             dag_svg(dag=dag)
-        _, kw = tpl.render.call_args
+        _, kw = template.render.call_args
         assert len(kw["id_prefix"]) == 5
 
     def test_empty_taskgroups_passed_as_empty_list(self):
         dag = _dag(nodes=[], groups=[])
-        env, tpl = _env()
+        env, template = _env()
         with patch(_OPEN, mock_open(read_data="")), patch(_ENV, return_value=env):
             dag_svg(dag=dag)
-        _, kw = tpl.render.call_args
+        _, kw = template.render.call_args
         assert kw["taskgroups"] == []
 
     def test_multiple_calls_produce_distinct_id_prefixes(self):
         dag = _dag()
         prefixes = set()
         for _ in range(20):
-            env, tpl = _env()
+            env, template = _env()
             with patch(_OPEN, mock_open(read_data="")), patch(_ENV, return_value=env):
                 dag_svg(dag=dag)
-            _, kw = tpl.render.call_args
+            _, kw = template.render.call_args
             prefixes.add(kw["id_prefix"])
         assert len(prefixes) > 1
 
@@ -147,7 +159,6 @@ class TestDagSvgExecutionIdBranch:
         dao = _dao([tt], [])
         env, _ = _env("<rendered/>")
         with (
-            patch(_IN_NB, return_value=False),
             patch(_ADAO, return_value=dao),
             patch(_OPEN, mock_open(read_data="")),
             patch(_ENV, return_value=env),
@@ -158,7 +169,6 @@ class TestDagSvgExecutionIdBranch:
     def test_none_tasktypes_returns_error_string(self):
         dao = _dao(None, None)
         with (
-            patch(_IN_NB, return_value=False),
             patch(_ADAO, return_value=dao),
             patch(_OPEN, mock_open(read_data="")),
         ):
@@ -168,32 +178,56 @@ class TestDagSvgExecutionIdBranch:
     def test_tasktype_with_taskgroup_uuid_serialised(self):
         tt = _tasktype_stub(tg_uuid=uuid4())
         dao = _dao([tt], [])
-        env, tpl = _env("")
+        env, template = _env("")
         with (
-            patch(_IN_NB, return_value=False),
             patch(_ADAO, return_value=dao),
             patch(_OPEN, mock_open(read_data="")),
             patch(_ENV, return_value=env),
         ):
             dag_svg(execution_id=1)
-        _, kw = tpl.render.call_args
+        _, kw = template.render.call_args
         assert isinstance(kw["nodes"][0]["taskgroup_uuid"], str)
 
     def test_tasktype_without_taskgroup_uuid_empty_str(self):
         tt = _tasktype_stub(tg_uuid=None)
         dao = _dao([tt], [])
-        env, tpl = _env("")
+        env, template = _env("")
         with (
-            patch(_IN_NB, return_value=False),
             patch(_ADAO, return_value=dao),
             patch(_OPEN, mock_open(read_data="")),
             patch(_ENV, return_value=env),
         ):
             dag_svg(execution_id=1)
-        _, kw = tpl.render.call_args
+        _, kw = template.render.call_args
         assert kw["nodes"][0]["taskgroup_uuid"] == ""
 
+    def test_taskgroup_uuid_serialised(self):
+        """Cover the branch where taskgroups_list is non-empty,
+        ensuring each taskgroup dict's uuid is converted to a string
+        before being passed to the template."""
+        tt = _tasktype_stub()
+        tg = _taskgroup_stub()
+        dao = _dao([tt], [tg])
+        env, template = _env("")
+        with (
+            patch(_ADAO, return_value=dao),
+            patch(_OPEN, mock_open(read_data="")),
+            patch(_ENV, return_value=env),
+        ):
+            dag_svg(execution_id=1)
+        _, kw = template.render.call_args
+        taskgroups = kw["taskgroups"]
+        assert len(taskgroups) == 1
+        assert isinstance(taskgroups[0]["uuid"], str)
+
     def test_notebook_path_uses_thread_pool(self):
+        """Cover the notebook branch where the fetch coroutine runs in
+        a dedicated worker thread via ThreadPoolExecutor.
+
+        in_notebook is patched because pytest runs outside any IPython
+        kernel and there is no way to make the real in_notebook() return
+        True in a standard test runner.
+        """
         tt = _tasktype_stub()
         dao = _dao([tt], [])
         env, _ = _env("")
@@ -205,6 +239,36 @@ class TestDagSvgExecutionIdBranch:
         ):
             result = dag_svg(execution_id=1)
         assert isinstance(result, str)
+
+    def test_no_current_event_loop_creates_new_one(self):
+        """dag_svg recovers when no event loop is current.
+
+        Select exception: ``_ADAO`` is patched because this test exercises
+        the asyncio-error-handling path of the renderer, not DAO behaviour.
+        ``policy.get_event_loop()`` is guarded with try/except: a previous
+        test in the same xdist worker may have closed the loop via
+        ``asyncio.run()``, leaving it None and causing ``RuntimeError`` here.
+        """
+        policy = asyncio.get_event_loop_policy()
+        try:
+            original_loop = policy.get_event_loop()
+        except RuntimeError:
+            original_loop = None
+        policy.set_event_loop(None)
+        tt = _tasktype_stub()
+        dao = _dao([tt], [])
+        env, _ = _env("<rendered/>")
+        try:
+            with (
+                patch(_IN_NB, return_value=False),
+                patch(_ADAO, return_value=dao),
+                patch(_OPEN, mock_open(read_data="")),
+                patch(_ENV, return_value=env),
+            ):
+                result = dag_svg(execution_id=1)
+            assert isinstance(result, str)
+        finally:
+            policy.set_event_loop(original_loop)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

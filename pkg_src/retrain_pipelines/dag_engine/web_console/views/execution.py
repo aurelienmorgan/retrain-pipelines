@@ -195,6 +195,26 @@ def register(app, rt, prefix=""):
             id_prefix="00000", nodes=tasktypes_list, taskgroups=taskgroups_list or []
         )
 
+        static_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static")
+        svg_dag_js_list = []
+        for ext_js_line in [
+            "svg_dag_core.js",
+            "svg_dag_arrows.js",
+            "svg_dag_bounds.js",
+            "svg_dag_magnifier.js",
+            "svg_dag_tooltips.js",
+            "svg_dag_collapse.js",
+            "svg_dag_drag.js",
+            "svg_dag_canvas.js",
+        ]:
+            with open(os.path.join(static_dir, ext_js_line), encoding="utf-8") as f:
+                svg_dag_js = f.read()
+            svg_dag_js_list.append("<script>\n" + svg_dag_js + "\n" + "</script>\n")
+
+        rendering_content = rendering_content.replace(
+            "<!-- DAG_EXTERNAL_JS -->", "".join(svg_dag_js_list)
+        )
+
         return rendering_content
 
     @rt(f"{prefix}/exec_current_progress", methods=["GET"])
@@ -598,7 +618,6 @@ def register(app, rt, prefix=""):
                         execNumEl.innerText = executionNumberJson.number;
                         const executionsCount = document.getElementById("executions-count");
                         executionsCount.innerText = executionNumberJson.count;
-console.log(executionNumberJson);
                         const ongoing = executionNumberJson.count - executionNumberJson.completed;
                         executionsCount.title =
                             `${{ongoing}} ongoing\n` +
