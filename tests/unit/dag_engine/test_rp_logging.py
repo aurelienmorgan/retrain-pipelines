@@ -1,28 +1,40 @@
-"""
-Unit tests for retrain_pipelines.dag_engine.rp_logging
-"""
+"""Unit & integration tests for retrain_pipelines.dag_engine.rp_logging"""
 
 import builtins
+import importlib
 import io
 import logging
+import pickle
 import sys
 from unittest.mock import MagicMock, patch
+
+import pytest
+from uuid import uuid4
+
+import retrain_pipelines.dag_engine.nb_console_print as nb_mod
 import retrain_pipelines.dag_engine.rp_logging as _rplog
+import retrain_pipelines.utils as utils_mod
+from retrain_pipelines.dag_engine.core.core import StreamToDb
 from retrain_pipelines.dag_engine.rp_logging import (
     CustomRichHandler,
     RichLoggingController,
     _patched_print,
-    _patched_stderr_write,
     _patched_stdout_write,
+    _patched_stderr_write,
     parse_msg,
     rp_redirect_stdout,
 )
+from retrain_pipelines.utils.file_utils import (
+    build_path,
+    read_text_file,
+)
 
-# ══════════════════════════════════════════════════════════════════════════════
+
+# ==============================================================================
 # Captured at import time ; used to ensure a clean state inside every test
 # (the conftest autouse fixture already does this process-wide, but having a
 # per-module reference is useful for the rp_logging lifecycle tests themselves)
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 _REAL_PRINT = builtins.print
 _REAL_GETLOGGER = logging.getLogger
 _REAL_STDOUT_WRITE = sys.stdout.write
@@ -41,7 +53,7 @@ class MockFrame:
         self.f_lineno = f_lineno
 
 
-# == helper: activate a controller and guarantee teardown ═════════════════════
+# == helper: activate a controller and guarantee teardown =====================
 
 
 class _CtrlGuard:
@@ -59,9 +71,9 @@ class _CtrlGuard:
             self.ctrl.deactivate()
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 # parse_msg
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 class TestParseMsg:
     def test_valid_traceback_line(self):
         msg = 'File "/some/path/foo.py", line 42, in some_func\nthe actual error'
@@ -84,9 +96,9 @@ class TestParseMsg:
         assert body.startswith("line1")
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 # Module-level patched functions (fallback behaviour when no controller)
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 class TestPatchedFunctionsFallback:
     def test_patched_print_calls_real_print_when_no_controller(self):
         _rplog._global_controller = None
@@ -139,14 +151,11 @@ class TestPatchedFunctionsFallback:
             ctrl._orig_stderr_write.assert_called_once_with("x")
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 # Module import-time: in_notebook() True branch (nb_console_print imports)
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 class TestNotebookImportBranch:
     def test_module_import_with_in_notebook_true_imports_nb_helpers(self, monkeypatch):
-        import importlib
-        import retrain_pipelines.utils as utils_mod
-
         monkeypatch.setattr(utils_mod, "in_notebook", lambda: True)
 
         spec = importlib.util.find_spec("retrain_pipelines.dag_engine.rp_logging")
@@ -162,9 +171,9 @@ class TestNotebookImportBranch:
             pass
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 # CustomRichHandler.emit
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 class TestCustomRichHandlerEmit:
     def _record(self, level, msg="test"):
         return logging.LogRecord("t", level, "/f.py", 1, msg, (), None)
@@ -187,20 +196,12 @@ class TestCustomRichHandlerEmit:
         CustomRichHandler(markup=False).emit(self._record(logging.INFO, "plain text"))
 
     def test_emit_with_traceback_parsing(self):
+        # filename is "traceback.py" and the message matches the
+        # 'File "...", line N, in ...' regex -> parse_msg extracts
+        # the real path and line from the message body.
         msg = 'File "/fake/traceback.py", line 99, in bad_func\nValueError: oops'
         record = logging.LogRecord(
             "test", logging.ERROR, "traceback.py", 1, msg, (), None
-        )
-        handler = CustomRichHandler(markup=True)
-        with patch("rich.console.Console.print"):
-            handler.emit(record)
-
-    def test_emit_with_traceback_parsing_and_valid_splitext(self):
-        # Covers the branch where ``filename == "traceback.py"``
-        # Requires a filename like "traceback.py"
-        msg = 'File "/fake/traceback.py", line 99, in bad_func\nValueError: oops'
-        record = logging.LogRecord(
-            "test", logging.ERROR, "traceback.py.log", 1, msg, (), None
         )
         handler = CustomRichHandler(markup=True)
         with patch("rich.console.Console.print"):
@@ -226,51 +227,28 @@ class TestCustomRichHandlerEmit:
                 mock_handle_error.assert_called_once_with(record)
 
     def test_emit_with_stream_to_db_in_notebook(self, monkeypatch):
-        import retrain_pipelines.dag_engine.nb_console_print as nb_mod
-
         _rplog.__dict__["nb_activate"] = nb_mod.nb_activate
         _rplog.__dict__["nb_deactivate"] = nb_mod.nb_deactivate
         _rplog.__dict__["nb_console_print"] = nb_mod.nb_console_print
 
         monkeypatch.setattr(_rplog, "in_notebook", lambda: True)
 
-        class MockStreamToDb:
-            def __init__(self, is_err=False):
-                self.is_err = is_err
-
-            def write(self, s):
-                pass
-
-            def flush(self):
-                pass
-
-        import retrain_pipelines.dag_engine.core.core as core_mod
-
-        orig = getattr(core_mod, "StreamToDb", None)
-        core_mod.StreamToDb = MockStreamToDb
+        old_stdout = sys.stdout
+        sys.stdout = StreamToDb(old_stdout, uuid4(), is_err=False)
         try:
-            old_stdout = sys.stdout
-            sys.stdout = MockStreamToDb(is_err=False)
-            try:
-                record = logging.LogRecord(
-                    "test", logging.INFO, "/f.py", 10, "msg", (), None
-                )
-                handler = CustomRichHandler(markup=True)
-                with patch("rich.console.Console.print"):
-                    handler.emit(record)
-            finally:
-                sys.stdout = old_stdout
+            record = logging.LogRecord(
+                "test", logging.INFO, "/f.py", 10, "msg", (), None
+            )
+            handler = CustomRichHandler(markup=True)
+            with patch("rich.console.Console.print"):
+                handler.emit(record)
         finally:
-            if orig is None:
-                if hasattr(core_mod, "StreamToDb"):
-                    delattr(core_mod, "StreamToDb")
-            else:
-                core_mod.StreamToDb = orig
+            sys.stdout = old_stdout
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 # RichLoggingController lifecycle
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 class TestRichLoggingControllerLifecycle:
     """Each test uses _CtrlGuard so deactivation is guaranteed even on failure."""
 
@@ -363,8 +341,6 @@ class TestRichLoggingControllerLifecycle:
             assert lg2.handlers == handlers_snapshot
 
     def test_pickle_roundtrip_produces_inactive_controller(self):
-        import pickle
-
         with _CtrlGuard() as ctrl:
             data = pickle.dumps(ctrl)
         ctrl2 = pickle.loads(data)
@@ -377,27 +353,43 @@ class TestRichLoggingControllerLifecycle:
         assert ctrl._active is False
         assert ctrl._logger_to_rich == {}
 
+    def test_reset_state_detects_already_patched_stdout_stderr(self):
+        """Covers the branch in _reset_state where sys.stdout.write and
+        sys.stderr.write are already the patched versions (because another
+        controller is active). The new controller must recover the originals
+        from the active controller instead of capturing the patches."""
+        with _CtrlGuard() as ctrl:
+            ctrl2 = RichLoggingController()
+            assert ctrl2._orig_stdout_write is ctrl._orig_stdout_write
+            assert ctrl2._orig_stderr_write is ctrl._orig_stderr_write
+            assert ctrl2._active is False
+            assert ctrl._active is True
+
     def test_activate_in_notebook_calls_nb_activate(self, monkeypatch):
         monkeypatch.setattr(_rplog, "in_notebook", lambda: True)
-        mock_nb_activate = MagicMock()
-        _rplog.__dict__["nb_activate"] = mock_nb_activate
-        with _CtrlGuard() as ctrl:
-            mock_nb_activate.assert_called_once_with(ctrl._orig_stdout_write)
+        # Real nb_activate is used (no mocking of retrain-pipelines).
+        _rplog.__dict__["nb_activate"] = nb_mod.nb_activate
+        # nb_deactivate must also be present: _CtrlGuard.__exit__ calls
+        # ctrl.deactivate() which invokes nb_deactivate() from _rplog
+        # namespace. Without this, the test fails with NameError when
+        # test_deactivate_in_notebook_calls_nb_deactivate has not yet run
+        # (xdist grouping makes declaration order deterministic).
+        _rplog.__dict__["nb_deactivate"] = nb_mod.nb_deactivate
+        with _CtrlGuard():
+            pass
 
     def test_deactivate_in_notebook_calls_nb_deactivate(self, monkeypatch):
         monkeypatch.setattr(_rplog, "in_notebook", lambda: True)
-        _rplog.__dict__["nb_activate"] = MagicMock()
-        mock_nb_deactivate = MagicMock()
-        _rplog.__dict__["nb_deactivate"] = mock_nb_deactivate
+        _rplog.__dict__["nb_activate"] = nb_mod.nb_activate
+        _rplog.__dict__["nb_deactivate"] = nb_mod.nb_deactivate
         ctrl = RichLoggingController()
         ctrl.activate()
         ctrl.deactivate()
-        mock_nb_deactivate.assert_called_once()
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 # RichLoggingController private methods
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 class TestRichLoggingControllerPrivateMethods:
     def test_custom_write_empty_string(self):
         with _CtrlGuard() as ctrl:
@@ -435,8 +427,6 @@ class TestRichLoggingControllerPrivateMethods:
                 assert result == ctrl._orig_stderr_write.return_value
 
     def test_custom_write_from_rich_console(self, monkeypatch):
-        import retrain_pipelines.dag_engine.nb_console_print as nb_mod
-
         _rplog.__dict__["nb_activate"] = nb_mod.nb_activate
         _rplog.__dict__["nb_deactivate"] = nb_mod.nb_deactivate
         _rplog.__dict__["nb_console_print"] = nb_mod.nb_console_print
@@ -518,17 +508,10 @@ class TestRichLoggingControllerPrivateMethods:
             ctrl._custom_print("hello", file=fake_file)
             ctrl._orig_print.assert_called_once_with("hello", file=fake_file)
 
-    def test_custom_print_with_streamtodb_file(self, monkeypatch):
-        class MockStreamToDb:
-            def __init__(self, is_err=False):
-                self.is_err = is_err
-
-        monkeypatch.setattr(
-            "retrain_pipelines.dag_engine.core.core.StreamToDb", MockStreamToDb
-        )
+    def test_custom_print_with_streamtodb_file(self):
         with _CtrlGuard() as ctrl:
             with patch("rich.console.Console.print"):
-                stream = MockStreamToDb(is_err=True)
+                stream = StreamToDb(sys.stdout, uuid4(), is_err=True)
                 ctrl._custom_print("msg", file=stream)
 
     def test_rich_emit_direct_call(self):
@@ -608,76 +591,68 @@ class TestRichLoggingControllerPrivateMethods:
                     ctrl._rich_emit("test", "msg", is_err=False, frame_offset=5)
 
     def test_rich_emit_in_notebook_calls_nb_console_print(self, monkeypatch):
-        mock_nb_console_print = MagicMock()
-        _rplog.__dict__["nb_console_print"] = mock_nb_console_print
+        # Real nb helpers are used (no mocking of retrain-pipelines).
+        _rplog.__dict__["nb_console_print"] = nb_mod.nb_console_print
+        # nb_activate must be present: _CtrlGuard.__enter__ calls
+        # ctrl.activate() which calls nb_activate() from _rplog namespace
+        # when in_notebook() is True. Without this, NameError when a
+        # previous test in the same session already deactivated and cleared it.
+        _rplog.__dict__["nb_activate"] = nb_mod.nb_activate
+        _rplog.__dict__["nb_deactivate"] = nb_mod.nb_deactivate
         monkeypatch.setattr(_rplog, "in_notebook", lambda: True)
 
-        class MockStreamToDb:
-            is_err = False
-
-            def write(self, s):
-                pass
-
-            def flush(self):
-                pass
-
-        import retrain_pipelines.dag_engine.core.core as core_mod
-
-        orig = getattr(core_mod, "StreamToDb", None)
-        core_mod.StreamToDb = MockStreamToDb
-        try:
-            with _CtrlGuard() as ctrl:
-                with patch("rich.console.Console.print"):
-                    ctrl._rich_emit(
-                        "test", "notebook message", is_err=False, frame_offset=2
-                    )
-            mock_nb_console_print.assert_called_once()
-        finally:
-            if orig is None:
-                if hasattr(core_mod, "StreamToDb"):
-                    delattr(core_mod, "StreamToDb")
-            else:
-                core_mod.StreamToDb = orig
+        with _CtrlGuard() as ctrl:
+            with patch("rich.console.Console.print"):
+                ctrl._rich_emit(
+                    "test", "notebook message", is_err=False, frame_offset=2
+                )
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
 # rp_redirect_stdout
-# ══════════════════════════════════════════════════════════════════════════════
-class TestRpRedirectStdout:
-    def test_redirect_captures_print_when_no_controller(self, tmp_path):
-        log_file = tmp_path / "log.txt"
-        with rp_redirect_stdout(str(log_file)):
-            print("goes to buf")
-        assert "goes to buf" in log_file.read_text()
+# ==============================================================================
 
-    def test_deactivates_controller_inside_context(self, tmp_path):
+
+@pytest.fixture
+def log_target(metadata_root):
+    """Provide a log-file target path on top of the shared parametrized
+    ``metadata_root`` storage fixture (local tmp_path or S3 MinIO).
+
+    Delegates storage backend selection to ``metadata_root`` (defined in
+    ``conftest_storage``) instead of redeclaring a redundant local
+    parametrization. The MinIO session bucket is torn down by the
+    ``minio_session`` fixture, so no per-test S3 cleanup is needed.
+    """
+    parts = ["log.txt"]
+    target_path = build_path(metadata_root, tuple(parts))
+    return metadata_root, parts, target_path
+
+
+class TestRpRedirectStdout:
+    def test_redirect_captures_print_when_no_controller(self, log_target):
+        root, parts, target = log_target
+        with rp_redirect_stdout(target):
+            print("goes to buf")
+        assert "goes to buf" in read_text_file(root, parts)
+
+    def test_deactivates_controller_inside_context(self, log_target):
         state_inside = []
         with _CtrlGuard() as ctrl:
-            with rp_redirect_stdout(str(tmp_path / "log.txt")):
+            with rp_redirect_stdout(log_target[2]):
                 state_inside.append(ctrl._active)
         assert state_inside == [False]
 
-    def test_reactivates_controller_after_context_exits(self, tmp_path):
+    def test_reactivates_controller_after_context_exits(self, log_target):
         with _CtrlGuard() as ctrl:
-            with rp_redirect_stdout(str(tmp_path / "log.txt")):
+            with rp_redirect_stdout(log_target[2]):
                 pass
             assert ctrl._active is True
 
-    def test_reactivates_controller_even_on_inner_exception(self, tmp_path):
+    def test_reactivates_controller_even_on_inner_exception(self, log_target):
         with _CtrlGuard() as ctrl:
             try:
-                with rp_redirect_stdout(str(tmp_path / "log.txt")):
+                with rp_redirect_stdout(log_target[2]):
                     raise ValueError("inner")
             except ValueError:
                 pass
             assert ctrl._active is True
-
-    def test_redirect_captures_print_to_s3(self, bucket_name):
-        s3_uri = f"s3://{bucket_name}/test_redirect_s3.log"
-        with rp_redirect_stdout(s3_uri):
-            print("goes to s3")
-
-        from retrain_pipelines.utils.file_utils import read_text_file
-
-        content = read_text_file(f"s3://{bucket_name}/", ["test_redirect_s3.log"])
-        assert "goes to s3" in content

@@ -33,6 +33,12 @@ class TraceBuffer:
         self._started = False
         self._lock = threading.Lock()
         self._writing_lock = threading.Lock()
+        # Signaled by add_trace() to wake a sleeping writer without the
+        # writer having to block on (and remove from) the queue outside
+        # _writing_lock. This keeps the pick-up-and-write cycle fully
+        # under _writing_lock so flush() can never observe an empty queue
+        # while the writer still holds traces in its local batch.
+        self._traces_pending = threading.Event()
 
     def start(self):
         """Start (or restart) the background writer thread."""
@@ -63,23 +69,27 @@ class TraceBuffer:
             "is_err": is_err,
         }
         self._queue.put(trace_dict)
+        self._traces_pending.set()
 
     def _writer_loop(self):
         """Background thread that writes traces to DB in batches."""
         while not self._stop_event.is_set():
+            # Wait for traces without holding _writing_lock so flush()
+            # can acquire the lock and drain the queue without the writer
+            # contesting it with a local batch picked up outside the lock.
+            self._traces_pending.wait(timeout=self._flush_interval)
+            self._traces_pending.clear()
+
             batch = []
-            deadline = self._flush_interval
+            with self._writing_lock:
+                while len(batch) < self._batch_size:
+                    try:
+                        trace = self._queue.get_nowait()
+                        batch.append(trace)
+                    except queue.Empty:
+                        break
 
-            while len(batch) < self._batch_size:
-                try:
-                    trace = self._queue.get(timeout=deadline)
-                    batch.append(trace)
-                    deadline = 0.01
-                except queue.Empty:
-                    break
-
-            if batch:
-                with self._writing_lock:
+                if batch:
                     self._flush_batch(batch)
 
     def _flush_batch(self, batch):
@@ -102,14 +112,17 @@ class TraceBuffer:
 
     def flush(self):
         """Flush all pending traces immediately."""
-        batch = []
-        try:
-            while True:
-                batch.append(self._queue.get_nowait())
-        except queue.Empty:
-            pass
-
+        # Wake the writer in case it is sleeping on _traces_pending so it
+        # does not sleep through this flush.
+        self._traces_pending.set()
         with self._writing_lock:
+            batch = []
+            try:
+                while True:
+                    batch.append(self._queue.get_nowait())
+            except queue.Empty:
+                pass
+
             if batch:
                 self._flush_batch(batch)
 
@@ -120,6 +133,7 @@ class TraceBuffer:
                 return
 
             self._stop_event.set()
+            self._traces_pending.set()
 
             if self._writer_thread and self._writer_thread.is_alive():
                 self._writer_thread.join(timeout=timeout)

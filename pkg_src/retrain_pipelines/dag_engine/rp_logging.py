@@ -109,14 +109,17 @@ class CustomRichHandler(logging.Handler):
             if "traceback.py" == filename:
                 parsed_traceback = parse_msg(record.getMessage())
                 if parsed_traceback is not None:
-                    (filename, lineno, msg_str) = parsed_traceback
+                    (full_path, lineno, msg_str) = parsed_traceback
+                    filename = os.path.basename(full_path)
                 else:
+                    full_path = record.pathname
                     lineno, msg_str = record.lineno, record.getMessage()
             else:
+                full_path = record.pathname
                 lineno = record.lineno
                 msg_str = record.getMessage()
 
-            path = Text.assemble((f"{filename}:{lineno}", f"link file://{record.pathname}"))
+            path = Text.assemble((f"{filename}:{lineno}", f"link file://{full_path}"))
             path.append(
                 Text(" ")
                 + Text(
@@ -177,8 +180,31 @@ class RichLoggingController:
 
         self._orig_getLogger = logging.getLogger
         self._orig_print = builtins.print
-        self._orig_stdout_write = sys.stdout.write
-        self._orig_stderr_write = sys.stderr.write
+
+        ########################################
+        # CRITICAL : Prevent state tangle. If sys.stdout.write is already
+        # patched by us, do not capture the patch as the original.
+        _stdout_write = sys.stdout.write
+        if _stdout_write is _patched_stdout_write:
+            self._orig_stdout_write = (
+                _global_controller._orig_stdout_write
+                if _global_controller
+                else (sys.__stdout__ or sys.stdout).write
+            )
+        else:
+            self._orig_stdout_write = _stdout_write
+
+        _stderr_write = sys.stderr.write
+        if _stderr_write is _patched_stderr_write:
+            self._orig_stderr_write = (
+                _global_controller._orig_stderr_write
+                if _global_controller
+                else (sys.__stderr__ or sys.stderr).write
+            )
+        else:
+            self._orig_stderr_write = _stderr_write
+        ########################################
+
         self._orig_root_level = logging.getLogger().level
 
         warnings_logger = logging.getLogger("py.warnings")
@@ -187,6 +213,7 @@ class RichLoggingController:
         self._warnings_propagate_backup = warnings_logger.propagate
 
         self._logger_to_rich: dict[str | None, logging.Logger] = {}
+        self._logger_handler_backup: dict[str | None, list[logging.Handler]] = {}
 
     def __init__(self) -> None:
         self._reset_state()
@@ -208,6 +235,11 @@ class RichLoggingController:
         if name in self._logger_to_rich:
             return logger
 
+        # Snapshot original handlers BEFORE any modification
+        # so deactivate() can restore them (including pre-existing
+        # StreamHandlers that get converted into CustomRichHandler).
+        self._logger_handler_backup[name] = list(logger.handlers)
+
         package_name = __name__.split(".")[0]
 
         if (not name or package_name == name) and not any(
@@ -226,7 +258,7 @@ class RichLoggingController:
                 for h in logger.handlers
             ]
 
-            self._logger_to_rich[name] = logger
+        self._logger_to_rich[name] = logger
 
         return logger
 
@@ -289,13 +321,14 @@ class RichLoggingController:
         warnings_logger.level = self._warnings_level_backup
         warnings_logger.propagate = self._warnings_propagate_backup
 
-        # remove all CustomRichHandler instances
-        # from tracked loggers
-        for logger_name in list(self._logger_to_rich.keys()):
+        # restore original handlers (including pre-existing StreamHandlers
+        # that were converted into CustomRichHandler during activation)
+        for logger_name, backup_handlers in self._logger_handler_backup.items():
             logger = logging.getLogger(logger_name)
-            logger.handlers = [h for h in logger.handlers if not isinstance(h, CustomRichHandler)]
+            logger.handlers = list(backup_handlers)
 
         self._logger_to_rich.clear()
+        self._logger_handler_backup.clear()
 
         _global_controller = None
         self._active = False
@@ -352,6 +385,7 @@ class RichLoggingController:
 
             if parsed_traceback is not None:
                 (full_path, lineno, msg_str) = parsed_traceback
+                filename = os.path.basename(full_path)
             else:
                 full_path = frame.f_code.co_filename
                 lineno = frame.f_lineno
@@ -382,15 +416,17 @@ class RichLoggingController:
         ########################################
         #      DEBUG STACK       -  BEGIN      #
         ########################################
-        # stack = inspect.stack()
-        # frames_info = []
-        # for frame_info in stack: # [frame_offset:]:
-        # fname = os.path.basename(frame_info.filename)
-        # lineno = frame_info.lineno
-        # frames_info.append(f"{fname}:{lineno}")
+        """
+        stack = inspect.stack()
+        frames_info = []
+        for frame_info in stack: # [frame_offset:]:
+            fname = os.path.basename(frame_info.filename)
+            lineno = frame_info.lineno
+            frames_info.append(f"{fname}:{lineno}")
 
-        # all_frames_str = "\n".join(frames_info)
-        # body = Text.from_markup(msg_str + "\n" + all_frames_str)
+            all_frames_str = "\n".join(frames_info)
+        body = Text.from_markup(msg_str + "\n" + all_frames_str)
+        """
         ########################################
         #      DEBUG STACK       -   END       #
         ########################################
@@ -527,13 +563,29 @@ def rp_redirect_stdout(target: str):
             controller = _global_controller
             controller.deactivate()
 
+            # CRITICAL : Clear handlers on ALL loggers to prevent old
+            # StreamHandlers (which hold references to the OLD sys.stdout)
+            # from causing recursion or leaking logs. We restore them on exit.
+            logger_manager = logging.Logger.manager
+            all_loggers = [logging.getLogger()] + [
+                logger
+                for logger in logger_manager.loggerDict.values()
+                if isinstance(logger, logging.Logger)
+            ]
+
+            original_handlers = {}
+            for logger in all_loggers:
+                original_handlers[logger.name] = list(logger.handlers)
+                logger.handlers = []
+
             try:
                 with redirect_stdout(file_obj), redirect_stderr(file_obj):
                     # Create handler AFTER redirect
                     # so sys.stdout is already the file
                     root_logger = logging.getLogger()
+
                     # make sys.stdout BE the file
-                    temp_handler = logging.StreamHandler(sys.stdout)
+                    temp_handler = logging.StreamHandler(file_obj)
                     temp_handler.setFormatter(
                         logging.Formatter("%(levelname)s:%(name)s:%(message)s")
                     )
@@ -545,5 +597,8 @@ def rp_redirect_stdout(target: str):
                         # Clean up temp handler
                         root_logger.removeHandler(temp_handler)
             finally:
+                # Restore the original handlers on all loggers
+                for logger_name, handlers in original_handlers.items():
+                    logging.getLogger(logger_name).handlers = handlers
                 # Reactivate controller
                 controller.activate()

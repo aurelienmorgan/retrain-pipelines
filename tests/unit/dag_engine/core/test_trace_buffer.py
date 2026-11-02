@@ -64,16 +64,13 @@ def _seed_task(dao, task_id_out=None):
     return task_id
 
 
-def _make_buffer(isolated_db, isolated_dao, flush_interval=0.05, batch_size=10):
-    """Return a TraceBuffer whose DAO factory hits the real test DB.
-
-    The wrapped funcs in trace_buffer.py call `DAO(Config.get_metadatastore_url())`
-    via the `_dao_factory` lambda ; isolated_db sets RP_METADATASTORE_URL so the
-    real DAO hits the clean per-test DB. The `isolated_dao` is yielded for
-    post-call state assertions on the same DB.
+def _make_buffer(flush_interval=0.05, batch_size=10):
+    """Return a TraceBuffer (not started). Caller requests ``isolated_dao``
+    so ``_dao_factory`` hits the test DB, and calls ``buf.start()`` when
+    the writer thread is needed.
     """
     buf = TraceBuffer(flush_interval=flush_interval, batch_size=batch_size)
-    return buf, isolated_dao
+    return buf
 
 
 # ---------------------------------------------------------------------------
@@ -105,8 +102,8 @@ class TestInit:
 
 
 class TestStart:
-    def test_start_spawns_daemon_thread(self, isolated_db, isolated_dao):
-        buf, _ = _make_buffer(isolated_db, isolated_dao)
+    def test_start_spawns_daemon_thread(self):
+        buf = _make_buffer()
         try:
             buf.start()
             assert buf._writer_thread is not None
@@ -117,18 +114,18 @@ class TestStart:
         finally:
             buf.stop()
 
-    def test_start_is_idempotent(self, isolated_db, isolated_dao):
-        buf, _ = _make_buffer(isolated_db, isolated_dao)
+    def test_start_is_idempotent(self):
+        buf = _make_buffer()
         try:
             buf.start()
             first_thread = buf._writer_thread
-            buf.start()  # second call – must not replace thread
+            buf.start()  # second call ; must not replace thread
             assert buf._writer_thread is first_thread
         finally:
             buf.stop()
 
-    def test_restart_after_stop(self, isolated_db, isolated_dao):
-        buf, _ = _make_buffer(isolated_db, isolated_dao)
+    def test_restart_after_stop(self):
+        buf = _make_buffer()
         buf.start()
         buf.stop()
         buf.start()
@@ -138,8 +135,10 @@ class TestStart:
         finally:
             buf.stop()
 
-    def test_start_registers_atexit(self, isolated_db, isolated_dao):
-        buf, _ = _make_buffer(isolated_db, isolated_dao)
+    def test_start_registers_atexit(self):
+        buf = _make_buffer()
+        # Patch atexit.register to assert start() registers self.stop
+        # without leaking real atexit callbacks across tests.
         with patch("atexit.register") as mock_reg:
             buf.start()
             mock_reg.assert_called_once_with(buf.stop)
@@ -152,8 +151,8 @@ class TestStart:
 
 
 class TestAddTrace:
-    def test_enqueues_dict(self, isolated_db, isolated_dao):
-        buf, _ = _make_buffer(isolated_db, isolated_dao)
+    def test_enqueues_dict(self):
+        buf = _make_buffer()
         ts = datetime(2024, 6, 1, 10, 0, 0)
         buf.add_trace(
             task_id=7, content="msg\n", timestamp=ts, microsec=42, is_err=True
@@ -167,18 +166,19 @@ class TestAddTrace:
             "is_err": True,
         }
 
-    def test_enqueues_is_err_default_false(self, isolated_db, isolated_dao):
-        buf, _ = _make_buffer(isolated_db, isolated_dao)
+    def test_enqueues_is_err_default_false(self):
+        buf = _make_buffer()
         ts = datetime(2024, 6, 1)
         buf.add_trace(task_id=1, content="x", timestamp=ts, microsec=0)
         item = buf._queue.get_nowait()
         assert item["is_err"] is False
 
-    def test_non_blocking(self, isolated_db, isolated_dao):
+    def test_non_blocking(self):
         """add_trace must return immediately even with a very large queue."""
-        buf, _ = _make_buffer(isolated_db, isolated_dao, batch_size=1_000_000)
+        buf = _make_buffer(batch_size=1_000_000)
         ts = datetime.now(timezone.utc)
         start = time.monotonic()
+        # 500 adds is far below batch_size ; no DB I/O.
         for i in range(500):
             buf.add_trace(1, str(i), ts, i)
         elapsed = time.monotonic() - start
@@ -191,8 +191,9 @@ class TestAddTrace:
 
 
 class TestFlushBatch:
-    def test_microsec_idx_counter_same_key(self, isolated_db, isolated_dao):
-        buf, dao = _make_buffer(isolated_db, isolated_dao)
+    def test_microsec_idx_counter_same_key(self, isolated_dao):
+        buf = _make_buffer()
+        dao = isolated_dao
         task_id = _seed_task(dao)
         ts = datetime(2024, 1, 1, tzinfo=timezone.utc)
         batch = [_make_trace(task_id=task_id, microsec=0) for _ in range(3)]
@@ -206,8 +207,9 @@ class TestFlushBatch:
         rows = dao._get_entities(TaskTrace, task_id=task_id)
         assert len(rows) == 3
 
-    def test_microsec_idx_counter_different_keys(self, isolated_db, isolated_dao):
-        buf, dao = _make_buffer(isolated_db, isolated_dao)
+    def test_microsec_idx_counter_different_keys(self, isolated_dao):
+        buf = _make_buffer()
+        dao = isolated_dao
         task_id = _seed_task(dao)
         ts = datetime(2024, 1, 1, tzinfo=timezone.utc)
         b0 = _make_trace(task_id=task_id, microsec=0)
@@ -223,9 +225,10 @@ class TestFlushBatch:
         rows = dao._get_entities(TaskTrace, task_id=task_id)
         assert len(rows) == 3
 
-    def test_calls_dao_batch_add(self, isolated_db, isolated_dao):
+    def test_calls_dao_batch_add(self, isolated_dao):
         """Real DB: batch_add_task_traces writes rows to the real TaskTrace table."""
-        buf, dao = _make_buffer(isolated_db, isolated_dao)
+        buf = _make_buffer()
+        dao = isolated_dao
         task_id = _seed_task(dao)
         batch = [_make_trace(task_id=task_id)]
         buf._flush_batch(batch)
@@ -233,22 +236,23 @@ class TestFlushBatch:
         assert len(rows) == 1
         assert rows[0].content == "hello"
 
-    def test_exception_in_dao_is_swallowed(self, isolated_db, isolated_dao):
+    def test_exception_in_dao_is_swallowed(self, isolated_dao):
         """Forcing DAO to raise via a non-existent task_id (FK violation) is
         caught by _flush_batch's except Exception and logged, not propagated.
 
         Uses a task_id that has no matching Task row, so the real
         batch_add_task_traces raises IntegrityError on the FK constraint.
         """
-        buf, dao = _make_buffer(isolated_db, isolated_dao)
+        buf = _make_buffer()
+        dao = isolated_dao
         # task_id=999999 has no matching Task row => FK violation => swallowed.
         buf._flush_batch([_make_trace(task_id=999999)])
         # No rows written for the bogus task_id.
         assert dao._get_entities(TaskTrace, task_id=999999) == []
 
-    def test_dao_factory_exception_swallowed(self, isolated_db, isolated_dao):
+    def test_dao_factory_exception_swallowed(self):
         """Forcing _dao_factory to raise is swallowed by _flush_batch."""
-        buf, _ = _make_buffer(isolated_db, isolated_dao)
+        buf = _make_buffer()
         buf._dao_factory = lambda: (_ for _ in ()).throw(ConnectionError("no db"))
         # must not propagate
         buf._flush_batch([_make_trace()])
@@ -260,8 +264,9 @@ class TestFlushBatch:
 
 
 class TestFlush:
-    def test_flush_drains_all_pending(self, isolated_db, isolated_dao):
-        buf, dao = _make_buffer(isolated_db, isolated_dao)
+    def test_flush_drains_all_pending(self, isolated_dao):
+        buf = _make_buffer()
+        dao = isolated_dao
         task_id = _seed_task(dao)
         ts = datetime.now(timezone.utc)
         for i in range(5):
@@ -272,15 +277,17 @@ class TestFlush:
         rows = dao._get_entities(TaskTrace, task_id=task_id)
         assert len(rows) == 5
 
-    def test_flush_empty_queue_is_noop(self, isolated_db, isolated_dao):
-        buf, dao = _make_buffer(isolated_db, isolated_dao)
+    def test_flush_empty_queue_is_noop(self, isolated_dao):
+        buf = _make_buffer()
+        dao = isolated_dao
         buf.flush()  # must not raise
         # No rows written.
         assert dao._get_entities(TaskTrace) == []
 
-    def test_flush_acquires_writing_lock(self, isolated_db, isolated_dao):
+    def test_flush_acquires_writing_lock(self, isolated_dao):
         """flush must serialise with the writer via _writing_lock."""
-        buf, dao = _make_buffer(isolated_db, isolated_dao)
+        buf = _make_buffer()
+        dao = isolated_dao
         task_id = _seed_task(dao)
         acquired_inside = []
 
@@ -302,16 +309,17 @@ class TestFlush:
 
 
 class TestStop:
-    def test_stop_joins_thread(self, isolated_db, isolated_dao):
-        buf, _ = _make_buffer(isolated_db, isolated_dao)
+    def test_stop_joins_thread(self):
+        buf = _make_buffer()
         buf.start()
         thread = buf._writer_thread
         buf.stop()
         assert not thread.is_alive()
         assert not buf._started
 
-    def test_stop_flushes_remaining(self, isolated_db, isolated_dao):
-        buf, dao = _make_buffer(isolated_db, isolated_dao)
+    def test_stop_flushes_remaining(self, isolated_dao):
+        buf = _make_buffer()
+        dao = isolated_dao
         buf.start()
         task_id = _seed_task(dao)
         ts = datetime.now(timezone.utc)
@@ -320,14 +328,14 @@ class TestStop:
         rows = dao._get_entities(TaskTrace, task_id=task_id)
         assert len(rows) >= 1
 
-    def test_stop_is_idempotent(self, isolated_db, isolated_dao):
-        buf, _ = _make_buffer(isolated_db, isolated_dao)
+    def test_stop_is_idempotent(self):
+        buf = _make_buffer()
         buf.start()
         buf.stop()
         buf.stop()  # must not raise
 
-    def test_stop_before_start_is_noop(self, isolated_db, isolated_dao):
-        buf, _ = _make_buffer(isolated_db, isolated_dao)
+    def test_stop_before_start_is_noop(self):
+        buf = _make_buffer()
         buf.stop()  # must not raise
 
 
@@ -337,10 +345,9 @@ class TestStop:
 
 
 class TestWriterLoop:
-    def test_writer_loop_flushes_batch(self, isolated_db, isolated_dao):
-        buf, dao = _make_buffer(
-            isolated_db, isolated_dao, flush_interval=0.05, batch_size=10
-        )
+    def test_writer_loop_flushes_batch(self, isolated_dao):
+        buf = _make_buffer(flush_interval=0.05, batch_size=10)
+        dao = isolated_dao
         buf.start()
         task_id = _seed_task(dao)
         ts = datetime.now(timezone.utc)
@@ -354,9 +361,7 @@ class TestWriterLoop:
         rows = dao._get_entities(TaskTrace, task_id=task_id)
         assert len(rows) == 3
 
-    def test_writer_loop_exception_does_not_kill_thread(
-        self, isolated_db, isolated_dao
-    ):
+    def test_writer_loop_exception_does_not_kill_thread(self, isolated_dao):
         """First batch uses a bogus task_id (FK violation) => exception swallowed
         by _writer_loop's except Exception ; thread stays alive for subsequent batches.
 
@@ -366,9 +371,8 @@ class TestWriterLoop:
         and the loop continues to the next batch. We sleep 2.0s to let the
         bad batch's retries exhaust AND the good batch write.
         """
-        buf, dao = _make_buffer(
-            isolated_db, isolated_dao, flush_interval=0.05, batch_size=2
-        )
+        buf = _make_buffer(flush_interval=0.05, batch_size=2)
+        dao = isolated_dao
         buf.start()
         task_id = _seed_task(dao)
         ts = datetime.now(timezone.utc)
@@ -383,11 +387,10 @@ class TestWriterLoop:
         rows = dao._get_entities(TaskTrace, task_id=task_id)
         assert len(rows) == 2
 
-    def test_writer_respects_batch_size(self, isolated_db, isolated_dao):
+    def test_writer_respects_batch_size(self, isolated_dao):
         """Writer must not exceed batch_size per _flush_batch call."""
-        buf, dao = _make_buffer(
-            isolated_db, isolated_dao, flush_interval=0.5, batch_size=2
-        )
+        buf = _make_buffer(flush_interval=0.5, batch_size=2)
+        dao = isolated_dao
         task_id = _seed_task(dao)
         received_sizes = []
         orig = buf._flush_batch
@@ -412,35 +415,38 @@ class TestWriterLoop:
 
 
 class TestGetTraceBuffer:
-    def test_returns_trace_buffer_instance(self, isolated_db, isolated_dao):
+    """Tests for the module-level get_trace_buffer() singleton factory.
 
+    Each test patches the module-level ``_trace_buffer`` to ``None`` so
+    ``get_trace_buffer()`` hits the creation branch and returns a fresh
+    ``TraceBuffer`` instead of a leftover singleton from a prior test in
+    the same xdist worker. The fresh instance is stopped in a ``finally``
+    block to join its writer thread before the test exits.
+    """
+
+    def test_returns_trace_buffer_instance(self):
         with patch.object(_tb_mod, "_trace_buffer", None):
-            with patch.object(_tb_mod, "_buffer_lock", threading.Lock()):
-                instance = get_trace_buffer()
-                try:
-                    assert isinstance(instance, TraceBuffer)
-                finally:
-                    instance.stop()
+            instance = get_trace_buffer()
+            try:
+                assert isinstance(instance, TraceBuffer)
+            finally:
+                instance.stop()
 
-    def test_singleton_same_object(self, isolated_db, isolated_dao):
-
+    def test_singleton_same_object(self):
         with patch.object(_tb_mod, "_trace_buffer", None):
-            with patch.object(_tb_mod, "_buffer_lock", threading.Lock()):
-                a = get_trace_buffer()
-                b = get_trace_buffer()
-                try:
-                    assert a is b
-                finally:
-                    a.stop()
+            a = get_trace_buffer()
+            b = get_trace_buffer()
+            try:
+                assert a is b
+            finally:
+                a.stop()
 
-    def test_buffer_is_started(self, isolated_db, isolated_dao):
-
+    def test_buffer_is_started(self):
         with patch.object(_tb_mod, "_trace_buffer", None):
-            with patch.object(_tb_mod, "_buffer_lock", threading.Lock()):
-                buf = get_trace_buffer()
-                try:
-                    assert buf._started
-                    assert buf._writer_thread is not None
-                    assert buf._writer_thread.is_alive()
-                finally:
-                    buf.stop()
+            buf = get_trace_buffer()
+            try:
+                assert buf._started
+                assert buf._writer_thread is not None
+                assert buf._writer_thread.is_alive()
+            finally:
+                buf.stop()
