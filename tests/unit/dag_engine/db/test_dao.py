@@ -3111,6 +3111,56 @@ class TestAsyncDAOTaskgroupNestedTasks:
         assert len(result) == 1
 
     @pytest.mark.asyncio
+    async def test_returns_task_exts_when_rank_is_none(self, async_dao):
+        """Cover the branch where rank is None.
+
+        When ``rank is None``, the DAO uses ``Task.rank.is_(None)`` as the
+        filter instead of casting to string. Seeds a task with a NULL rank
+        and queries with ``rank=None``.
+        """
+        parent_uuid = uuid4()
+        tt_uuid = uuid4()
+
+        exec_id = await async_dao._async_add_entity(
+            Execution,
+            name="none_rank_pipe",
+            username="u",
+            _start_timestamp=_NOW,
+            metadata_root="/tmp/meta",
+            artifacts_store_root="/tmp/artifacts",
+        )
+        async with async_dao.engine.begin() as conn:
+            await conn.execute(
+                text(
+                    'INSERT INTO taskgroups (uuid, exec_id, "order", name, elements) '
+                    "VALUES (:uuid, :eid, 0, 'none_rank_grp', '[]')"
+                ),
+                {"uuid": parent_uuid.hex, "eid": exec_id},
+            )
+            await conn.execute(
+                text(
+                    'INSERT INTO tasktypes (uuid, exec_id, "order", name, '
+                    "is_parallel, children, taskgroup_uuid) VALUES "
+                    "(:uuid, :eid, 0, 'none_rank_step', false, '[]', :tg_uuid)"
+                ),
+                {"uuid": tt_uuid.hex, "eid": exec_id, "tg_uuid": parent_uuid.hex},
+            )
+            await conn.execute(
+                text(
+                    "INSERT INTO tasks (tasktype_uuid, exec_id, start_timestamp, rank) "
+                    "VALUES (:tu, :eid, :s, NULL)"
+                ),
+                {"tu": tt_uuid.hex, "eid": exec_id, "s": _NOW},
+            )
+
+        async_dao.get_execution_taskgroups_list.cache_clear()
+        result = await async_dao.get_taskgroup_nested_tasks(
+            exec_id, "none_rank_grp", None
+        )
+        assert result is not None
+        assert len(result) == 1
+
+    @pytest.mark.asyncio
     async def test_returns_empty_list_when_no_matching_tasks(self, async_dao):
         """Taskgroup exists but no tasks match the given rank => empty list."""
         exec_id = await async_dao._async_add_entity(

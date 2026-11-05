@@ -105,6 +105,12 @@ atexit.register(shutdown_async_sdk)
 # /// core SDK classes /////////////////////////////////////////////////////////////////////////////
 
 
+class RankNotFoundException(Exception):
+    """Raised when no task exists at the given rank for this execution."""
+
+    pass
+
+
 class Execution(BaseModel):
     """SDK representation of a pipeline execution.
 
@@ -332,6 +338,47 @@ class Execution(BaseModel):
             metadata_root=self.metadata_root,
         )
 
+    def get_task(self, task_type_name: str, rank: list[int] | None = None) -> "Task":
+        """Fetch the task at the given rank for this execution.
+
+        Parameters
+        ----------
+        task_type_name : str
+            Name of the TaskType.
+        rank : list[int], optional
+            Execution rank of the DAG sub-branch to filter on.
+            None (default) targets the main DAG spine.
+
+        Returns
+        -------
+        Task
+            The task instance.
+
+        Raises
+        ------
+        RankNotFoundException
+            If no task exists at the given rank for this execution.
+
+        Examples
+        --------
+        >>> execution = Execution.get_by_id(id=356)
+        >>> tasks = execution.get_task("my_task")
+        >>> tasks = execution.get_task("my_task", rank=[0, 1])
+        """
+        tasks = self.get_tasks_with_name(task_type_name)
+        # Normalize rank: empty list and None both target the main DAG spine.
+        target_rank = rank if (rank and len(rank) > 0) else None
+        matching = [t for t in tasks if t.rank == target_rank]
+        if not matching:
+            # Available ranks among the tasks of this name (None included).
+            available = sorted({t.rank for t in tasks}, key=lambda r: (r is None, r))
+            raise RankNotFoundException(
+                f"No '{task_type_name}' task found at rank '{rank}' "
+                f"in execution '{self.name}[id {self.id}]'. "
+                f"Available ranks: {available}"
+            )
+        return matching[0]
+
     def get_taskgroups_with_name(self, taskgroup_name: str) -> Optional["TaskGroupRanks"]:
         """Return ranks of a taskgroup by its name.
 
@@ -384,27 +431,32 @@ class Execution(BaseModel):
             metadata_root=self.metadata_root,
         )
 
-    def get_taskgroup_for_rank(
-        self, taskgroup_name: str, rank: list[int]
-    ) -> Optional["TaskGroupRank"]:
-        """Return taskgroup by name for a given execution rank.
+    def get_taskgroup(self, taskgroup_name: str, rank: list[int] | None = None) -> "TaskGroupRank":
+        """Fetch the taskgroup at the given rank for this execution.
 
         Parameters
         ----------
         taskgroup_name : str
             Name of the taskgroup.
-        rank : list[int]
-            execution rank of the DAG sub-branch if applicable
+        rank : list[int], optional
+            Execution rank of the DAG sub-branch to filter on.
+            None (default) targets the main DAG spine.
 
         Returns
         -------
-        TaskGroup
-            Matching taskgroup, if exists.
+        TaskGroupRank
+            The taskgroup-rank instance.
+
+        Raises
+        ------
+        RankNotFoundException
+            If no taskgroup exists at the given rank for this execution.
 
         Examples
         --------
-        >>> tg = Execution.get_by_id(id=356).get_taskgroup_for_rank(<a_valid_taskgroup_name>, [0])
-        >>> payload = tg.get_exit_payload()
+        >>> execution = Execution.get_by_id(id=356)
+        >>> tg = execution.get_taskgroup("my_taskgroup")
+        >>> tg = execution.get_taskgroup("my_taskgroup", rank=[0, 1])
         """
 
         async def _fetch():
@@ -424,10 +476,10 @@ class Execution(BaseModel):
             logger.warning(err.__str__())
 
         if not tg:
-            logger.warning(
-                f"There's no {taskgroup_name} taskgroup in the execution {self.name} [id {self.id}]"
+            raise RankNotFoundException(
+                f"No taskgroup found with name {taskgroup_name} "
+                f"in execution {self.name} [id {self.id}]."
             )
-            return None
 
         # Normalize rank for comparison: treat empty list as None
         target_rank = rank if (rank and len(rank) > 0) else None
@@ -440,12 +492,11 @@ class Execution(BaseModel):
             rank_exists = target_rank in ranks
 
         if not rank_exists:
-            logger.warning(
-                f"There's no such rank as {rank or []} "
-                f"for taskgroup {taskgroup_name} "
-                f"in the execution {self.name} with id {self.id}"
+            raise RankNotFoundException(
+                f"No taskgroup found with name '{taskgroup_name}' at rank {rank} "
+                f"in execution '{self.name}[id {self.id}]'. "
+                f"Available ranks: {ranks}"
             )
-            return None
 
         return TaskGroupRank(
             taskgroup=TaskGroup(

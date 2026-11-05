@@ -28,6 +28,7 @@ from retrain_pipelines.dag_engine.sdk import core
 from retrain_pipelines.dag_engine.sdk.core import (
     Execution,
     ExecutionParams,
+    RankNotFoundException,
     Task,
     TaskExitContext,
     TaskExitPayload,
@@ -103,7 +104,7 @@ def _seed_execution(engine, metadata_root, params=None, end_ts=_LATER):
 
 
 def _seed_execution_with_task(
-    engine, metadata_root, task_name="step", failed=False, params=None
+    engine, metadata_root, task_name="step", failed=False, params=None, rank=None
 ):
     """Seed an execution, tasktype, and task via ORM inserts.
 
@@ -131,6 +132,7 @@ def _seed_execution_with_task(
             start_timestamp=_NOW,
             end_timestamp=end_ts,
             failed=failed_val,
+            rank=rank,
         )
         session.add(task)
         session.commit()
@@ -221,6 +223,89 @@ def _seed_taskgroup_with_task(
         task_id = task.id
 
     return exec_id, task_id, str(tg_uuid), str(tt_uuid)
+
+
+def _seed_nested_taskgroups(engine, metadata_root, rank=None):
+    """Seed an execution with a nested taskgroup (outer contains inner).
+
+    ``outer_tg.elements`` references the inner taskgroup UUID rather than a
+    TaskType UUID, exercising the DAO's recursive de-nesting. The leaf task
+    hangs off the inner taskgroup and carries both a context attr and a
+    payload so that ``TaskGroupRank.get_exit_context`` and
+    ``get_exit_payload`` can be tested against actual nested resolution.
+
+    Returns (exec_id, task_id, outer_tg_uuid, inner_tg_uuid).
+    """
+    exec_id = _seed_execution(engine, metadata_root)
+    inner_tt_uuid = uuid4()
+    inner_tg_uuid = uuid4()
+    outer_tg_uuid = uuid4()
+    failed_val = None
+    end_ts = None
+
+    with Session(engine) as session:
+        inner_taskgroup = TaskGroupDbModel(
+            uuid=inner_tg_uuid,
+            exec_id=exec_id,
+            order=0,
+            name="inner_tg",
+            elements=[str(inner_tt_uuid)],
+        )
+        session.add(inner_taskgroup)
+
+        outer_taskgroup = TaskGroupDbModel(
+            uuid=outer_tg_uuid,
+            exec_id=exec_id,
+            order=1,
+            name="outer_tg",
+            elements=[str(inner_tg_uuid)],
+        )
+        session.add(outer_taskgroup)
+
+        leaf_tasktype = TaskTypeDbModel(
+            uuid=inner_tt_uuid,
+            exec_id=exec_id,
+            order=0,
+            name="leaf_task",
+            is_parallel=True,
+            children=[],
+            taskgroup_uuid=inner_tg_uuid,
+        )
+        session.add(leaf_tasktype)
+
+        leaf_task = TaskDbModel(
+            tasktype_uuid=inner_tt_uuid,
+            exec_id=exec_id,
+            start_timestamp=_NOW,
+            end_timestamp=end_ts,
+            failed=failed_val,
+            rank=rank,
+        )
+        session.add(leaf_task)
+        session.commit()
+        task_id = leaf_task.id
+
+        session.add(
+            TaskContextAttrDbModel(
+                task_id=task_id,
+                attr_name="nested_attr",
+                eTAG="dummy_eTAG",
+                sha=None,
+                disk_ref=None,
+                inline_val="nested_val",
+            )
+        )
+        session.add(
+            TaskPayloadAttrDbModel(
+                task_id=task_id,
+                sha=None,
+                disk_ref=None,
+                inline_val=99,
+            )
+        )
+        session.commit()
+
+    return exec_id, task_id, str(outer_tg_uuid), str(inner_tg_uuid)
 
 
 # ---------------------------------------------------------------------------
@@ -413,6 +498,75 @@ class TestExecutionGetTaskById:
             exec_.get_task_by_id(999)
 
 
+class TestExecutionGetTask:
+    """Cover Execution.get_task()."""
+
+    def test_get_task_success_default_rank(self, isolated_async_dao, metadata_root):
+        """Covers branch where the task is found on the main DAG spine (rank=None)."""
+        exec_id, task_id = _seed_execution_with_task(
+            isolated_async_dao, metadata_root, task_name="step", failed=False
+        )
+        exec_ = _make_execution(metadata_root, id=exec_id)
+        task = exec_.get_task("step")
+
+        assert task.id == task_id
+        assert task.name == "step"
+        assert task.rank is None
+        assert task.success is True
+
+    def test_get_task_success_with_rank(self, isolated_async_dao, metadata_root):
+        """Covers branch where a non-empty rank matches a seeded ranked task."""
+        exec_id, task_id = _seed_execution_with_task(
+            isolated_async_dao,
+            metadata_root,
+            task_name="step",
+            failed=False,
+            rank=[1, 2],
+        )
+        exec_ = _make_execution(metadata_root, id=exec_id)
+        task = exec_.get_task("step", rank=[1, 2])
+
+        assert task.id == task_id
+        assert task.rank == [1, 2]
+
+    def test_get_task_empty_rank_normalizes_to_none(
+        self, isolated_async_dao, metadata_root
+    ):
+        """Covers branch where an empty rank list is normalized to None."""
+        exec_id, task_id = _seed_execution_with_task(
+            isolated_async_dao, metadata_root, task_name="step", failed=False
+        )
+        exec_ = _make_execution(metadata_root, id=exec_id)
+        task = exec_.get_task("step", rank=[])
+
+        assert task.id == task_id
+        assert task.rank is None
+
+    def test_get_task_rank_not_found(self, isolated_async_dao, metadata_root):
+        """Covers branch where no task matches the requested rank, raising RankNotFoundException."""
+        exec_id, _ = _seed_execution_with_task(
+            isolated_async_dao, metadata_root, task_name="step", failed=False
+        )
+        exec_ = _make_execution(metadata_root, id=exec_id)
+        with pytest.raises(
+            RankNotFoundException,
+            match=r"No 'step' task found at rank '\[9, 9\]'.*Available ranks: \[None\]",
+        ):
+            exec_.get_task("step", rank=[9, 9])
+
+    def test_get_task_name_not_found(self, isolated_async_dao, metadata_root):
+        """Covers branch where no task with the given name exists, raising RankNotFoundException."""
+        exec_id, _ = _seed_execution_with_task(
+            isolated_async_dao, metadata_root, task_name="step", failed=False
+        )
+        exec_ = _make_execution(metadata_root, id=exec_id)
+        with pytest.raises(
+            RankNotFoundException,
+            match=r"No 'missing' task found at rank 'None'.*Available ranks: \[\]",
+        ):
+            exec_.get_task("missing")
+
+
 class TestExecutionGetParams:
     """Cover Execution.get_params()."""
 
@@ -470,34 +624,33 @@ class TestExecutionGetTaskgroupsWithName:
 
 
 class TestExecutionGetTaskgroupForRank:
-    """Cover Execution.get_taskgroup_for_rank()."""
+    """Cover Execution.get_taskgroup()."""
 
-    def test_get_taskgroup_for_rank_success(self, isolated_async_dao, metadata_root):
+    def test_get_taskgroup_success(self, isolated_async_dao, metadata_root):
         """Covers branch where taskgroup and rank are found."""
         exec_id, _, _, _ = _seed_taskgroup_with_task(
             isolated_async_dao, metadata_root, rank=[1, 2]
         )
         exec_ = _make_execution(metadata_root, id=exec_id)
-        tgr = exec_.get_taskgroup_for_rank("tg", [1, 2])
+        tgr = exec_.get_taskgroup("tg", [1, 2])
 
         assert isinstance(tgr, TaskGroupRank)
         assert tgr.rank == [1, 2]
 
-    def test_get_taskgroup_for_rank_rank_not_found(
-        self, isolated_async_dao, metadata_root
-    ):
-        """Covers branch where taskgroup is found but rank is not."""
+    def test_get_taskgroup_rank_not_found(self, isolated_async_dao, metadata_root):
+        """Covers branch where taskgroup is found but rank is not, raising RankNotFoundException."""
         exec_id, _, _, _ = _seed_taskgroup_with_task(
             isolated_async_dao, metadata_root, rank=[1, 2]
         )
         exec_ = _make_execution(metadata_root, id=exec_id)
-        tgr = exec_.get_taskgroup_for_rank("tg", [9, 9])
+        with pytest.raises(
+            RankNotFoundException,
+            match=r"No taskgroup found with name 'tg' at rank \[9, 9\].*"
+            r"Available ranks: \[\[1, 2\]\]",
+        ):
+            exec_.get_taskgroup("tg", [9, 9])
 
-        assert tgr is None
-
-    def test_get_taskgroup_for_rank_empty_rank_success(
-        self, isolated_async_dao, metadata_root
-    ):
+    def test_get_taskgroup_empty_rank_success(self, isolated_async_dao, metadata_root):
         """Covers branch where requested rank is empty and taskgroup has NULL ranks.
 
         Verifies the path where target_rank is None and ranks equals [None],
@@ -507,41 +660,37 @@ class TestExecutionGetTaskgroupForRank:
             isolated_async_dao, metadata_root, rank=None
         )
         exec_ = _make_execution(metadata_root, id=exec_id)
-        tgr = exec_.get_taskgroup_for_rank("tg", [])
+        tgr = exec_.get_taskgroup("tg", [])
 
         assert isinstance(tgr, TaskGroupRank)
         assert tgr.rank is None
 
-    def test_get_taskgroup_for_rank_empty_rank_not_found(
+    def test_get_taskgroup_empty_rank_not_found(
         self, isolated_async_dao, metadata_root
     ):
-        """Covers branch where requested rank is empty but taskgroup has non-None ranks.
-
-        When target_rank is None (empty input) but the taskgroup's ranks
-        list contains non-None entries, rank_exists evaluates to False
-        and None is returned with a warning.
-        """
+        """Covers branch where empty rank input doesn't match non-None available ranks, raising RankNotFoundException."""
         exec_id, _, _, _ = _seed_taskgroup_with_task(
             isolated_async_dao, metadata_root, rank=[1, 2]
         )
         exec_ = _make_execution(metadata_root, id=exec_id)
-        tgr = exec_.get_taskgroup_for_rank("tg", [])
+        with pytest.raises(
+            RankNotFoundException,
+            match=r"No taskgroup found with name 'tg' at rank \[\].*"
+            r"Available ranks: \[\[1, 2\]\]",
+        ):
+            exec_.get_taskgroup("tg", [])
 
-        assert tgr is None
-
-    def test_get_taskgroup_for_rank_not_found(self, isolated_async_dao, metadata_root):
-        """Covers branch where taskgroup is not found, returning None gracefully.
-
-        Requires the suggested `try...except TypeError` fix in `sdk.core` to
-        handle the DAO returning `None` for a missing taskgroup, allowing the
-        `if not tg:` block to execute and return `None`.
-        """
+    def test_get_taskgroup_not_found(self, isolated_async_dao, metadata_root):
+        """Covers branch where taskgroup is not found, raising RankNotFoundException."""
         exec_id, _ = _seed_execution_with_task(
             isolated_async_dao, metadata_root, task_name="step", failed=False
         )
         exec_ = _make_execution(metadata_root, id=exec_id)
-        tgr = exec_.get_taskgroup_for_rank("missing_tg", [1])
-        assert tgr is None
+        with pytest.raises(
+            RankNotFoundException,
+            match=r"No taskgroup found with name missing_tg in execution pipe \[id \d+\].",
+        ):
+            exec_.get_taskgroup("missing_tg", [1])
 
 
 class TestExecutionGetAttrs:
@@ -944,3 +1093,94 @@ class TestTaskGroupRank:
         payload = tgr.get_exit_payload()
         assert isinstance(payload, TaskExitPayload)
         assert payload["tg_task"] == 42
+
+    # ------------------------------------------------------------------
+    # Nested taskgroups: ``outer_tg.elements`` references an inner
+    # taskgroup UUID rather than a TaskType UUID. The DAO's
+    # ``get_taskgroup_nested_tasks`` must BFS-resolve the chain so the
+    # SDK's ``get_exit_context`` / ``get_exit_payload`` see the leaf task.
+    #
+    # The SDK's public ``get_taskgroups_with_name`` cannot reach a purely
+    # nested outer taskgroup (its INNER JOIN on TaskType yields no rows),
+    # so these tests construct ``TaskGroup`` / ``TaskGroupRank`` directly
+    # using the real seeded ``exec_id`` and ``outer_tg_uuid`` -- the same
+    # pattern as ``test_get_exit_context_empty`` above. The taskgroup name
+    # still resolves in the DB, exercising the DAO's recursive BFS for
+    # real.
+    # ------------------------------------------------------------------
+
+    def test_get_exit_context_nested_rank_none(self, isolated_async_dao, metadata_root):
+        """Nested taskgroup, rank=None: BFS must reach the inner leaf task."""
+        exec_id, _, outer_tg_uuid, _ = _seed_nested_taskgroups(
+            isolated_async_dao, metadata_root, rank=None
+        )
+        tg = TaskGroup(
+            exec_id=exec_id,
+            metadata_root=metadata_root,
+            uuid=outer_tg_uuid,
+            name="outer_tg",
+            elements=[],
+        )
+        tgr = TaskGroupRank(taskgroup=tg, rank=None)
+
+        ctx = tgr.get_exit_context()
+        assert isinstance(ctx, TaskExitContext)
+        assert ctx["nested_attr"] == "nested_val"
+
+    def test_get_exit_context_nested_rank_not_none(
+        self, isolated_async_dao, metadata_root
+    ):
+        """Nested taskgroup, rank=[1, 2]: rank-filtered BFS reaches the leaf."""
+        exec_id, _, outer_tg_uuid, _ = _seed_nested_taskgroups(
+            isolated_async_dao, metadata_root, rank=[1, 2]
+        )
+        tg = TaskGroup(
+            exec_id=exec_id,
+            metadata_root=metadata_root,
+            uuid=outer_tg_uuid,
+            name="outer_tg",
+            elements=[],
+        )
+        tgr = TaskGroupRank(taskgroup=tg, rank=[1, 2])
+
+        ctx = tgr.get_exit_context()
+        assert isinstance(ctx, TaskExitContext)
+        assert ctx["nested_attr"] == "nested_val"
+
+    def test_get_exit_payload_nested_rank_none(self, isolated_async_dao, metadata_root):
+        """Nested taskgroup, rank=None: BFS reaches the leaf task's payload."""
+        exec_id, _, outer_tg_uuid, _ = _seed_nested_taskgroups(
+            isolated_async_dao, metadata_root, rank=None
+        )
+        tg = TaskGroup(
+            exec_id=exec_id,
+            metadata_root=metadata_root,
+            uuid=outer_tg_uuid,
+            name="outer_tg",
+            elements=[],
+        )
+        tgr = TaskGroupRank(taskgroup=tg, rank=None)
+
+        payload = tgr.get_exit_payload()
+        assert isinstance(payload, TaskExitPayload)
+        assert payload["leaf_task"] == 99
+
+    def test_get_exit_payload_nested_rank_not_none(
+        self, isolated_async_dao, metadata_root
+    ):
+        """Nested taskgroup, rank=[1, 2]: rank-filtered BFS reaches the leaf payload."""
+        exec_id, _, outer_tg_uuid, _ = _seed_nested_taskgroups(
+            isolated_async_dao, metadata_root, rank=[1, 2]
+        )
+        tg = TaskGroup(
+            exec_id=exec_id,
+            metadata_root=metadata_root,
+            uuid=outer_tg_uuid,
+            name="outer_tg",
+            elements=[],
+        )
+        tgr = TaskGroupRank(taskgroup=tg, rank=[1, 2])
+
+        payload = tgr.get_exit_payload()
+        assert isinstance(payload, TaskExitPayload)
+        assert payload["leaf_task"] == 99

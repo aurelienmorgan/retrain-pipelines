@@ -1267,6 +1267,10 @@ class AsyncDAO(DAOBase):
         # BFS: collect all descendant taskgroup UUIDs (including root).
         # tg.elements stores UUID strings with dashes (as stored at DAG declaration time).
         # tg_by_uuid is keyed the same way via str(tg.uuid), so the lookup is consistent.
+        all_tasktypes = await self.get_execution_tasktypes_list(execution_id)
+        tasktype_uuids: set[str] = (
+            {str(tt.uuid) for tt in all_tasktypes} if all_tasktypes else set()
+        )
         descendant_uuids: set[UUID] = set()
         queue: list[TaskGroup] = [root_tg]
         while queue:
@@ -1275,19 +1279,26 @@ class AsyncDAO(DAOBase):
             for element_str in tg.elements:
                 if element_str in tg_by_uuid:
                     queue.append(tg_by_uuid[element_str])
-                else:
+                elif element_str not in tasktype_uuids:
                     # Case "an element references a UUID not
-                    # present among this execution's taskgroups".
+                    # present among this execution's taskgroups
+                    # nor its tasktypes".
                     # Shall never happen.
                     logger.warning(
                         f"TaskGroup element '{element_str}' referenced by "
                         f"'{tg.name}' (uuid={tg.uuid}) not found among "
-                        f"execution {execution_id}'s taskgroups."
+                        f"execution {execution_id}'s taskgroups or tasktypes."
                     )
 
         # Cast rank to text for cross-DB JSON comparison.
         # PostgreSQL does not support = on json columns.
-        rank_str = json.dumps(rank) if not isinstance(rank, str) else rank
+        # NULL rank must use IS NULL: cast(NULL, String) == "null" does not
+        # match in SQL (NULL == anything yields NULL, not TRUE).
+        if rank is None:
+            rank_filter = Task.rank.is_(None)
+        else:
+            rank_str = json.dumps(rank) if not isinstance(rank, str) else rank
+            rank_filter = cast(Task.rank, String) == rank_str
 
         # Select Task alongside the TaskType extension fields needed to build TaskExt.
         stmt = (
@@ -1303,7 +1314,7 @@ class AsyncDAO(DAOBase):
             .where(
                 and_(
                     Task.exec_id == execution_id,
-                    cast(Task.rank, String) == rank_str,
+                    rank_filter,
                     TaskType.taskgroup_uuid.in_(descendant_uuids),
                 )
             )
