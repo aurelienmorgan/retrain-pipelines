@@ -17,6 +17,7 @@ import sys
 from IPython import get_ipython
 from IPython.core.magic import register_line_magic
 
+from .__version__ import __version__
 from .launcher import dag_help, dag_render, launch
 
 
@@ -90,6 +91,13 @@ def _make_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--exec-params", dest="exec_params", required=False)
     parser.add_argument("--exec-workers", dest="exec_workers", required=False)
+    parser.add_argument(
+        "--console-quiet",
+        action="store_true",
+        default=False,
+        help="suppress task traces from the cell/console "
+        + "(default: traces go to cell/console, DB, and WebConsole).",
+    )
     return parser
 
 
@@ -167,14 +175,19 @@ def retrain_pipelines(command: str) -> None:
         dag_render(filefullname)
         return
 
-    if args.action == "restart" and args.restart_from is None:
-        print(
-            "%retrain_pipelines: 'restart' must be followed"
-            + " by a task name (or task-group name) argument.",
-            file=sys.stderr,
-            flush=True,
+    if args.action == "restart":
+        if args.restart_from is None:
+            print(
+                "%retrain_pipelines: 'restart' must be followed"
+                + " by a task name (or task-group name) argument.",
+                file=sys.stderr,
+                flush=True,
+            )
+            return
+
+        raise NotImplementedError(
+            f"the {args.action} action is not supported yet in retrain-pipelines v{__version__}"
         )
-        return
 
     ns = ip.user_ns
 
@@ -188,7 +201,7 @@ def retrain_pipelines(command: str) -> None:
     # )
     ######################################################
 
-    return launch(filefullname, params=exec_params)
+    return launch(filefullname, params=exec_params, console_quiet=args.console_quiet)
 
 
 def load_ipython_extension(ipython):

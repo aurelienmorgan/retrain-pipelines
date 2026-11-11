@@ -21,6 +21,24 @@ if in_notebook():
     from .nb_console_print import nb_activate, nb_console_print, nb_deactivate
 
 
+def console_silenced() -> bool:
+    """Whether console/cell output is silenced in this launcher subprocess.
+
+    Returns True only when both:
+      - ``RP_LAUNCHER_SUBPROCESS`` is set (we are inside a launcher-spawned
+        subprocess, not the caller process).
+      - ``RP_CONSOLE_QUIET`` is ``"1"`` (the ``--console-quiet`` flag was
+        passed by the user).
+
+    When True, all console/cell printing is suppressed while DB writes
+    and WebConsole SSE streaming continue to operate normally.
+    """
+    return (
+        os.environ.get("RP_LAUNCHER_SUBPROCESS") == "1"
+        and os.environ.get("RP_CONSOLE_QUIET") == "1"
+    )
+
+
 # Module-level controller instance for picklable print wrapper
 _global_controller = None
 
@@ -159,7 +177,7 @@ class CustomRichHandler(logging.Handler):
                 # for task-traces contexts
                 # when execution runs
                 # in a Notebook cell
-            if in_notebook():
+            if in_notebook() and not console_silenced():
                 nb_console_print(console, rich_formatted_message)
             console.file.flush()
 
@@ -458,7 +476,7 @@ class RichLoggingController:
             # for task-traces contexts
             # when execution runs
             # in a Notebook cell
-        if in_notebook():
+        if in_notebook() and not console_silenced():
             nb_console_print(console, rich_formatted_message)
         console.file.flush()
 

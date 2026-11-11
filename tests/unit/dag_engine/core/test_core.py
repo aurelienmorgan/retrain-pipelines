@@ -700,6 +700,22 @@ class TestTaskTypeConstruction:
     def test_log_property_returns_logger(self):
         assert isinstance(_real_task("t").log, logging.Logger)
 
+    def test_log_emits_console_silenced(self, monkeypatch):
+        """Covers the branch in RawRichHandler.emit where console output is silenced.
+
+        By setting the environment variables that make console_silenced return True,
+        the info log emitted during TaskType initialization is silently dropped
+        by the custom rich handler, covering the early return branch.
+        """
+        monkeypatch.setenv("RP_LAUNCHER_SUBPROCESS", "1")
+        monkeypatch.setenv("RP_CONSOLE_QUIET", "1")
+
+        def silent_func():
+            pass
+
+        t = TaskType(func=silent_func, is_parallel=False)
+        assert t.name == "silent_func"
+
     def test_parents_empty_on_new_task(self):
         assert _real_task("t").parents == []
 
@@ -1118,6 +1134,35 @@ class TestTaskTypeWrapFunc:
         finally:
             _dag_execution_context_var.reset(token)
 
+    def test_wrap_func_drops_positional_payload_when_no_positional_params(self, _dao_and_registry):
+        """Covers the branch where positional args are dropped if the func signature
+        accepts no positional parameters.
+
+        When a task function is declared with only keyword-only parameters, any
+        positional argument passed by the DAG executor (e.g., a predecessor's payload)
+        is safely discarded by slicing args.
+        """
+        dao, _ = _dao_and_registry
+        ec = DagExecutionContext({"exec_id": None})
+        token = _dag_execution_context_var.set(ec)
+        try:
+
+            def func_no_positional(*, kw_only=None):
+                return kw_only
+
+            t = TaskType(func=func_no_positional, is_parallel=False)
+            exec_id = self._seed_execution_and_tasktype(dao, t.tasktype_uuid)
+            ec._params["exec_id"] = exec_id
+
+            task_id, result = t.func("dummy_payload", exec_id=exec_id, kw_only="success")
+            assert result == "success"
+
+            task_row = dao.get_task(task_id)
+            assert task_row is not None
+            assert task_row.failed is False
+        finally:
+            _dag_execution_context_var.reset(token)
+
     def test_wrap_merge_func_success(self, _dao_and_registry):
         dao, _ = _dao_and_registry
         ec = DagExecutionContext({"exec_id": None})
@@ -1352,6 +1397,64 @@ class TestCaptureAndStreamTrace:
             finally:
                 sys.stdout = orig_stdout
             assert result == "nb_ok"
+        finally:
+            _dag_execution_context_var.reset(token)
+
+    def test_notebook_mode_console_silenced_patches_write_methods(self, _dao_and_registry, monkeypatch):
+        """Covers the branch in the notebook write wrapper where console output is silenced.
+
+        Drives the notebook-mode stream patching logic while forcing console_silenced
+        to be True. This ensures the fallback length-calculation branch is executed
+        instead of calling the original stream write.
+        """
+        monkeypatch.setenv("RP_LAUNCHER_SUBPROCESS", "1")
+        monkeypatch.setenv("RP_CONSOLE_QUIET", "1")
+
+        dao, _ = _dao_and_registry
+        ec = DagExecutionContext({"exec_id": None})
+        token = _dag_execution_context_var.set(ec)
+        try:
+
+            def my_func():
+                print("notebook output silenced")
+                return "nb_silenced"
+
+            ipython_mock = MagicMock()
+            ipython_mock.config = {"IPKernelApp": True}
+
+            fake_ipython_module = types.ModuleType("IPython")
+            fake_ipython_module.get_ipython = lambda: ipython_mock
+
+            class _OnceRecursiveStdout:
+                def __init__(self):
+                    self._done = False
+
+                def write(self, data):
+                    if not self._done:
+                        self._done = True
+                        sys.stdout.write(data)
+
+                def flush(self):
+                    pass
+
+                def fileno(self):
+                    return sys.__stdout__.fileno()
+
+                def isatty(self):
+                    return False
+
+            t = TaskType(func=my_func, is_parallel=False)
+            exec_id = self._seed_execution_and_tasktype(dao, t.tasktype_uuid)
+            ec._params["exec_id"] = exec_id
+            recursive_stdout = _OnceRecursiveStdout()
+            orig_stdout = sys.stdout
+            try:
+                sys.stdout = recursive_stdout
+                with patch.dict(sys.modules, {"IPython": fake_ipython_module}):
+                    _, result = t.func(exec_id=exec_id)
+            finally:
+                sys.stdout = orig_stdout
+            assert result == "nb_silenced"
         finally:
             _dag_execution_context_var.reset(token)
 

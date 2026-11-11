@@ -28,6 +28,7 @@ from ...utils import in_notebook
 from ...utils.rich_logging import framed_rich_log_str
 from ..config import Config
 from ..db.dao import DAO
+from ..rp_logging import console_silenced
 from ..stores.commons import generate_etag
 from ..stores.contexts_store import (
     _CONTEXT_EXCLUDE_ATTRS,
@@ -53,15 +54,38 @@ logger = logging.getLogger(__name__)
 class TaskFuncException(Exception):
     """Exception raised when a task function fails."""
 
-    def __init__(self, message):
+    def __init__(self, message, cause=None):
         super().__init__(message)
+        # Capture root-cause details as plain strings so they survive the
+        # cross-process pickle round-trip performed by the launcher
+        # subprocess helper (launcher._run_helper re-raises the exception
+        # in the calling process). Without this, only the opaque wrapper
+        # message reaches the caller (e.g. the notebook cell, when
+        # launched from a notebook) and the underlying error is swallowed
+        # by the subprocess boundary.
+        self.cause_type = type(cause).__name__ if cause is not None else None
+        self.cause_msg = str(cause) if cause is not None else None
+        self.cause_traceback = (
+            "".join(traceback.format_exception(type(cause), cause, cause.__traceback__))
+            if cause is not None
+            else None
+        )
 
 
 class TaskMergeFuncException(Exception):
     """Exception raised when a task merge-function fails."""
 
-    def __init__(self, message):
+    def __init__(self, message, cause=None):
         super().__init__(message)
+        # See TaskFuncException for the rationale on capturing the root
+        # cause as strings (cross-process pickle survival).
+        self.cause_type = type(cause).__name__ if cause is not None else None
+        self.cause_msg = str(cause) if cause is not None else None
+        self.cause_traceback = (
+            "".join(traceback.format_exception(type(cause), cause, cause.__traceback__))
+            if cause is not None
+            else None
+        )
 
 
 class TaskGroupException(Exception):
@@ -76,6 +100,8 @@ tasktype_taskgroup_console = Console(width=None, force_terminal=True, legacy_win
 
 class RawRichHandler(RichHandler):
     def emit(self, record):
+        if console_silenced():
+            return
         msg = self.format(record)
         tasktype_taskgroup_console.print(msg, soft_wrap=False)
 
@@ -222,7 +248,10 @@ class TaskType(BaseModel):
                     _nb_tl.active = True
                     _nb_tl.inner_pushed = False
                 try:
-                    result = orig(data)
+                    if not console_silenced():
+                        result = orig(data)
+                    else:
+                        result = len(data) if data else 0
                 finally:
                     if is_top:
                         _nb_tl.active = False
@@ -269,7 +298,7 @@ class TaskType(BaseModel):
                             microsec=trace_microsec,
                             is_err=is_err,
                         )
-                        if not _notebook_mode:
+                        if not _notebook_mode and not console_silenced():
                             # echo to console
                             orig_fd = old_stderr_fd if is_err else old_stdout_fd
                             os.write(orig_fd, (line + "\n").encode())
@@ -374,7 +403,8 @@ class TaskType(BaseModel):
                 end_timestamp = datetime.now(timezone.utc)
                 dao.update_task(id=task_id, end_timestamp=end_timestamp, failed=True)
                 raise TaskMergeFuncException(
-                    f"merge `{merge_func.__name__}` " + f"of task `{self.name}` failed"
+                    f"merge `{merge_func.__name__}` " + f"of task `{self.name}` failed",
+                    cause=ex,
                 ) from ex
             finally:
                 # Flag context changes for the subsequent func wrapper to detect,
@@ -401,7 +431,8 @@ class TaskType(BaseModel):
         def wrapper(*args, **kwargs):
             """Rank and task_id are optional named arguments."""
             exec_id = kwargs.pop("exec_id")
-            arg_names = list(inspect.signature(func).parameters.keys())
+            sig_params = inspect.signature(func).parameters
+            arg_names = list(sig_params.keys())
             if "rank" not in arg_names:
                 rank = kwargs.pop("rank", None)
             else:
@@ -411,6 +442,14 @@ class TaskType(BaseModel):
                 task_id = kwargs.pop("task_id", None)
             else:
                 task_id = kwargs["task_id"]
+            # Drop the positional payload (predecessor result) when the user-declared
+            # func signature accepts no positional parameter, so tasks
+            # may legitimately ignore their predecessor's output.
+            if args and not any(
+                p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD, p.VAR_POSITIONAL)
+                for p in sig_params.values()
+            ):
+                args = args[1:]
 
             dao = DAO(Config.get_metadatastore_url())
             if task_id is None:
@@ -494,7 +533,7 @@ class TaskType(BaseModel):
                 )
             except Exception as ex:
                 task_failed = True
-                raise TaskFuncException(f"task `{self.name}` failed") from ex
+                raise TaskFuncException(f"task `{self.name}` failed", cause=ex) from ex
             finally:
                 end_timestamp = datetime.now(timezone.utc)
                 # Serialize exit-context diff on success only.

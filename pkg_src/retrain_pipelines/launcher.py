@@ -22,6 +22,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import traceback
 from collections.abc import Callable
 from typing import Any
 
@@ -30,7 +31,47 @@ import cloudpickle
 _dag_render_cell_hash = None
 
 
-def _run_helper(pipeline_fullpath: str, helper_body_tpl, pre_load: Callable | None = None) -> Any:
+def _print_root_cause(exc: BaseException) -> None:
+    """Print the root cause of a (possibly wrapped) exception to stderr.
+
+    The launcher subprocess pickles the exception raised by ``execute()``
+    and re-raises it in the calling process. For ``TaskFuncException``
+    and ``TaskMergeFuncException`` (see core.py), the original cause's
+    type, message and formatted traceback are captured as strings at
+    raise time so they survive the cross-process pickle round-trip.
+    Print them here so the user sees the underlying error directly
+    (e.g. in the notebook cell if in a notebook), not just the opaque
+    wrapper message. Falls back to walking ``__cause__`` for exceptions
+    without captured attrs.
+    """
+    cause_type = getattr(exc, "cause_type", None)
+    cause_msg = getattr(exc, "cause_msg", None)
+    cause_tb = getattr(exc, "cause_traceback", None)
+    if cause_type is None and cause_msg is None and cause_tb is None:
+        root = exc
+        while root.__cause__ is not None:
+            root = root.__cause__
+        if root is not exc:
+            cause_type = type(root).__name__
+            cause_msg = str(root)
+            cause_tb = "".join(traceback.format_exception(type(root), root, root.__traceback__))
+    if cause_type is None and cause_msg is None:
+        return
+    print(
+        f"\nRoot cause of `{type(exc).__name__}`:\n  {cause_type}: {cause_msg}\n",
+        file=sys.stderr,
+        flush=True,
+    )
+    if cause_tb:
+        print(cause_tb, file=sys.stderr, flush=True)
+
+
+def _run_helper(
+    pipeline_fullpath: str,
+    helper_body_tpl,
+    pre_load: Callable | None = None,
+    console_quiet: bool = False,
+) -> Any:
     """
     Spawn a subprocess from helper_body_tpl(result_file).
 
@@ -62,7 +103,7 @@ def _run_helper(pipeline_fullpath: str, helper_body_tpl, pre_load: Callable | No
     with open(helper_file, "w") as wf:
         wf.write(helper_body_tpl(result_file))
 
-    env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+    env = {**os.environ, "PYTHONUNBUFFERED": "1", "RP_CONSOLE_QUIET": "1" if console_quiet else "0"}
     proc = subprocess.Popen(
         [sys.executable, helper_file], stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env
     )
@@ -81,16 +122,18 @@ def _run_helper(pipeline_fullpath: str, helper_body_tpl, pre_load: Callable | No
 
         def _relay(src, dst):
             for line in src:
-                _nb_console.print(
-                    Text.from_ansi(line.decode("utf-8", errors="replace")), sep="", end=""
-                )
+                if not console_quiet:
+                    _nb_console.print(
+                        Text.from_ansi(line.decode("utf-8", errors="replace")), sep="", end=""
+                    )
 
     else:
 
         def _relay(src, dst):
             for line in src:
-                dst.write(line.decode("utf-8", errors="replace"))
-                dst.flush()
+                if not console_quiet:
+                    dst.write(line.decode("utf-8", errors="replace"))
+                    dst.flush()
 
     t_out = threading.Thread(target=_relay, args=(proc.stdout, sys.stdout))
     t_err = threading.Thread(target=_relay, args=(proc.stderr, sys.stderr))
@@ -115,6 +158,7 @@ def _run_helper(pipeline_fullpath: str, helper_body_tpl, pre_load: Callable | No
     os.unlink(result_file)
 
     if status == "err":
+        _print_root_cause(payload)
         raise payload
 
     return payload
@@ -123,6 +167,7 @@ def _run_helper(pipeline_fullpath: str, helper_body_tpl, pre_load: Callable | No
 def launch(
     pipeline_fullpath: str,
     params: dict | None = None,
+    console_quiet: bool = False,
 ):
     """Launch a pipeline execution."""
     params = params or {}
@@ -175,24 +220,26 @@ os._exit(0)
             if retrain_pipeline_type:
                 os.environ["retrain_pipeline_type"] = retrain_pipeline_type
 
-    payload = _run_helper(pipeline_fullpath, _helper_body, pre_load=_pre_load)
+    payload = _run_helper(
+        pipeline_fullpath, _helper_body, pre_load=_pre_load, console_quiet=console_quiet
+    )
 
     # print(f"os.environ['retrain_pipeline_type'] : {os.environ['retrain_pipeline_type']}")
 
     final_result, context_dump = payload
-
-    logging_controller = RichLoggingController()
-    logging_controller.activate()
-    logging.getLogger().info(
-        f"{context_dump['username']} - execution {context_dump['exec_id']} - "
-        + f"{context_dump['pipeline_name']} - final result : {final_result}\n"
-        + (
-            f"model version blessed : {context_dump['model_version_blessed']}"
-            if "model_version_blessed" in context_dump
-            else ""
+    if not console_quiet:
+        logging_controller = RichLoggingController()
+        logging_controller.activate()
+        logging.getLogger().info(
+            f"{context_dump['username']} - execution {context_dump['exec_id']} - "
+            + f"{context_dump['pipeline_name']} - final result : {final_result}\n"
+            + (
+                f"model version blessed : {context_dump['model_version_blessed']}"
+                if "model_version_blessed" in context_dump
+                else ""
+            )
         )
-    )
-    logging_controller.deactivate()
+        logging_controller.deactivate()
 
     return payload
 
