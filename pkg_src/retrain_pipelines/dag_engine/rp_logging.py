@@ -134,8 +134,7 @@ class CustomRichHandler(logging.Handler):
                     lineno, msg_str = record.lineno, record.getMessage()
             else:
                 full_path = record.pathname
-                lineno = record.lineno
-                msg_str = record.getMessage()
+                lineno, msg_str = record.lineno, record.getMessage()
 
             path = Text.assemble((f"{filename}:{lineno}", f"link file://{full_path}"))
             path.append(
@@ -248,9 +247,61 @@ class RichLoggingController:
         self._active = False
 
     def _getLogger_wrapped(self, name: str | None = None) -> logging.Logger:
+        """Monkey-patch replacement for ``logging.getLogger``.
+
+        Installed by ``activate()`` to intercept *every* logger access
+        made while the controller is active, so that:
+
+          - StreamHandlers pointing at ``sys.stdout``/``sys.stderr``
+            are swapped for :class:`CustomRichHandler` (which always
+            binds to the *current* streams at emit time, surviving the
+            stdout/stderr redirections performed by task workers and
+            by the notebook WebConsole live-log capture).
+          - The root and package loggers get a ``CustomRichHandler``
+            and their level is dropped to DEBUG so cell-level logs
+            surface without per-logger boilerplate.
+          - The *pre-activation* handler list of every logger that will
+            be touched is snapshotted into ``_logger_handler_backup``
+            so ``deactivate()`` can restore it exactly — including
+            StreamHandlers that get converted into CustomRichHandler
+            and would otherwise be lost.
+
+        Uvicorn-owned loggers (``uvicorn``, ``uvicorn.error``,
+        ``uvicorn.access``) are intentionally excluded from both
+        modification *and* snapshotting: they are owned by uvicorn's
+        own ``dictConfig`` (run during ``Server.serve()``) and may
+        additionally receive the ``WebSocketLogHandler`` lazily
+        registered on first WS client connect. Snapshotting them
+        would let ``deactivate()`` overwrite those runtime-configured
+        handlers with a stale pre-activation snapshot — silently
+        killing access-log streaming whenever the controller is
+        deactivated mid-server-life (notebook WebConsole start,
+        and every ``runtime.execute()`` activation cycle).
+
+        Parameters
+        ----------
+        name : str | None
+            Logger name; ``None`` resolves to the root logger, as
+            in the standard library.
+
+        Returns
+        -------
+        logging.Logger
+            The requested logger, possibly with its handlers
+            rewritten as described above.
+        """
         logger = self._orig_getLogger(name)
 
         if name in self._logger_to_rich:
+            return logger
+
+        # uvicorn loggers are owned by uvicorn's dictConfig ;
+        # skip them entirely so deactivate() never restores a
+        # stale handler snapshot over the dictConfig-configured
+        # handlers (which would wipe file_access_handler and any
+        # WebSocketLogHandler added on first WS client connect).
+        if name and name.startswith("uvicorn"):
+            self._logger_to_rich[name] = logger
             return logger
 
         # Snapshot original handlers BEFORE any modification
