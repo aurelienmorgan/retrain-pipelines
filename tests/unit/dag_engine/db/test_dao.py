@@ -2018,6 +2018,57 @@ class TestAsyncDAOExecutionTasksWithName:
         result = await async_dao.get_execution_tasks_with_name(exec_id, "no_such_step")
         assert result == []
 
+    @pytest.mark.asyncio
+    async def test_get_execution_tasks_with_uuid_returns_none_when_no_match(
+        self, async_dao
+    ):
+        """No matching tasktype_uuid => None (not empty list like by-name)."""
+        exec_id = await async_dao._async_add_entity(
+            Execution,
+            name="uuid_tasks_empty_pipe",
+            username="u",
+            _start_timestamp=_NOW,
+            metadata_root="/tmp/meta",
+            artifacts_store_root="/tmp/artifacts",
+        )
+        result = await async_dao.get_execution_tasks_with_uuid(exec_id, uuid4())
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_get_execution_tasks_with_uuid_returns_task_exts(self, async_dao):
+        """Matching tasktype_uuid => list of TaskExt."""
+        exec_id = await async_dao._async_add_entity(
+            Execution,
+            name="uuid_tasks_match_pipe",
+            username="u",
+            _start_timestamp=_NOW,
+            metadata_root="/tmp/meta",
+            artifacts_store_root="/tmp/artifacts",
+        )
+        tt_uuid = uuid4()
+        async with async_dao.engine.begin() as conn:
+            await conn.execute(
+                text(
+                    'INSERT INTO tasktypes (uuid, exec_id, "order", name, '
+                    "is_parallel, children) VALUES "
+                    "(:uuid, :eid, 0, 'uuid_step', false, '[]')"
+                ),
+                {"uuid": tt_uuid.hex, "eid": exec_id},
+            )
+            await conn.execute(
+                text(
+                    "INSERT INTO tasks (tasktype_uuid, exec_id, start_timestamp) "
+                    "VALUES (:tu, :eid, :s)"
+                ),
+                {"tu": tt_uuid.hex, "eid": exec_id, "s": _NOW},
+            )
+
+        result = await async_dao.get_execution_tasks_with_uuid(exec_id, tt_uuid)
+        assert result is not None
+        assert len(result) == 1
+        assert isinstance(result[0], TaskExt)
+        assert result[0].name == "uuid_step"
+
 
 # ==============================================================================
 # AsyncDAOExecutionInfo
@@ -2753,6 +2804,165 @@ class TestAsyncDAOTaskExt:
         # Not-found branch: non-existent task id => None
         assert await async_dao.get_task_ext(task_id=99999) is None
 
+    @pytest.mark.asyncio
+    async def test_get_taskgroup_element_returns_task_ext_when_rank_is_list(
+        self, async_dao
+    ):
+        """rank as list => TaskExt (exercises json.dumps rank branch)."""
+        tt_uuid = uuid4()
+        exec_id = await async_dao._async_add_entity(
+            Execution,
+            name="elem_list_rank_pipe",
+            username="u",
+            _start_timestamp=_NOW,
+            metadata_root="/tmp/meta",
+            artifacts_store_root="/tmp/artifacts",
+        )
+        async with async_dao.engine.begin() as conn:
+            await conn.execute(
+                text(
+                    'INSERT INTO tasktypes (uuid, exec_id, "order", name, '
+                    "is_parallel, children) VALUES "
+                    "(:uuid, :eid, 0, 'elem_list_step', false, '[]')"
+                ),
+                {"uuid": tt_uuid.hex, "eid": exec_id},
+            )
+            await conn.execute(
+                text(
+                    "INSERT INTO tasks (tasktype_uuid, exec_id, start_timestamp, rank) "
+                    "VALUES (:tu, :eid, :s, '[0]')"
+                ),
+                {"tu": tt_uuid.hex, "eid": exec_id, "s": _NOW},
+            )
+
+        result = await async_dao.get_taskgroup_element(
+            exec_id, "elem_grp", tt_uuid, [0]
+        )
+        assert result is not None
+        assert isinstance(result, TaskExt)
+        assert result.name == "elem_list_step"
+
+    @pytest.mark.asyncio
+    async def test_get_taskgroup_element_returns_task_ext_when_rank_is_none(
+        self, async_dao
+    ):
+        """rank is None => TaskExt (exercises Task.rank.is_(None) branch)."""
+        tt_uuid = uuid4()
+        exec_id = await async_dao._async_add_entity(
+            Execution,
+            name="elem_none_rank_pipe",
+            username="u",
+            _start_timestamp=_NOW,
+            metadata_root="/tmp/meta",
+            artifacts_store_root="/tmp/artifacts",
+        )
+        async with async_dao.engine.begin() as conn:
+            await conn.execute(
+                text(
+                    'INSERT INTO tasktypes (uuid, exec_id, "order", name, '
+                    "is_parallel, children) VALUES "
+                    "(:uuid, :eid, 0, 'elem_none_step', false, '[]')"
+                ),
+                {"uuid": tt_uuid.hex, "eid": exec_id},
+            )
+            await conn.execute(
+                text(
+                    "INSERT INTO tasks (tasktype_uuid, exec_id, start_timestamp, rank) "
+                    "VALUES (:tu, :eid, :s, NULL)"
+                ),
+                {"tu": tt_uuid.hex, "eid": exec_id, "s": _NOW},
+            )
+
+        result = await async_dao.get_taskgroup_element(
+            exec_id, "elem_grp", tt_uuid, None
+        )
+        assert result is not None
+        assert isinstance(result, TaskExt)
+
+    @pytest.mark.asyncio
+    async def test_get_taskgroup_element_returns_task_ext_when_rank_is_string(
+        self, async_dao
+    ):
+        """rank as string => TaskExt (exercises rank-as-is branch, skips json.dumps)."""
+        tt_uuid = uuid4()
+        exec_id = await async_dao._async_add_entity(
+            Execution,
+            name="elem_str_rank_pipe",
+            username="u",
+            _start_timestamp=_NOW,
+            metadata_root="/tmp/meta",
+            artifacts_store_root="/tmp/artifacts",
+        )
+        async with async_dao.engine.begin() as conn:
+            await conn.execute(
+                text(
+                    'INSERT INTO tasktypes (uuid, exec_id, "order", name, '
+                    "is_parallel, children) VALUES "
+                    "(:uuid, :eid, 0, 'elem_str_step', false, '[]')"
+                ),
+                {"uuid": tt_uuid.hex, "eid": exec_id},
+            )
+            await conn.execute(
+                text(
+                    "INSERT INTO tasks (tasktype_uuid, exec_id, start_timestamp, rank) "
+                    "VALUES (:tu, :eid, :s, '[0]')"
+                ),
+                {"tu": tt_uuid.hex, "eid": exec_id, "s": _NOW},
+            )
+
+        result = await async_dao.get_taskgroup_element(
+            exec_id, "elem_grp", tt_uuid, "[0]"
+        )
+        assert result is not None
+        assert isinstance(result, TaskExt)
+
+    @pytest.mark.asyncio
+    async def test_get_taskgroup_element_returns_taskgroup_when_element_is_taskgroup(
+        self, async_dao
+    ):
+        """element_uuid is a TaskGroup => returns TaskGroup."""
+        tg_uuid = uuid4()
+        exec_id = await async_dao._async_add_entity(
+            Execution,
+            name="elem_tg_pipe",
+            username="u",
+            _start_timestamp=_NOW,
+            metadata_root="/tmp/meta",
+            artifacts_store_root="/tmp/artifacts",
+        )
+        async with async_dao.engine.begin() as conn:
+            await conn.execute(
+                text(
+                    'INSERT INTO taskgroups (uuid, exec_id, "order", name, elements) '
+                    "VALUES (:uuid, :eid, 0, 'elem_tg_grp', '[]')"
+                ),
+                {"uuid": tg_uuid.hex, "eid": exec_id},
+            )
+
+        result = await async_dao.get_taskgroup_element(
+            exec_id, "elem_grp", tg_uuid, None
+        )
+        assert result is not None
+        assert isinstance(result, TaskGroup)
+
+    @pytest.mark.asyncio
+    async def test_get_taskgroup_element_returns_none_when_element_not_found(
+        self, async_dao
+    ):
+        """element_uuid matches nothing => None."""
+        exec_id = await async_dao._async_add_entity(
+            Execution,
+            name="elem_not_found_pipe",
+            username="u",
+            _start_timestamp=_NOW,
+            metadata_root="/tmp/meta",
+            artifacts_store_root="/tmp/artifacts",
+        )
+        result = await async_dao.get_taskgroup_element(
+            exec_id, "elem_grp", uuid4(), None
+        )
+        assert result is None
+
 
 # ==============================================================================
 # AsyncDAOExecutionTaskgroupRanks
@@ -2760,7 +2970,7 @@ class TestAsyncDAOTaskExt:
 
 
 class TestAsyncDAOExecutionTaskgroupRanks:
-    """Cover get_execution_taskgroup_ranks branches."""
+    """Cover get_execution_taskgroup_ranks and _with_uuid branches."""
 
     @pytest.mark.asyncio
     async def test_returns_none_when_taskgroup_not_found(self, async_dao):
@@ -2857,6 +3067,97 @@ class TestAsyncDAOExecutionTaskgroupRanks:
         assert ranks[0] == [0]
         assert ranks[1] == [1, 2]
         assert ranks[2] is None
+
+    @pytest.mark.asyncio
+    async def test_with_uuid_returns_none_when_taskgroup_not_found(self, async_dao):
+        """No matching taskgroup uuid => None.
+
+        Seeds data so the DB is non-empty, then queries with a non-matching uuid.
+        """
+        exec_id = await async_dao._async_add_entity(
+            Execution,
+            name="ranks_uuid_none_pipe",
+            username="u",
+            _start_timestamp=_NOW,
+            metadata_root="/tmp/meta",
+            artifacts_store_root="/tmp/artifacts",
+        )
+        existing_tg = uuid4()
+        async with async_dao.engine.begin() as conn:
+            await conn.execute(
+                text(
+                    'INSERT INTO taskgroups (uuid, exec_id, "order", name, elements) '
+                    "VALUES (:uuid, :eid, 0, 'existing_grp', '[]')"
+                ),
+                {"uuid": existing_tg.hex, "eid": exec_id},
+            )
+        result = await async_dao.get_execution_taskgroup_ranks_with_uuid(
+            exec_id, uuid4()
+        )
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_with_uuid_returns_taskgroup_and_sorted_ranks(self, async_dao):
+        """Happy path by uuid: returns TaskGroup and deduplicated, sorted ranks."""
+        tg_uuid = uuid4()
+        tt_uuid = uuid4()
+        exec_id = await async_dao._async_add_entity(
+            Execution,
+            name="ranks_uuid_pipe",
+            username="u",
+            _start_timestamp=_NOW,
+            metadata_root="/tmp/meta",
+            artifacts_store_root="/tmp/artifacts",
+        )
+        async with async_dao.engine.begin() as conn:
+            await conn.execute(
+                text(
+                    'INSERT INTO taskgroups (uuid, exec_id, "order", name, elements) '
+                    "VALUES (:uuid, :eid, 0, 'rank_uuid_grp', '[]')"
+                ),
+                {"uuid": tg_uuid.hex, "eid": exec_id},
+            )
+            await conn.execute(
+                text(
+                    'INSERT INTO tasktypes (uuid, exec_id, "order", name, '
+                    "is_parallel, children, taskgroup_uuid) VALUES "
+                    "(:uuid, :eid, 0, 'rank_uuid_step', false, '[]', :tg_uuid)"
+                ),
+                {"uuid": tt_uuid.hex, "eid": exec_id, "tg_uuid": tg_uuid.hex},
+            )
+            await conn.execute(
+                text(
+                    "INSERT INTO tasks (tasktype_uuid, exec_id, start_timestamp, rank) "
+                    "VALUES (:tu, :eid, :s, '[1, 2]')"
+                ),
+                {"tu": tt_uuid.hex, "eid": exec_id, "s": _NOW},
+            )
+            await conn.execute(
+                text(
+                    "INSERT INTO tasks (tasktype_uuid, exec_id, start_timestamp, rank) "
+                    "VALUES (:tu, :eid, :s, '[0]')"
+                ),
+                {"tu": tt_uuid.hex, "eid": exec_id, "s": _NOW},
+            )
+            # Duplicate rank [0] - should be deduplicated
+            await conn.execute(
+                text(
+                    "INSERT INTO tasks (tasktype_uuid, exec_id, start_timestamp, rank) "
+                    "VALUES (:tu, :eid, :s, '[0]')"
+                ),
+                {"tu": tt_uuid.hex, "eid": exec_id, "s": _NOW},
+            )
+
+        result = await async_dao.get_execution_taskgroup_ranks_with_uuid(
+            exec_id, tg_uuid
+        )
+        assert result is not None
+        taskgroup, ranks = result
+        assert isinstance(taskgroup, TaskGroup)
+        assert taskgroup.name == "rank_uuid_grp"
+        assert len(ranks) == 2
+        assert ranks[0] == [0]
+        assert ranks[1] == [1, 2]
 
 
 # ==============================================================================

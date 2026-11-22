@@ -8,6 +8,7 @@ from uuid import UUID
 
 import requests
 from sqlalchemy import (
+    ColumnElement,
     QueuePool,
     String,
     Uuid,
@@ -18,6 +19,7 @@ from sqlalchemy import (
     desc,
     event,
     func,
+    literal,
     select,
     text,
 )
@@ -746,22 +748,102 @@ class AsyncDAO(DAOBase):
             return out_list
 
     async def get_execution_tasks_with_name(
-        self, execution_id: int, task_type_name: str
-    ) -> list[Task] | None:
+        self, execution_id: int, tasktype_name: str
+    ) -> list[TaskExt] | None:
+        """Return all Task records matching the given tasktype_name for an execution.
+
+        Parameters
+        ----------
+        execution_id : int
+            The Execution.id to filter Task items on.
+        tasktype_name : str
+            The TaskType.name to filter Task items on.
+
+        Returns
+        -------
+        list[TaskExt], optional
+            list of TaskExt records if found, else an empty list.
+        """
         stmt = (
-            select(Task)
+            select(
+                TaskType.name,
+                TaskType.docstring,
+                TaskType.is_parallel,
+                Task,
+            )
             .join(
                 TaskType,
                 and_(Task.exec_id == TaskType.exec_id, Task.tasktype_uuid == TaskType.uuid),
             )
-            .where(and_(Task.exec_id == execution_id, TaskType.name == task_type_name))
+            .where(and_(Task.exec_id == execution_id, TaskType.name == tasktype_name))
         )
 
         async with self._get_session() as session:
             result = await session.execute(stmt)
-            tasks_list = result.scalars().all()
+            rows = result.all()
 
-            return tasks_list
+            return [
+                TaskExt(**{
+                    **task_orm.__dict__,
+                    "name": name,
+                    "docstring": docstring,
+                    "is_parallel": is_parallel,
+                })
+                for name, docstring, is_parallel, task_orm in rows
+            ]
+
+    async def get_execution_tasks_with_uuid(
+        self, execution_id: int, tasktype_uuid: UUID
+    ) -> list[TaskExt] | None:
+        """Return all Task records matching the given tasktype_uuid for an execution.
+
+        Parameters
+        ----------
+        execution_id : int
+            The Execution.id to filter Task items on.
+        tasktype_uuid : UUID
+            The TaskType.uuid to filter Task items on.
+
+        Returns
+        -------
+        list[TaskExt], optional
+            list of TaskExt records if found, else None.
+        """
+        stmt = (
+            select(
+                TaskType.name,
+                TaskType.docstring,
+                TaskType.is_parallel,
+                Task,
+            )
+            .join(
+                TaskType,
+                and_(Task.exec_id == TaskType.exec_id, Task.tasktype_uuid == TaskType.uuid),
+            )
+            .where(
+                and_(
+                    Task.exec_id == execution_id,
+                    Task.tasktype_uuid == tasktype_uuid,
+                )
+            )
+        )
+
+        async with self._get_session() as session:
+            result = await session.execute(stmt)
+            rows = result.all()
+
+            if not rows:
+                return None
+
+            return [
+                TaskExt(**{
+                    **task_orm.__dict__,
+                    "name": name,
+                    "docstring": docstring,
+                    "is_parallel": is_parallel,
+                })
+                for name, docstring, is_parallel, task_orm in rows
+            ]
 
     @lru_cache
     async def get_execution_info(self, execution_id: int) -> dict | None:
@@ -1231,6 +1313,61 @@ class AsyncDAO(DAOBase):
 
             return taskgroup, unique_ranks
 
+    async def get_execution_taskgroup_ranks_with_uuid(
+        self, execution_id: int, taskgroup_uuid: UUID
+    ) -> tuple[TaskGroup, list] | None:
+        """Return a TaskGroup and its ranks, filtered by taskgroup uuid.
+
+        Identical to :meth:`get_execution_taskgroup_ranks` except it filters
+        on ``taskgroup_uuid`` instead of ``taskgroup_name``.
+
+        Parameters
+        ----------
+        execution_id : int
+            The Execution.id to filter tasks on.
+        taskgroup_uuid : UUID
+            The uuid of the taskgroup to retrieve.
+
+        Returns
+        -------
+        tuple[TaskGroup, list] | None
+            Same shape as :meth:`get_execution_taskgroup_ranks`.
+        """
+        # Rank deduplication/sorting is performed in Python for cross-DB JSON
+        # compatibility ; see :meth:`get_execution_taskgroup_ranks` for rationale.
+        stmt = (
+            select(TaskGroup, Task.rank)
+            .select_from(TaskGroup)
+            .join(TaskType, TaskType.taskgroup_uuid == TaskGroup.uuid)
+            .join(Task, and_(Task.tasktype_uuid == TaskType.uuid, Task.exec_id == execution_id))
+            .where(
+                and_(
+                    TaskGroup.exec_id == execution_id,
+                    TaskGroup.uuid == taskgroup_uuid,
+                )
+            )
+        )
+
+        async with self._get_session() as session:
+            result = await session.execute(stmt)
+            rows = result.all()
+
+            if not rows:
+                return None
+
+            taskgroup = rows[0][0]
+            unique_ranks = []
+            seen = set()
+            for _, rank in rows:
+                rank_key = tuple(rank) if isinstance(rank, list) else rank
+                if rank_key not in seen:
+                    seen.add(rank_key)
+                    unique_ranks.append(rank)
+
+            unique_ranks.sort(key=lambda r: (r is None, r))
+
+            return taskgroup, unique_ranks
+
     async def get_taskgroup_nested_tasks(
         self, execution_id: int, taskgroup_name: str, rank: str
     ) -> list[TaskExt] | None:
@@ -1304,6 +1441,7 @@ class AsyncDAO(DAOBase):
         stmt = (
             select(
                 TaskType.name,
+                TaskType.docstring,
                 TaskType.ui_css,
                 TaskType.is_parallel,
                 TaskType.merge_func,
@@ -1327,10 +1465,11 @@ class AsyncDAO(DAOBase):
 
         # Convert ORM rows to TaskExt model objects.
         out_list: list[TaskExt] = []
-        for name, ui_css, is_parallel, merge_func, taskgroup_uuid, task_orm_obj in rows:
+        for name, docstring, ui_css, is_parallel, merge_func, taskgroup_uuid, task_orm_obj in rows:
             task_ext = TaskExt(**{
                 **task_orm_obj.__dict__,
                 "name": name,
+                "docstring": docstring,
                 "ui_css": ui_css,
                 "is_parallel": is_parallel,
                 "merge_func": merge_func["name"] if merge_func else None,
@@ -1354,7 +1493,12 @@ class AsyncDAO(DAOBase):
             None if not found.
         """
         stmt = (
-            select(TaskType.name, Task)
+            select(
+                TaskType.name,
+                TaskType.docstring,
+                TaskType.is_parallel,
+                Task,
+            )
             .join(
                 TaskType,
                 and_(Task.exec_id == TaskType.exec_id, Task.tasktype_uuid == TaskType.uuid),
@@ -1366,8 +1510,103 @@ class AsyncDAO(DAOBase):
             row = result.first()
             if row is None:
                 return None
-            name, task_orm = row
-            return TaskExt(**{**task_orm.__dict__, "name": name})
+            name, docstring, is_parallel, task_orm = row
+            return TaskExt(**{
+                **task_orm.__dict__,
+                "name": name,
+                "docstring": docstring,
+                "is_parallel": is_parallel,
+            })
+
+    async def get_taskgroup_element(
+        self,
+        execution_id: int,
+        taskgroup_name: str,
+        element_uuid: UUID,
+        rank: list[int] | None,
+    ) -> TaskExt | TaskGroup | None:
+        """Resolve an element uuid to a Task instance (TaskExt) or a TaskGroup.
+
+        Single query: a one-row CTE anchors LEFT JOINs to both Task+TaskType
+        (rank-filtered) and TaskGroup. Since a uuid is either a TaskType or a
+        TaskGroup (never both), exactly one side yields a non-null row.
+
+        Parameters
+        ----------
+        execution_id : int
+            The Execution.id to filter on.
+        taskgroup_name : str
+            Name of the parent TaskGroup the element belongs to.
+        element_uuid : UUID
+            UUID of the element to resolve (TaskType or nested TaskGroup).
+        rank : list[int] or None
+            Execution rank of the DAG sub-branch to filter Task instances on.
+            None targets the main DAG spine. Ignored when the element resolves
+            to a TaskGroup.
+
+        Returns
+        -------
+        TaskExt or TaskGroup, optional
+            TaskExt if element_uuid is a TaskType (the task instance at the
+            given rank) ; TaskGroup if it is a TaskGroup ; None if no match.
+        """
+        rank_filter: ColumnElement[bool]
+        # Cast rank to text for cross-DB JSON comparison.
+        if rank is None:
+            rank_filter = Task.rank.is_(None)
+        else:
+            rank_str = json.dumps(rank) if not isinstance(rank, str) else rank
+            rank_filter = cast(Task.rank, String) == rank_str
+
+        # Single-row anchor CTE holding the probe parameters.
+        anchor = select(
+            literal(execution_id).label("exec_id"),
+            literal(element_uuid).label("element_uuid"),
+        ).cte("element_probe")
+
+        # LEFT JOIN both sides ; exactly one will match.
+        stmt = (
+            select(
+                Task,
+                TaskGroup,
+                TaskType.name,
+                TaskType.docstring,
+                TaskType.is_parallel,
+            )
+            .select_from(anchor)
+            .outerjoin(
+                TaskType,
+                and_(TaskType.exec_id == anchor.c.exec_id, TaskType.uuid == anchor.c.element_uuid),
+            )
+            .outerjoin(
+                Task,
+                and_(
+                    Task.exec_id == anchor.c.exec_id,
+                    Task.tasktype_uuid == anchor.c.element_uuid,
+                    rank_filter,
+                ),
+            )
+            .outerjoin(
+                TaskGroup,
+                and_(
+                    TaskGroup.exec_id == anchor.c.exec_id, TaskGroup.uuid == anchor.c.element_uuid
+                ),
+            )
+            .limit(1)
+        )
+
+        async with self._get_session() as session:
+            result = await session.execute(stmt)
+            row = result.first()
+            task_orm, tg_orm, task_name, task_docstring, task_is_parallel = row
+            if task_orm is not None:
+                return TaskExt(**{
+                    **task_orm.__dict__,
+                    "name": task_name,
+                    "docstring": task_docstring,
+                    "is_parallel": task_is_parallel,
+                })
+            return tg_orm
 
 
 # ////////////////////////////////////////////////////////////////////////////

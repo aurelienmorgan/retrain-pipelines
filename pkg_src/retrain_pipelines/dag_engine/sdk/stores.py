@@ -2,11 +2,14 @@ import contextlib
 import os
 from typing import Any
 
+from pydantic import PrivateAttr
+
 from ..core.core import TaskPayload
 from ..stores.commons import DISK_REF_KEY, is_disk_ref, load_from_disk
+from . import BaseModelExt
 
 
-class AttrsDiff:
+class AttrsDiff(BaseModelExt):
     """Summary of differences between two attribute snapshots (params or exit context).
 
     Produced by :meth:`ExecutionParams.diff` and :meth:`TaskExitContext.diff`.
@@ -22,15 +25,21 @@ class AttrsDiff:
         Attr names present in the other context but absent from the left-hand one.
     """
 
+    only_in_self: list[str]
+    modified: list[str]
+    only_in_other: list[str]
+
     def __init__(
         self,
         only_in_self: list[str],
         modified: list[str],
         only_in_other: list[str],
     ) -> None:
-        self.only_in_self = only_in_self
-        self.modified = modified
-        self.only_in_other = only_in_other
+        super().__init__(
+            only_in_self=only_in_self,
+            modified=modified,
+            only_in_other=only_in_other,
+        )
 
     def __repr__(self) -> str:
         return (
@@ -41,7 +50,7 @@ class AttrsDiff:
         )
 
 
-class ExecutionParams:
+class ExecutionParams(BaseModelExt):
     """Lazy mapping of DAG param names to their resolved values.
 
     Values (defaults or execution-time overrides) are deserialized
@@ -61,7 +70,11 @@ class ExecutionParams:
         execution ran (executions.metadata_root column).
     """
 
+    _raw: dict = PrivateAttr()
+    _metadata_root: str = PrivateAttr()
+
     def __init__(self, params_json: dict, metadata_root: str) -> None:
+        super().__init__()
         self._raw = params_json
         self._metadata_root = metadata_root
 
@@ -227,7 +240,7 @@ class ExecutionParams:
         )
 
 
-class TaskExitContext:
+class TaskExitContext(BaseModelExt):
     """Lazy view of a task's exit context.
 
     Attributes are deserialized from disk (or read from inline storage)
@@ -248,7 +261,11 @@ class TaskExitContext:
         execution ran (executions.metadata_root column).
     """
 
+    _index: dict[str, Any] = PrivateAttr()
+    _metadata_root: str = PrivateAttr()
+
     def __init__(self, rows: list, metadata_root: str) -> None:
+        super().__init__()
         self._index: dict[str, Any] = {row.attr_name: row for row in rows}
         self._metadata_root = metadata_root
 
@@ -312,6 +329,25 @@ class TaskExitContext:
 
     def keys(self):
         return self._index.keys()
+
+    def to_dict(self) -> dict[str, Any]:
+        """Materialize eagerly all attributes into a plain dict.
+
+        Convenience for serialization (e.g. ``json.dumps``): each attr
+        value is deserialized from disk or read from inline storage.
+
+        Returns
+        -------
+        dict[str, Any]
+            Mapping of attr_name => deserialized value.
+
+        Examples
+        --------
+        >>> ctx = Execution.get_by_id(id=356).get_task_by_id(id=42).get_exit_context()
+        >>> json.dumps(ctx.to_dict(), indent=2)
+        """
+        with self._temp_set_retrain_pipeline_type_env_var():
+            return {key: self[key] for key in self._index}
 
     def attr_equals(self, key: str, other: "TaskExitContext") -> bool:
         """Return True if key holds the same value in both TaskExitContext instances.
@@ -404,7 +440,7 @@ class TaskExitContext:
         )
 
 
-class TaskExitPayload(TaskPayload):
+class TaskExitPayload(TaskPayload, BaseModelExt):
     """Lazy view of a task's (or taskgroup's) exit payload.
 
     Behaves identically to ``core.TaskPayload``, but deserializes the
@@ -428,7 +464,14 @@ class TaskExitPayload(TaskPayload):
         execution ran.
     """
 
+    _rows: dict[str, Any] = PrivateAttr()
+    _metadata_root: str = PrivateAttr()
+
     def __init__(self, rows: dict[str, Any], metadata_root: str) -> None:
+        # super().__init__()  ##  WE DO NOT  !
+        # Initialise pydantic state directly ; TaskPayload.__init__ is
+        # intentionally skipped (due to ignored "data" attr).
+        BaseModelExt.__init__(self)
         self._rows = rows
         self._metadata_root = metadata_root
         # inherited, unused
@@ -585,7 +628,15 @@ class TaskExitPayload(TaskPayload):
 
     def __getattr__(self, name: str) -> Any:
         if name.startswith("_"):
-            raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
+            # Pydantic stores PrivateAttr values in __pydantic_private__ ;
+            # resolve from there before falling back to AttributeError
+            # for non pydantic-declared private attributes.
+            try:
+                return object.__getattribute__(self, "__pydantic_private__")[name]
+            except (AttributeError, KeyError):
+                raise AttributeError(
+                    f"'{self.__class__.__name__}' object has no attribute '{name}'"
+                ) from None
         if len(self._rows) == 1:
             row = list(self._rows.values())[0]
             if row is None:

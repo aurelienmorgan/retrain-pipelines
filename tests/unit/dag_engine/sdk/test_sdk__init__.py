@@ -1,10 +1,7 @@
 """Unit tests for retrain_pipelines.dag_engine.sdk.__init__"""
 
-import asyncio
-import concurrent.futures
-import importlib
 from datetime import datetime, timedelta
-from unittest.mock import patch
+from typing import ClassVar
 from uuid import uuid4
 
 import pytest
@@ -15,14 +12,21 @@ from retrain_pipelines.dag_engine.db.model import (
     Task as TaskDbModel,
     TaskType as TaskTypeDbModel,
 )
-from retrain_pipelines.dag_engine.sdk import ExecutionsIterator
+import retrain_pipelines.dag_engine.sdk as sdk_pkg
+from retrain_pipelines.dag_engine.sdk import (
+    BaseModelExt,
+    _CleanDirMeta,
+    ExecutionsIterator,
+    Execution,
+    run_async,
+    shutdown_async_sdk,
+)
+from retrain_pipelines.dag_engine.sdk.core import Task
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-_MODULE = "retrain_pipelines.dag_engine.sdk"  # module under test (as importable path)
 
 
 def _seed_exec(engine, exec_id, name="pipe", failed=None, start=None):
@@ -74,107 +78,179 @@ def _seed_exec(engine, exec_id, name="pipe", failed=None, start=None):
 
 
 # ---------------------------------------------------------------------------
-# _run_async
+# run_async
 # ---------------------------------------------------------------------------
 
 
 class TestRunAsync:
-    """Tests for the module-level _run_async helper."""
+    """Cover the package-level permanent background event loop and ``run_async``.
 
-    def _import_run_async(self):
-        # Import fresh each time; patch must be applied before import in some
-        # cases, but here we just reach into the module namespace directly.
-        mod = importlib.import_module(_MODULE)
-        return mod._run_async
+    No mocking or patching is used: a real coroutine is dispatched
+    against the real background loop, and the real ``shutdown_async_sdk`` stops it.
+    """
 
-    # ------------------------------------------------------------------
-    # Path 1: no running event loop => asyncio.run()
-    # ------------------------------------------------------------------
-
-    def test_no_running_loop_uses_asyncio_run(self):
-        """When there is no running loop, asyncio.run() should be called."""
-        _run_async = self._import_run_async()
+    def test_run_async_returns_coroutine_result(self):
+        """``run_async`` schedules the coroutine on the background loop and
+        blocks on the resulting future until it completes."""
 
         async def _coro():
             return 42
 
         # We are NOT inside an async context here, so there is no running loop.
-        result = _run_async(_coro())
+        result = run_async(_coro())
         assert result == 42
 
-    # ------------------------------------------------------------------
-    # Path 2: running loop + in_notebook=True => ThreadPoolExecutor
-    # ------------------------------------------------------------------
+    def test_shutdown_async_sdk_stops_and_joins(self):
+        """Covers ``shutdown_async_sdk`` when the loop is running and the
+        daemon thread is alive."""
+        sdk_pkg._start_loop()
+        loop = sdk_pkg._loop
+        thread = sdk_pkg._loop_thread
 
-    def test_running_loop_in_notebook_uses_thread_executor(self):
-        """Inside a running loop + notebook env, a worker thread must be used."""
-        _run_async = self._import_run_async()
+        assert loop is not None
+        assert thread is not None
+        assert loop.is_running()
+        assert thread.is_alive()
 
-        async def _coro():
-            return "notebook_result"
+        shutdown_async_sdk()
 
-        async def _inner():
-            # Patch in_notebook at the point of use inside the sdk module
-            with patch(f"{_MODULE}.in_notebook", return_value=True):
-                return _run_async(_coro())
+        assert not loop.is_running()
+        assert not thread.is_alive()
 
-        result = asyncio.run(_inner())
-        assert result == "notebook_result"
+        # Reset global state so other tests can start it cleanly if needed
+        sdk_pkg._loop = None
+        sdk_pkg._loop_thread = None
 
-    # ------------------------------------------------------------------
-    # Path 3: running loop + in_notebook=False => loop.run_until_complete()
-    # ------------------------------------------------------------------
+    def test_shutdown_async_sdk_when_loop_not_started(self):
+        """Covers branch where the loop was never started (idempotent no-op).
 
-    def test_running_loop_not_in_notebook_uses_run_until_complete(self):
-        """Inside a running loop (non-notebook), _run_async delegates to
-        loop.run_until_complete().
-
-        Strategy
-        --------
-        Thread A creates dedicated_loop and drives _inner() via the *original*
-        run_until_complete ; this makes get_running_loop() return dedicated_loop
-        inside _inner, satisfying the "running loop" precondition.
-
-        dedicated_loop.run_until_complete is replaced with a spy *before* the
-        loop starts.  When _run_async calls the spy, the spy dispatches the
-        coroutine to Thread B (which has no running loop) via asyncio.run(),
-        avoiding all re-entrancy errors, while still recording the call so we
-        can assert the right branch was taken.
+        Ensures ``shutdown_async_sdk`` does not raise when ``_loop`` and
+        ``_loop_thread`` are both ``None``, covering the short-circuit
+        condition branches.
         """
-        _run_async = self._import_run_async()
+        # Ensure clean state - if loop was started, stop it first
+        if sdk_pkg._loop is not None and sdk_pkg._loop.is_running():
+            shutdown_async_sdk()
+        sdk_pkg._loop = None
+        sdk_pkg._loop_thread = None
 
-        ruc_calls = []
+        # Should be a safe no-op
+        shutdown_async_sdk()
+        assert sdk_pkg._loop is None
+        assert sdk_pkg._loop_thread is None
 
-        def _thread_main():
-            dedicated_loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(dedicated_loop)
 
-            async def _coro():
-                return "loop_result"
+# ---------------------------------------------------------------------------
+# pydantic BaseModelExt: custom dir & validator descriptors
+# ---------------------------------------------------------------------------
 
-            original_ruc = dedicated_loop.run_until_complete
 
-            def _spy_ruc(coro_or_fut):
-                ruc_calls.append(True)
-                # Dispatch to a sibling thread that owns no running loop.
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as p:
-                    return p.submit(asyncio.run, coro_or_fut).result()
+class _RefusingClassAccess:
+    """Descriptor refusing class-level introspection.
 
-            dedicated_loop.run_until_complete = _spy_ruc
+    ``getattr(cls, name, None)`` only swallows ``AttributeError``, so a
+    descriptor raising anything else is the one attribute shape that
+    reaches the metaclass's tolerant guard while walking ``cls.__dict__``.
+    """
 
-            async def _inner():
-                with patch(f"{_MODULE}.in_notebook", return_value=False):
-                    return _run_async(_coro())
+    def __get__(self, obj, objtype=None):
+        if obj is None:
+            raise RuntimeError("class-level introspection refused")
+        return "instance-bound"
 
-            result = original_ruc(_inner())
-            dedicated_loop.close()
-            return result
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            result = pool.submit(_thread_main).result()
+class _IntrospectionProbe(BaseModelExt):
+    """Model declaring an attribute that refuses class-level introspection."""
 
-        assert result == "loop_result"
-        assert len(ruc_calls) == 1
+    refuses: ClassVar[_RefusingClassAccess] = _RefusingClassAccess()
+    value: int = 0
+
+
+class _LockedNameMeta(_CleanDirMeta):
+    """Metaclass owning a read-only attribute named ``swappable``.
+
+    ``type.__setattr__`` honours data descriptors found on the metaclass,
+    so a setter-less property makes any assignment to that name fail with
+    ``AttributeError`` -- which is what the validator-swap guard tolerates.
+    """
+
+    @property
+    def swappable(cls):
+        return None
+
+
+class _ValidatorSwapProbe(BaseModelExt, metaclass=_LockedNameMeta):
+    """Model whose public classmethod name is locked by its own metaclass.
+
+    A plain classmethod (not a pydantic validator) is used on purpose:
+    pydantic's own decorator collection never assigns to this name, so
+    only the SDK's descriptor swap meets the locked attribute.
+    """
+
+    value: int = 0
+
+    @classmethod
+    def swappable(cls):
+        return None
+
+
+class TestBaseModelExtDir:
+    """Cover the metaclass __dir__, the model __dir__ and the validator swap."""
+
+    def test_class_dir_keeps_callables_and_fields_only(self):
+        """Covers _CleanDirMeta.__dir__ dropping non-callable class data."""
+        names = dir(Execution)
+
+        assert "get_task" in names
+        assert "id" in names
+        assert "model_config" not in names
+
+    def test_class_dir_skips_attributes_refusing_introspection(self):
+        """Covers the tolerant guard for attributes raising on class access."""
+        names = dir(_IntrospectionProbe)
+
+        assert "refuses" in names
+        assert "value" in names
+
+    def test_instance_dir_excludes_inherited_attributes(self, metadata_root):
+        """Covers BaseModelExt.__dir__ on cache miss then cache hit.
+
+        Execution and Task share BaseModelExt as direct parent, so the
+        second call reuses the frozenset built by the first one.
+        """
+        exec_ = Execution(
+            id=1,
+            name="pipe",
+            metadata_root=metadata_root,
+            artifacts_store_root="/tmp/artifacts",
+            username="username",
+            start_timestamp=datetime(2024, 6, 1, 12, 0, 0),
+            success=True,
+        )
+        task = Task(
+            id=10,
+            name="my_task",
+            start_timestamp=datetime(2024, 6, 1, 12, 0, 0),
+            exec_id=7,
+            metadata_root=metadata_root,
+        )
+
+        exec_names = dir(exec_)
+        task_names = dir(task)
+
+        assert "get_task" in exec_names
+        assert "model_dump" not in exec_names
+        assert "get_exit_context" in task_names
+        assert "model_dump" not in task_names
+
+    def test_validator_swap_tolerates_locked_attribute_name(self):
+        """Covers the guard around the validator descriptor replacement.
+
+        The metaclass property wins over the class dict entry, so the
+        swap is refused and class construction must still succeed.
+        """
+        assert _ValidatorSwapProbe(value="3").value == 3
+        assert _ValidatorSwapProbe.swappable is None
 
 
 # ---------------------------------------------------------------------------

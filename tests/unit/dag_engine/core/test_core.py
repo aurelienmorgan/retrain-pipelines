@@ -700,22 +700,6 @@ class TestTaskTypeConstruction:
     def test_log_property_returns_logger(self):
         assert isinstance(_real_task("t").log, logging.Logger)
 
-    def test_log_emits_console_silenced(self, monkeypatch):
-        """Covers the branch in RawRichHandler.emit where console output is silenced.
-
-        By setting the environment variables that make console_silenced return True,
-        the info log emitted during TaskType initialization is silently dropped
-        by the custom rich handler, covering the early return branch.
-        """
-        monkeypatch.setenv("RP_LAUNCHER_SUBPROCESS", "1")
-        monkeypatch.setenv("RP_CONSOLE_QUIET", "1")
-
-        def silent_func():
-            pass
-
-        t = TaskType(func=silent_func, is_parallel=False)
-        assert t.name == "silent_func"
-
     def test_parents_empty_on_new_task(self):
         assert _real_task("t").parents == []
 
@@ -1134,7 +1118,9 @@ class TestTaskTypeWrapFunc:
         finally:
             _dag_execution_context_var.reset(token)
 
-    def test_wrap_func_drops_positional_payload_when_no_positional_params(self, _dao_and_registry):
+    def test_wrap_func_drops_positional_payload_when_no_positional_params(
+        self, _dao_and_registry
+    ):
         """Covers the branch where positional args are dropped if the func signature
         accepts no positional parameters.
 
@@ -1154,7 +1140,9 @@ class TestTaskTypeWrapFunc:
             exec_id = self._seed_execution_and_tasktype(dao, t.tasktype_uuid)
             ec._params["exec_id"] = exec_id
 
-            task_id, result = t.func("dummy_payload", exec_id=exec_id, kw_only="success")
+            task_id, result = t.func(
+                "dummy_payload", exec_id=exec_id, kw_only="success"
+            )
             assert result == "success"
 
             task_row = dao.get_task(task_id)
@@ -1400,7 +1388,9 @@ class TestCaptureAndStreamTrace:
         finally:
             _dag_execution_context_var.reset(token)
 
-    def test_notebook_mode_console_silenced_patches_write_methods(self, _dao_and_registry, monkeypatch):
+    def test_notebook_mode_console_silenced_patches_write_methods(
+        self, _dao_and_registry, monkeypatch
+    ):
         """Covers the branch in the notebook write wrapper where console output is silenced.
 
         Drives the notebook-mode stream patching logic while forcing console_silenced

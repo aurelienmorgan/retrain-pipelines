@@ -1,43 +1,240 @@
 import asyncio
-import concurrent.futures
+import atexit
 import logging
+import threading
+from collections.abc import Coroutine
 from datetime import datetime, timedelta
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
+from pydantic._internal._model_construction import ModelMetaclass
 
-from ...utils import in_notebook
 from ..config import Config
 from ..db.dao import AsyncDAO
-from .core import Execution
 
 logger = logging.getLogger(__name__)
 
 
-def _run_async(coro):
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(coro)
+"""
+Permanent background event loop for synchronous SDK methods.
 
-    if in_notebook():
+This module provides a single, long-lived asyncio event loop running in a
+dedicated daemon thread. All asynchronous operations are scheduled on this
+loop via run_coroutine_threadsafe and block the calling thread until
+completion.
+
+WHY THIS DESIGN:
+- Many async database drivers (e.g., asyncpg) perform deferred cleanup of SSL
+  transports after a coroutine has finished. If the event loop is closed
+  immediately (as asyncio.run() does), these callbacks will fire on a closed
+  loop, causing "Event loop is closed" RuntimeErrors and SSL transport
+  failures. By keeping a single permanent loop alive for the entire process
+  lifetime, we allow all pending cleanup callbacks to complete safely,
+  eliminating those errors.
+- The loop runs in a background thread, isolated from any pre-existing event
+  loop (e.g., in Jupyter notebooks) and from the main thread. This isolation
+  ensures that the SDK never interferes with other async code, and other
+  async code never interferes with the SDK.
+
+This design handles all execution environments without special-case logic:
+- Scripts and command-line tools: The loop starts on first use and persists
+  until process exit.
+- Jupyter/IPython notebooks: The background thread runs independently of the
+  kernel's own event loop, so no conflicts arise.
+- Interactive Python sessions: Same as scripts; the loop remains available
+  for the duration of the session.
+- Environments with an existing running event loop: The SDK loop is
+  independent; calls from any thread are safe and do not affect or depend
+  on any pre-existing loop.
+
+The loop is daemonized so it does not prevent process termination. For
+long-lived applications, an atexit handler provides a best-effort graceful
+shutdown.
+"""
+
+
+# /// event loop deamon ////////////////////////////////////////////////////////////////////////////
+
+
+# Module-level loop and thread (lazily initialised)
+_loop: asyncio.AbstractEventLoop | None = None
+_loop_thread: threading.Thread | None = None
+_loop_lock = threading.Lock()
+
+
+def _start_loop() -> None:
+    """Start the permanent event loop in a daemon thread."""
+    global _loop, _loop_thread
+    with _loop_lock:
+        if _loop is not None:
+            return
+        _loop = asyncio.new_event_loop()
+        _loop_thread = threading.Thread(
+            target=_run_loop_forever, args=(_loop,), daemon=True, name="AsyncSDKEventLoop"
+        )
+        _loop_thread.start()
+
+
+def _run_loop_forever(loop: asyncio.AbstractEventLoop) -> None:
+    asyncio.set_event_loop(loop)
+    loop.run_forever()
+
+
+def run_async(coro: Coroutine) -> Any:
+    """Run a coroutine on the permanent background event loop, blocking until done."""
+    _start_loop()
+    assert _loop is not None  # type narrowing for mypy
+
+    future = asyncio.run_coroutine_threadsafe(coro, _loop)
+
+    return future.result()
+
+
+def shutdown_async_sdk():
+    global _loop, _loop_thread
+    if _loop is not None and _loop.is_running():
+        _loop.call_soon_threadsafe(_loop.stop)
+    if _loop_thread is not None and _loop_thread.is_alive():
+        _loop_thread.join(timeout=2.0)  # wait briefly
+
+
+atexit.register(shutdown_async_sdk)
+
+
+# //////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+# /// pydantic BaseModel, custom dir & help methods ////////////////////////////////////////////////
+
+
+_PARENT_ATTRS_CACHE: dict[type, frozenset[str]] = {}
+
+
+def _make_vd(func):
+    class _VD:
+        """Non-data descriptor for pydantic validator methods.
+
+        Binds to the instance when accessed via an instance, and to
+        the class when accessed via the class. This makes ``help()``
+        describe the method as belonging to our class rather
+        than to pydantic's metaclass.
         """
-        Jupyter (IPython kernel) already
-        starts and runs an event loop internally.
-        Run the coroutine in a dedicated worker thread
-        with its own fresh event loop
-        so that the kernel's running loop is left untouched:
-            - loop.run_until_complete()
-            - asyncio.run()
-            - other loop management calls
+
+        def __get__(self, obj, objtype=None):
+            from types import MethodType
+
+            return MethodType(func, obj if obj is not None else objtype)
+
+    _VD.__doc__ = func.__doc__
+    return _VD()
+
+
+class _CleanDirMeta(ModelMetaclass):
+    """Metaclass that filters ``dir(cls)`` to callable attrs and field annotations.
+
+    Defined directly on the class.
+
+    This makes ``help(cls)`` drop the "Data and other attributes
+    defined here" section (``model_config``, ``__annotations__``,
+    ``__pydantic_*``, ``__signature__``, etc.) and all "inherited
+    from" sections, keeping only "Methods defined here",
+    "Static methods defined here", and declared fields.
+    """
+
+    def __dir__(cls):
+        result = set()
+        for name in cls.__dict__:
+            try:
+                obj = getattr(cls, name, None)
+            except Exception:
+                continue
+            if callable(obj):
+                result.add(name)
+        ann = getattr(cls, "__annotations__", ())
+        result.update(ann)
+        return sorted(result)
+
+
+class BaseModelExt(BaseModel, metaclass=_CleanDirMeta):
+    @classmethod
+    def __pydantic_init_subclass__(cls, **kwargs):
+        """Replace pydantic validator with instance-binding descriptors.
+
+        ``@field_validator`` / ``@model_validator`` wrap the function
+        in a ``classmethod``. When accessed via an instance,
+        ``help()`` reads ``bound_method.__self__.__class__``, which is
+        the metaclass, because ``__self__`` is the class itself.
+        Replacing the classmethod with a descriptor that binds to the
+        instance makes ``__self__`` the instance, so ``help()`` produces
+        "method of <ClassName> instance".
+
+        Note:
+        -----
+        Pydantic's internal validator dispatch is unaffected. It uses
+        the reference stored in ``__pydantic_decorators__``, not the
+        ``cls.__dict__`` entry.
         """
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            future = pool.submit(asyncio.run, coro)
-            return future.result()
+        super().__pydantic_init_subclass__(**kwargs)
+        for name, obj in list(cls.__dict__.items()):
+            if (
+                not name.startswith("_")
+                and isinstance(obj, classmethod)
+                and hasattr(obj, "__wrapped__")
+            ):
+                try:
+                    type.__setattr__(cls, name, _make_vd(obj.__func__))
+                except (AttributeError, TypeError):
+                    pass
 
-    return loop.run_until_complete(coro)
+    def __dir__(self):
+        """Attributes introduced by this class only.
+
+        Caches ``frozenset(dir(super))`` per parent class globally.
+        ``dir()`` is C-implemented and walks the parent's entire MRO
+        in one call, so every inherited attribute (from BaseModel,
+        object, everything upstream) is collected without a
+        Python-level loop. Each MRO base's ``__annotations__`` are
+        merged in to catch pydantic fields, which ``dir()`` does not
+        expose on the class itself.
+
+        Lazy; zero cost at import for classes never introspected. The
+        per-parent frozenset is built exactly once per process and
+        shared across every subclass of that parent.
+
+        Returns
+        -------
+        list[str]
+            Attribute names introduced by ``type(self)`` itself.
+        """
+        cls = type(self)
+        parent = cls.__mro__[1]
+        parent_attrs = _PARENT_ATTRS_CACHE.get(parent)
+        if parent_attrs is None:
+            s = set()
+            for base in cls.__mro__[1:]:
+                s.update(base.__dict__)
+                s.update(getattr(base, "__annotations__", ()))
+            parent_attrs = frozenset(s)
+            _PARENT_ATTRS_CACHE[parent] = parent_attrs
+        out = []
+        seen = set()
+        all_names = (*cls.__dict__, *getattr(cls, "__annotations__", ()))
+        for name in all_names:
+            in_parent = name in parent_attrs
+            if in_parent or name in seen:
+                continue
+            seen.add(name)
+            out.append(name)
+        return out
 
 
-class ExecutionsIterator(BaseModel):
+# //////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+from .core import Execution  # noqa: E402  (after BaseModelExt/run_async to avoid circular import)
+
+
+class ExecutionsIterator(BaseModelExt):
     """Reversed paged iterator over executions.
 
     Fetches executions in pages in reverse chronological order
@@ -191,7 +388,7 @@ class ExecutionsIterator(BaseModel):
         (at page boundaries).
         """
         logger.debug(f"{self}  - previous")
-        return _run_async(self._previous())
+        return run_async(self._previous())
 
     def length(self) -> int:
         """Get total count of executions matching the criteria.
@@ -205,7 +402,7 @@ class ExecutionsIterator(BaseModel):
         """
         dao = AsyncDAO(db_url=Config.get_metadatastore_async_url())
         logger.debug(f"{self}  - length")
-        return _run_async(
+        return run_async(
             dao.get_executions_count(
                 pipeline_name=self.pipeline_name,
                 execs_status="success" if self.success_only else None,

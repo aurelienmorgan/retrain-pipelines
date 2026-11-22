@@ -1,105 +1,23 @@
-"""
-Permanent background event loop for synchronous SDK methods.
+"""SDK representation of pipeline executions, tasks and taskgroups.
 
-This module provides a single, long-lived asyncio event loop running in a
-dedicated daemon thread. All asynchronous operations are scheduled on this
-loop via run_coroutine_threadsafe and block the calling thread until
-completion.
-
-WHY THIS DESIGN:
-- Many async database drivers (e.g., asyncpg) perform deferred cleanup of SSL
-  transports after a coroutine has finished. If the event loop is closed
-  immediately (as asyncio.run() does), these callbacks will fire on a closed
-  loop, causing "Event loop is closed" RuntimeErrors and SSL transport
-  failures. By keeping a single permanent loop alive for the entire process
-  lifetime, we allow all pending cleanup callbacks to complete safely,
-  eliminating those errors.
-- The loop runs in a background thread, isolated from any pre-existing event
-  loop (e.g., in Jupyter notebooks) and from the main thread. This isolation
-  ensures that the SDK never interferes with other async code, and other
-  async code never interferes with the SDK.
-
-This design handles all execution environments without special-case logic:
-- Scripts and command-line tools: The loop starts on first use and persists
-  until process exit.
-- Jupyter/IPython notebooks: The background thread runs independently of the
-  kernel's own event loop, so no conflicts arise.
-- Interactive Python sessions: Same as scripts; the loop remains available
-  for the duration of the session.
-- Environments with an existing running event loop: The SDK loop is
-  independent; calls from any thread are safe and do not affect or depend
-  on any pre-existing loop.
-
-The loop is daemonized so it does not prevent process termination. For
-long-lived applications, an atexit handler provides a best-effort graceful
-shutdown.
+All async DB access in this module runs on the package-level permanent
+event loop exposed as ``sdk.run_async`` (see ``sdk/__init__.py``).
 """
 
-import asyncio
-import atexit
 import logging
-import threading
-from collections.abc import Coroutine
 from datetime import datetime
 from typing import Any, Optional
+from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator
+from pydantic import ConfigDict, Field, PrivateAttr, field_validator
 
 from ..config import Config
 from ..db.dao import AsyncDAO
+from ..db.model import TaskExt
+from . import BaseModelExt, run_async
 from .stores import ExecutionParams, TaskExitContext, TaskExitPayload
 
 logger = logging.getLogger(__name__)
-
-# /// event loop deamon ////////////////////////////////////////////////////////////////////////////
-
-
-# Module-level loop and thread (lazily initialised)
-_loop: asyncio.AbstractEventLoop | None = None
-_loop_thread: threading.Thread | None = None
-_loop_lock = threading.Lock()
-
-
-def _start_loop() -> None:
-    """Start the permanent event loop in a daemon thread."""
-    global _loop, _loop_thread
-    with _loop_lock:
-        if _loop is not None:
-            return
-        _loop = asyncio.new_event_loop()
-        _loop_thread = threading.Thread(
-            target=_run_loop_forever, args=(_loop,), daemon=True, name="AsyncSDKEventLoop"
-        )
-        _loop_thread.start()
-
-
-def _run_loop_forever(loop: asyncio.AbstractEventLoop) -> None:
-    asyncio.set_event_loop(loop)
-    loop.run_forever()
-
-
-def _run_async(coro: Coroutine) -> Any:
-    """Run a coroutine on the permanent background event loop, blocking until done."""
-    _start_loop()
-    assert _loop is not None  # type narrowing for mypy
-
-    future = asyncio.run_coroutine_threadsafe(coro, _loop)
-
-    return future.result()
-
-
-def shutdown_async_sdk():
-    global _loop, _loop_thread
-    if _loop is not None and _loop.is_running():
-        _loop.call_soon_threadsafe(_loop.stop)
-    if _loop_thread is not None and _loop_thread.is_alive():
-        _loop_thread.join(timeout=2.0)  # wait briefly
-
-
-atexit.register(shutdown_async_sdk)
-
-
-# //////////////////////////////////////////////////////////////////////////////////////////////////
 
 
 # /// core SDK classes /////////////////////////////////////////////////////////////////////////////
@@ -111,7 +29,7 @@ class RankNotFoundException(Exception):
     pass
 
 
-class Execution(BaseModel):
+class Execution(BaseModelExt):
     """SDK representation of a pipeline execution.
 
     Provides access to execution metadata and context attributes.
@@ -237,7 +155,7 @@ class Execution(BaseModel):
             finally:
                 await dao.engine.dispose()
 
-        row = _run_async(_fetch())
+        row = run_async(_fetch())
         if row is None:
             raise KeyError(f"No execution found with id={id}")
         return cls(
@@ -262,7 +180,7 @@ class Execution(BaseModel):
         """
         return self.end_timestamp is not None
 
-    def get_tasks_with_name(self, task_type_name: str) -> list["Task"]:
+    def get_tasks_with_name(self, tasktype_name: str) -> list["Task"]:
         """Return tasks by name.
 
         Returns
@@ -274,18 +192,20 @@ class Execution(BaseModel):
         async def _get_tasks_async():
             dao = AsyncDAO(db_url=Config.get_metadatastore_async_url())
             tasks_orm = await dao.get_execution_tasks_with_name(
-                execution_id=self.id, task_type_name=task_type_name
+                execution_id=self.id, tasktype_name=tasktype_name
             )
             if not tasks_orm:
                 return []
             return [
                 Task(
                     id=t.id,
-                    name=task_type_name,
+                    name=tasktype_name,
                     rank=t.rank,
                     start_timestamp=t.start_timestamp,
                     end_timestamp=t.end_timestamp,
                     success=not t.failed if t.failed is not None else True,
+                    docstring=t.docstring,
+                    is_parallel=t.is_parallel,
                     # private attrs
                     exec_id=self.id,
                     metadata_root=self.metadata_root,
@@ -293,7 +213,48 @@ class Execution(BaseModel):
                 for t in tasks_orm
             ]
 
-        return _run_async(_get_tasks_async())
+        return run_async(_get_tasks_async())
+
+    def get_tasks_with_uuid(self, tasktype_uuid: UUID | str) -> list["Task"]:
+        """Return tasks by tasktype uuid.
+
+        Parameters
+        ----------
+        tasktype_uuid : UUID or str
+            UUID of the TaskType. A ``str`` is auto-cast to ``UUID``.
+
+        Returns
+        -------
+        list[Task]
+            Naive unordered list of task instances.
+        """
+        uuid_value = tasktype_uuid if isinstance(tasktype_uuid, UUID) else UUID(str(tasktype_uuid))
+
+        async def _get_tasks_async():
+            dao = AsyncDAO(db_url=Config.get_metadatastore_async_url())
+            rows = await dao.get_execution_tasks_with_uuid(
+                execution_id=self.id, tasktype_uuid=uuid_value
+            )
+            if not rows:
+                return []
+            return [
+                Task(
+                    id=t.id,
+                    name=t.name,
+                    rank=t.rank,
+                    start_timestamp=t.start_timestamp,
+                    end_timestamp=t.end_timestamp,
+                    success=not t.failed if t.failed is not None else True,
+                    docstring=t.docstring,
+                    is_parallel=t.is_parallel,
+                    # private attrs
+                    exec_id=self.id,
+                    metadata_root=self.metadata_root,
+                )
+                for t in rows
+            ]
+
+        return run_async(_get_tasks_async())
 
     def get_task_by_id(self, id: int) -> "Task":
         """Fetch a Task by its id.
@@ -323,7 +284,7 @@ class Execution(BaseModel):
             dao = AsyncDAO(db_url=Config.get_metadatastore_async_url())
             return await dao.get_task_ext(id)
 
-        row = _run_async(_fetch())
+        row = run_async(_fetch())
         if row is None:
             raise KeyError(f"No task found with id={id}")
         return Task(
@@ -333,18 +294,29 @@ class Execution(BaseModel):
             start_timestamp=row.start_timestamp,
             end_timestamp=row.end_timestamp,
             success=not row.failed if row.failed is not None else True,
+            docstring=row.docstring,
+            is_parallel=row.is_parallel,
             # private attrs
             exec_id=self.id,
             metadata_root=self.metadata_root,
         )
 
-    def get_task(self, task_type_name: str, rank: list[int] | None = None) -> "Task":
+    def get_task(
+        self,
+        tasktype_name: str | None = None,
+        tasktype_uuid: UUID | str | None = None,
+        rank: list[int] | None = None,
+    ) -> "Task":
         """Fetch the task at the given rank for this execution.
+
+        Provide either ``tasktype_name`` (positional) or ``tasktype_uuid`` (keyword).
 
         Parameters
         ----------
-        task_type_name : str
-            Name of the TaskType.
+        tasktype_name : str
+            Name of the TaskType (positional first argument).
+        tasktype_uuid : UUID or str
+            UUID of the TaskType (keyword argument).
         rank : list[int], optional
             Execution rank of the DAG sub-branch to filter on.
             None (default) targets the main DAG spine.
@@ -356,25 +328,47 @@ class Execution(BaseModel):
 
         Raises
         ------
+        AttributeError
+            If both or neither of ``tasktype_name`` and ``tasktype_uuid`` are provided.
         RankNotFoundException
             If no task exists at the given rank for this execution.
 
         Examples
         --------
         >>> execution = Execution.get_by_id(id=356)
-        >>> tasks = execution.get_task("my_task")
-        >>> tasks = execution.get_task("my_task", rank=[0, 1])
+        >>> task = execution.get_task("my_task")
+        >>> task = execution.get_task("my_task", rank=[0, 1])
+        >>> task = execution.get_task(tasktype_uuid="12345678-1234-1234-1234-123456789abc")
+        >>> task = execution.get_task(tasktype_uuid=tt_uuid, rank=[0, 1])
         """
-        tasks = self.get_tasks_with_name(task_type_name)
+        if tasktype_name is not None and tasktype_uuid is not None:
+            raise AttributeError("Provide either 'tasktype_name' or 'tasktype_uuid', not both.")
+        if tasktype_name is None and tasktype_uuid is None:
+            raise AttributeError("Provide either 'tasktype_name' or 'tasktype_uuid'.")
+
+        if tasktype_name is not None:
+            tasks = self.get_tasks_with_name(tasktype_name)
+            tasktype_label = tasktype_name
+        else:
+            assert tasktype_uuid is not None  # type narrowing for mypy
+            tasks = self.get_tasks_with_uuid(tasktype_uuid)
+            tasktype_label = str(tasktype_uuid)
+
+        # No tasks of this tasktype at all -> distinct from "rank not found".
+        if not tasks:
+            raise RankNotFoundException(
+                f"No task '{tasktype_label}' found in execution '{self.name}' [id {self.id}]."
+            )
+
         # Normalize rank: empty list and None both target the main DAG spine.
         target_rank = rank if (rank and len(rank) > 0) else None
         matching = [t for t in tasks if t.rank == target_rank]
         if not matching:
-            # Available ranks among the tasks of this name (None included).
+            # Available ranks among the tasks of this tasktype (None included).
             available = sorted({t.rank for t in tasks}, key=lambda r: (r is None, r))
             raise RankNotFoundException(
-                f"No '{task_type_name}' task found at rank '{rank}' "
-                f"in execution '{self.name}[id {self.id}]'. "
+                f"No task '{tasktype_label}' found at rank {rank} "
+                f"in execution '{self.name}' [id {self.id}]. "
                 f"Available ranks: {available}"
             )
         return matching[0]
@@ -410,7 +404,7 @@ class Execution(BaseModel):
 
         tg = None
         try:
-            tg, ranks = _run_async(_fetch())
+            tg, ranks = run_async(_fetch())
         except TypeError as err:
             logger.warning(err.__str__())
 
@@ -431,13 +425,72 @@ class Execution(BaseModel):
             metadata_root=self.metadata_root,
         )
 
-    def get_taskgroup(self, taskgroup_name: str, rank: list[int] | None = None) -> "TaskGroupRank":
+    def get_taskgroups_with_uuid(self, taskgroup_uuid: UUID | str) -> Optional["TaskGroupRanks"]:
+        """Return ranks of a taskgroup by its tasktype uuid.
+
+        Parameters
+        ----------
+        taskgroup_uuid : UUID or str
+            UUID of the taskgroup. A ``str`` is auto-cast to ``UUID``.
+
+        Returns
+        -------
+        TaskGroupRanks
+            Ranks of matching taskgroup, if exists.
+        """
+        uuid_value = (
+            taskgroup_uuid if isinstance(taskgroup_uuid, UUID) else UUID(str(taskgroup_uuid))
+        )
+
+        async def _fetch():
+            dao = AsyncDAO(db_url=Config.get_metadatastore_async_url())
+            try:
+                return await dao.get_execution_taskgroup_ranks_with_uuid(
+                    execution_id=self.id,
+                    taskgroup_uuid=uuid_value,
+                )
+            finally:
+                await dao.engine.dispose()
+
+        tg = None
+        try:
+            tg, ranks = run_async(_fetch())
+        except TypeError as err:
+            logger.warning(err.__str__())
+
+        if not tg:
+            logger.warning(
+                f"There's no `{taskgroup_uuid}` taskgroup in execution `{self.name}` [id {self.id}]"
+            )
+            return None
+
+        return TaskGroupRanks(
+            uuid=str(tg.uuid),
+            name=tg.name,
+            docstring=tg.docstring,
+            elements=tg.elements,
+            ranks=ranks if len(ranks) > 0 else [],
+            # private attrs
+            exec_id=self.id,
+            metadata_root=self.metadata_root,
+        )
+
+    def get_taskgroup(
+        self,
+        taskgroup_name: str | None = None,
+        taskgroup_uuid: UUID | str | None = None,
+        rank: list[int] | None = None,
+    ) -> "TaskGroupRank":
         """Fetch the taskgroup at the given rank for this execution.
+
+        Provide either ``taskgroup_name`` (positional) or ``taskgroup_uuid`` (keyword).
 
         Parameters
         ----------
         taskgroup_name : str
-            Name of the taskgroup.
+            Name of the taskgroup (positional first argument).
+        taskgroup_uuid : UUID or str
+            UUID of the taskgroup (keyword argument).
         rank : list[int], optional
             Execution rank of the DAG sub-branch to filter on.
             None (default) targets the main DAG spine.
@@ -449,6 +502,8 @@ class Execution(BaseModel):
 
         Raises
         ------
+        AttributeError
+            If both or neither of ``taskgroup_name`` and ``taskgroup_uuid`` are provided.
         RankNotFoundException
             If no taskgroup exists at the given rank for this execution.
 
@@ -457,28 +512,47 @@ class Execution(BaseModel):
         >>> execution = Execution.get_by_id(id=356)
         >>> tg = execution.get_taskgroup("my_taskgroup")
         >>> tg = execution.get_taskgroup("my_taskgroup", rank=[0, 1])
+        >>> tg = execution.get_taskgroup(taskgroup_uuid="12345678-1234-1234-1234-123456789abc")
+        >>> tg = execution.get_taskgroup(taskgroup_uuid=tg_uuid, rank=[0, 1])
         """
+        if taskgroup_name is not None and taskgroup_uuid is not None:
+            raise AttributeError("Provide either 'taskgroup_name' or 'taskgroup_uuid', not both.")
+        if taskgroup_name is None and taskgroup_uuid is None:
+            raise AttributeError("Provide either 'taskgroup_name' or 'taskgroup_uuid'.")
+
+        if taskgroup_name is not None:
+            taskgroup_label = taskgroup_name
+        else:
+            uuid_value = (
+                taskgroup_uuid if isinstance(taskgroup_uuid, UUID) else UUID(str(taskgroup_uuid))
+            )
+            taskgroup_label = str(taskgroup_uuid)
 
         async def _fetch():
             dao = AsyncDAO(db_url=Config.get_metadatastore_async_url())
             try:
-                return await dao.get_execution_taskgroup_ranks(
-                    execution_id=self.id,
-                    taskgroup_name=taskgroup_name,
-                )
+                if taskgroup_name is not None:
+                    return await dao.get_execution_taskgroup_ranks(
+                        execution_id=self.id,
+                        taskgroup_name=taskgroup_name,
+                    )
+                else:
+                    return await dao.get_execution_taskgroup_ranks_with_uuid(
+                        execution_id=self.id,
+                        taskgroup_uuid=uuid_value,
+                    )
             finally:
                 await dao.engine.dispose()
 
         tg = None
         try:
-            tg, ranks = _run_async(_fetch())
+            tg, ranks = run_async(_fetch())
         except TypeError as err:
             logger.warning(err.__str__())
 
         if not tg:
             raise RankNotFoundException(
-                f"No taskgroup found with name {taskgroup_name} "
-                f"in execution {self.name} [id {self.id}]."
+                f"No taskgroup '{taskgroup_label}' found in execution '{self.name}' [id {self.id}]."
             )
 
         # Normalize rank for comparison: treat empty list as None
@@ -493,8 +567,8 @@ class Execution(BaseModel):
 
         if not rank_exists:
             raise RankNotFoundException(
-                f"No taskgroup found with name '{taskgroup_name}' at rank {rank} "
-                f"in execution '{self.name}[id {self.id}]'. "
+                f"No taskgroup '{taskgroup_label}' found at rank {rank} "
+                f"in execution '{self.name}' [id {self.id}]. "
                 f"Available ranks: {ranks}"
             )
 
@@ -538,7 +612,7 @@ class Execution(BaseModel):
             full_exec = await dao.get_execution(self.id)
             return full_exec.params
 
-        params_json = _run_async(_fetch()) or {}
+        params_json = run_async(_fetch()) or {}
         return ExecutionParams(params_json, self.metadata_root)
 
     def get_attrs(self) -> TaskExitContext | None:
@@ -549,7 +623,7 @@ class Execution(BaseModel):
 
         Equivalent to:
 
-            >>> last_task = Execution.get_by_id(id=356).get_tasks_with_name("end")[0]
+            >>> last_task = Execution.get_by_id(id=<a_valid_execution_id>).get_task("end")
             >>> last_task.get_exit_context()
 
         Note:
@@ -585,7 +659,7 @@ class Execution(BaseModel):
             finally:
                 await dao.engine.dispose()
 
-        rows = _run_async(_fetch())
+        rows = run_async(_fetch())
         if rows is None:
             logger.warning(
                 f"get_attrs: execution {self.id} did not complete successfully ; "
@@ -607,7 +681,7 @@ class Execution(BaseModel):
         raise NotImplementedError()
 
 
-class Task(BaseModel):
+class Task(BaseModelExt):
     """SDK representation of a pipeline task instance.
 
     Provides access to task metadata.
@@ -626,6 +700,10 @@ class Task(BaseModel):
             When task ended (None if still running)
         success : bool
             Whether task completed successfully
+        docstring : str or None
+            TaskType docstring.
+        is_parallel : bool or None
+            Whether the task is part of a parallel branch.
         exec_id : int
             Parent execution id.
         metadata_root : str
@@ -642,6 +720,10 @@ class Task(BaseModel):
         None, description="Task end time (UTC), None if still running (not live-synched)"
     )
     success: bool | None = Field(None, description="Whether task completed successfully")
+    docstring: str | None = Field(None, description="TaskType docstring")
+    is_parallel: bool | None = Field(
+        None, description="Whether the task is part of a parallel branch"
+    )
 
     _exec_id: int = PrivateAttr()
     # Absolute path to the metadata root from the parent execution.
@@ -658,6 +740,8 @@ class Task(BaseModel):
         rank: list[int] | None = None,
         end_timestamp: datetime | None = None,
         success: bool | None = None,
+        docstring: str | None = None,
+        is_parallel: bool | None = None,
         **data: Any,
     ) -> None:
         super().__init__(
@@ -667,6 +751,8 @@ class Task(BaseModel):
             rank=rank,
             end_timestamp=end_timestamp,
             success=success,
+            docstring=docstring,
+            is_parallel=is_parallel,
             **data,
         )
         self._exec_id = exec_id
@@ -703,7 +789,7 @@ class Task(BaseModel):
             dao = AsyncDAO(db_url=Config.get_metadatastore_async_url())
             return await dao.get_task_context_attrs(self.id)
 
-        rows = _run_async(_fetch())
+        rows = run_async(_fetch())
         return TaskExitContext(rows or [], self._metadata_root)
 
     def get_exit_payload(self) -> TaskExitPayload:
@@ -733,11 +819,11 @@ class Task(BaseModel):
             finally:
                 await dao.engine.dispose()
 
-        row = _run_async(_fetch())
+        row = run_async(_fetch())
         return TaskExitPayload({self.name: row}, self._metadata_root)
 
 
-class TaskGroup(BaseModel):
+class TaskGroup(BaseModelExt):
     """SDK representation of a taskgroup.
 
     Mirrors ``dao.model.TaskGroup``: holds the 1st-degree element UUIDs
@@ -807,7 +893,7 @@ class TaskGroup(BaseModel):
         return self.model_dump() == other.model_dump()
 
 
-class TaskGroupRanks(BaseModel):
+class TaskGroupRanks(BaseModelExt):
     """SDK representation of an taskgroup and its execution ranks.
 
     Behaves as an iterable container yielding `TaskGroupRank` instances.
@@ -837,7 +923,7 @@ class TaskGroupRanks(BaseModel):
 
     @field_validator("ranks", mode="before")
     @classmethod
-    def parse_ranks(cls, v):
+    def _parse_ranks(cls, v):
         """Convert db-stored ranks (strings or lists) into list[list[int]]."""
         if isinstance(v, list):
             parsed_ranks = []
@@ -942,7 +1028,7 @@ class TaskGroupRanks(BaseModel):
         return None
 
 
-class TaskGroupRank(BaseModel):
+class TaskGroupRank(BaseModelExt):
     """SDK representation of a single taskgroup and a single execution rank.
 
     Attributes
@@ -969,7 +1055,7 @@ class TaskGroupRank(BaseModel):
 
     @field_validator("rank", mode="before")
     @classmethod
-    def parse_rank(cls, v):
+    def _parse_rank(cls, v):
         """Convert db-stored rank (string or list) into list[int]."""
         if isinstance(v, str):
             # If the DB returns a string like "[1, 2]"
@@ -1020,7 +1106,7 @@ class TaskGroupRank(BaseModel):
             finally:
                 await dao.engine.dispose()
 
-        rows_by_task = _run_async(_fetch()) or {}
+        rows_by_task = run_async(_fetch()) or {}
         # Flatten across all member tasks; last writer wins for shared attr names.
         merged: dict[str, Any] = {}
         for rows in rows_by_task.values():
@@ -1066,9 +1152,96 @@ class TaskGroupRank(BaseModel):
             finally:
                 await dao.engine.dispose()
 
-        tasks, payload_rows = _run_async(_fetch())
+        tasks, payload_rows = run_async(_fetch())
         rows = {task_ext.name: payload_rows.get(task_ext.id) for task_ext in tasks}
         return TaskExitPayload(rows, self.taskgroup._metadata_root)
+
+    def get_element(self, element_uuid: UUID | str) -> "Task | TaskGroupRank":
+        """Resolve an element of this taskgroup at the given rank.
+
+        Since taskgroups can be nested, the element is either a TaskType
+        (returns a :class:`Task`) or a nested TaskGroup (returns a
+        :class:`TaskGroupRank`).
+
+        Parameters
+        ----------
+        element_uuid : UUID or str
+            UUID of the element (TaskType or nested TaskGroup) to resolve.
+            A ``str`` is auto-cast to ``UUID``. Must be a 1st-degree element
+            of this taskgroup (i.e. present in ``self.taskgroup.elements``).
+
+        Returns
+        -------
+        Task or TaskGroupRank
+            The resolved element instance.
+
+        Raises
+        ------
+        ValueError
+            If ``element_uuid`` is not a 1st-degree element of this taskgroup.
+        RankNotFoundException
+            If the resolved element has no instance at the given rank.
+
+        Examples
+        --------
+        >>> tg = Execution.get_by_id(id=356).get_taskgroup("my_taskgroup")
+        >>> elem = tg.get_element("12345678-1234-1234-1234-123456789abc")
+        """
+        uuid_value = element_uuid if isinstance(element_uuid, UUID) else UUID(str(element_uuid))
+        # elements are stored as strings with dashes (same str(tg.uuid) form).
+        if str(uuid_value) not in self.taskgroup.elements:
+            raise ValueError(
+                f"Element '{uuid_value}' is not a 1st-degree element of "
+                f"taskgroup '{self.taskgroup.name}' [uuid {self.taskgroup.uuid}]."
+            )
+
+        async def _resolve():
+            dao = AsyncDAO(db_url=Config.get_metadatastore_async_url())
+            try:
+                return await dao.get_taskgroup_element(
+                    execution_id=self.taskgroup._exec_id,
+                    taskgroup_name=self.taskgroup.name,
+                    element_uuid=uuid_value,
+                    rank=self.rank,
+                )
+            finally:
+                await dao.engine.dispose()
+
+        result = run_async(_resolve())
+        if result is None:
+            raise RankNotFoundException(
+                f"No element '{uuid_value}' found at rank {self.rank} "
+                f"in execution '{self.taskgroup._exec_id}'."
+            )
+
+        if isinstance(result, TaskExt):
+            return Task(
+                id=result.id,
+                name=result.name,
+                rank=result.rank,
+                start_timestamp=result.start_timestamp,
+                end_timestamp=result.end_timestamp,
+                success=not result.failed if result.failed is not None else True,
+                docstring=result.docstring,
+                is_parallel=result.is_parallel,
+                # private attrs
+                exec_id=self.taskgroup._exec_id,
+                metadata_root=self.taskgroup._metadata_root,
+            )
+
+        # result is a TaskGroup ORM object.
+        return TaskGroupRank(
+            taskgroup=TaskGroup(
+                uuid=str(result.uuid),
+                name=result.name,
+                docstring=result.docstring,
+                elements=result.elements,
+                # private attrs
+                exec_id=self.taskgroup._exec_id,
+                metadata_root=self.taskgroup._metadata_root,
+            ),
+            rank=self.rank,
+        )
 
 
 # //////////////////////////////////////////////////////////////////////////////////////////////////

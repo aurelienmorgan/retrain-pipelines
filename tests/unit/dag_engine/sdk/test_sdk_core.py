@@ -1,4 +1,4 @@
-"""Unit tests for retrain_pipelines.dag_engine.sdk.core
+"""Unit & Integration tests for retrain_pipelines.dag_engine.sdk.core
 
 Uses file-based SQLite (via the ``isolated_async_dao`` fixture) so that
 ``AsyncDAO`` instances created internally by the SDK share the same
@@ -11,7 +11,7 @@ both storage backends.
 
 import json
 from datetime import datetime
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy.orm import Session
@@ -24,7 +24,6 @@ from retrain_pipelines.dag_engine.db.model import (
     TaskContextAttr as TaskContextAttrDbModel,
     TaskPayloadAttr as TaskPayloadAttrDbModel,
 )
-from retrain_pipelines.dag_engine.sdk import core
 from retrain_pipelines.dag_engine.sdk.core import (
     Execution,
     ExecutionParams,
@@ -35,7 +34,6 @@ from retrain_pipelines.dag_engine.sdk.core import (
     TaskGroup,
     TaskGroupRank,
     TaskGroupRanks,
-    shutdown_async_sdk,
 )
 
 # ---------------------------------------------------------------------------
@@ -309,53 +307,6 @@ def _seed_nested_taskgroups(engine, metadata_root, rank=None):
 
 
 # ---------------------------------------------------------------------------
-# _run_async
-# ---------------------------------------------------------------------------
-
-
-class TestRunAsync:
-    """Cover the module-level _run_async helper and event loop lifecycle."""
-
-    def test_shutdown_async_sdk_stops_and_joins(self):
-        """Covers shutdown_async_sdk() when loop is running and thread is alive."""
-        core._start_loop()
-        loop = core._loop
-        thread = core._loop_thread
-
-        assert loop is not None
-        assert thread is not None
-        assert loop.is_running()
-        assert thread.is_alive()
-
-        shutdown_async_sdk()
-
-        assert not loop.is_running()
-        assert not thread.is_alive()
-
-        # Reset global state so other tests can start it cleanly if needed
-        core._loop = None
-        core._loop_thread = None
-
-    def test_shutdown_async_sdk_when_loop_not_started(self):
-        """Covers branch where loop was never started (idempotent no-op).
-
-        Ensures shutdown_async_sdk does not raise when _loop and
-        _loop_thread are both None, covering the short-circuit
-        condition branches.
-        """
-        # Ensure clean state - if loop was started, stop it first
-        if core._loop is not None and core._loop.is_running():
-            shutdown_async_sdk()
-        core._loop = None
-        core._loop_thread = None
-
-        # Should be a safe no-op
-        shutdown_async_sdk()
-        assert core._loop is None
-        assert core._loop_thread is None
-
-
-# ---------------------------------------------------------------------------
 # Execution model
 # ---------------------------------------------------------------------------
 
@@ -461,6 +412,42 @@ class TestExecutionGetTasksWithName:
         assert tasks == []
 
 
+class TestExecutionGetTasksWithUuid:
+    """Cover Execution.get_tasks_with_uuid().
+
+    Placed right after the name-based selector: both are the task-listing
+    entry points of Execution, ahead of the single-task lookups built on
+    the same row-to-Task mapping.
+    """
+
+    def test_get_tasks_with_uuid_returns_tasks(self, isolated_async_dao, metadata_root):
+        """Covers the str auto-cast and the row-to-Task mapping."""
+        exec_id, task_id = _seed_execution_with_task(
+            isolated_async_dao, metadata_root, task_name="step", failed=False
+        )
+        with Session(isolated_async_dao) as session:
+            tt_uuid = (
+                session.query(TaskTypeDbModel).filter_by(exec_id=exec_id).one().uuid
+            )
+
+        exec_ = _make_execution(metadata_root, id=exec_id)
+        tasks = exec_.get_tasks_with_uuid(str(tt_uuid))
+
+        assert len(tasks) == 1
+        assert tasks[0].id == task_id
+        assert tasks[0].name == "step"
+        assert tasks[0].success is True
+
+    def test_get_tasks_with_uuid_empty(self, isolated_async_dao, metadata_root):
+        """Covers the early return when no task matches the given UUID."""
+        exec_id, _ = _seed_execution_with_task(
+            isolated_async_dao, metadata_root, task_name="step", failed=False
+        )
+        exec_ = _make_execution(metadata_root, id=exec_id)
+
+        assert exec_.get_tasks_with_uuid(uuid4()) == []
+
+
 class TestExecutionGetTaskById:
     """Cover Execution.get_by_id() and Execution.get_task_by_id().
 
@@ -500,6 +487,24 @@ class TestExecutionGetTaskById:
 
 class TestExecutionGetTask:
     """Cover Execution.get_task()."""
+
+    def test_get_task_rejects_both_selectors(self, metadata_root):
+        """Covers the mutually-exclusive selector guard, ahead of any DB call."""
+        exec_ = _make_execution(metadata_root)
+        with pytest.raises(
+            AttributeError,
+            match=r"Provide either 'tasktype_name' or 'tasktype_uuid', not both\.",
+        ):
+            exec_.get_task(tasktype_name="step", tasktype_uuid=uuid4())
+
+    def test_get_task_requires_a_selector(self, metadata_root):
+        """Covers the missing-selector guard, ahead of any DB call."""
+        exec_ = _make_execution(metadata_root)
+        with pytest.raises(
+            AttributeError,
+            match=r"Provide either 'tasktype_name' or 'tasktype_uuid'\.",
+        ):
+            exec_.get_task()
 
     def test_get_task_success_default_rank(self, isolated_async_dao, metadata_root):
         """Covers branch where the task is found on the main DAG spine (rank=None)."""
@@ -542,6 +547,22 @@ class TestExecutionGetTask:
         assert task.id == task_id
         assert task.rank is None
 
+    def test_get_task_success_with_uuid(self, isolated_async_dao, metadata_root):
+        """Covers the uuid selector, which also labels failures with the UUID."""
+        exec_id, task_id = _seed_execution_with_task(
+            isolated_async_dao, metadata_root, task_name="step", failed=False
+        )
+        with Session(isolated_async_dao) as session:
+            tt_uuid = (
+                session.query(TaskTypeDbModel).filter_by(exec_id=exec_id).one().uuid
+            )
+
+        exec_ = _make_execution(metadata_root, id=exec_id)
+        task = exec_.get_task(tasktype_uuid=tt_uuid)
+
+        assert task.id == task_id
+        assert task.name == "step"
+
     def test_get_task_rank_not_found(self, isolated_async_dao, metadata_root):
         """Covers branch where no task matches the requested rank, raising RankNotFoundException."""
         exec_id, _ = _seed_execution_with_task(
@@ -550,7 +571,7 @@ class TestExecutionGetTask:
         exec_ = _make_execution(metadata_root, id=exec_id)
         with pytest.raises(
             RankNotFoundException,
-            match=r"No 'step' task found at rank '\[9, 9\]'.*Available ranks: \[None\]",
+            match=r"No task 'step' found at rank \[9, 9\].*Available ranks: \[None\]",
         ):
             exec_.get_task("step", rank=[9, 9])
 
@@ -562,7 +583,7 @@ class TestExecutionGetTask:
         exec_ = _make_execution(metadata_root, id=exec_id)
         with pytest.raises(
             RankNotFoundException,
-            match=r"No 'missing' task found at rank 'None'.*Available ranks: \[\]",
+            match=r"No task 'missing' found in execution 'pipe' \[id \d+\]\.",
         ):
             exec_.get_task("missing")
 
@@ -623,8 +644,57 @@ class TestExecutionGetTaskgroupsWithName:
         assert tgr is None
 
 
+class TestExecutionGetTaskgroupsWithUuid:
+    """Cover Execution.get_taskgroups_with_uuid().
+
+    Mirrors the name-based listing right above: same DAO contract, same
+    TypeError-on-missing-group handling, uuid selector.
+    """
+
+    def test_get_taskgroups_with_uuid_success(self, isolated_async_dao, metadata_root):
+        """Covers the UUID input and the TaskGroupRanks construction."""
+        exec_id, _, tg_uuid, _ = _seed_taskgroup_with_task(
+            isolated_async_dao, metadata_root
+        )
+        exec_ = _make_execution(metadata_root, id=exec_id)
+        tgr = exec_.get_taskgroups_with_uuid(UUID(tg_uuid))
+
+        assert isinstance(tgr, TaskGroupRanks)
+        assert tgr.taskgroup.uuid == tg_uuid
+        assert tgr.ranks == [[1]]
+
+    def test_get_taskgroups_with_uuid_not_found(
+        self, isolated_async_dao, metadata_root
+    ):
+        """Covers the str auto-cast and the TypeError catch on a missing group."""
+        exec_id, _ = _seed_execution_with_task(
+            isolated_async_dao, metadata_root, task_name="step", failed=False
+        )
+        exec_ = _make_execution(metadata_root, id=exec_id)
+
+        assert exec_.get_taskgroups_with_uuid(str(uuid4())) is None
+
+
 class TestExecutionGetTaskgroupForRank:
     """Cover Execution.get_taskgroup()."""
+
+    def test_get_taskgroup_rejects_both_selectors(self, metadata_root):
+        """Covers the mutually-exclusive selector guard, ahead of any DB call."""
+        exec_ = _make_execution(metadata_root)
+        with pytest.raises(
+            AttributeError,
+            match=r"Provide either 'taskgroup_name' or 'taskgroup_uuid', not both\.",
+        ):
+            exec_.get_taskgroup(taskgroup_name="tg", taskgroup_uuid=uuid4())
+
+    def test_get_taskgroup_requires_a_selector(self, metadata_root):
+        """Covers the missing-selector guard, ahead of any DB call."""
+        exec_ = _make_execution(metadata_root)
+        with pytest.raises(
+            AttributeError,
+            match=r"Provide either 'taskgroup_name' or 'taskgroup_uuid'\.",
+        ):
+            exec_.get_taskgroup()
 
     def test_get_taskgroup_success(self, isolated_async_dao, metadata_root):
         """Covers branch where taskgroup and rank are found."""
@@ -632,7 +702,7 @@ class TestExecutionGetTaskgroupForRank:
             isolated_async_dao, metadata_root, rank=[1, 2]
         )
         exec_ = _make_execution(metadata_root, id=exec_id)
-        tgr = exec_.get_taskgroup("tg", [1, 2])
+        tgr = exec_.get_taskgroup("tg", rank=[1, 2])
 
         assert isinstance(tgr, TaskGroupRank)
         assert tgr.rank == [1, 2]
@@ -645,10 +715,10 @@ class TestExecutionGetTaskgroupForRank:
         exec_ = _make_execution(metadata_root, id=exec_id)
         with pytest.raises(
             RankNotFoundException,
-            match=r"No taskgroup found with name 'tg' at rank \[9, 9\].*"
+            match=r"No taskgroup 'tg' found at rank \[9, 9\].*"
             r"Available ranks: \[\[1, 2\]\]",
         ):
-            exec_.get_taskgroup("tg", [9, 9])
+            exec_.get_taskgroup("tg", rank=[9, 9])
 
     def test_get_taskgroup_empty_rank_success(self, isolated_async_dao, metadata_root):
         """Covers branch where requested rank is empty and taskgroup has NULL ranks.
@@ -660,7 +730,7 @@ class TestExecutionGetTaskgroupForRank:
             isolated_async_dao, metadata_root, rank=None
         )
         exec_ = _make_execution(metadata_root, id=exec_id)
-        tgr = exec_.get_taskgroup("tg", [])
+        tgr = exec_.get_taskgroup("tg", rank=[])
 
         assert isinstance(tgr, TaskGroupRank)
         assert tgr.rank is None
@@ -675,10 +745,10 @@ class TestExecutionGetTaskgroupForRank:
         exec_ = _make_execution(metadata_root, id=exec_id)
         with pytest.raises(
             RankNotFoundException,
-            match=r"No taskgroup found with name 'tg' at rank \[\].*"
+            match=r"No taskgroup 'tg' found at rank \[\].*"
             r"Available ranks: \[\[1, 2\]\]",
         ):
-            exec_.get_taskgroup("tg", [])
+            exec_.get_taskgroup("tg", rank=[])
 
     def test_get_taskgroup_not_found(self, isolated_async_dao, metadata_root):
         """Covers branch where taskgroup is not found, raising RankNotFoundException."""
@@ -688,9 +758,39 @@ class TestExecutionGetTaskgroupForRank:
         exec_ = _make_execution(metadata_root, id=exec_id)
         with pytest.raises(
             RankNotFoundException,
-            match=r"No taskgroup found with name missing_tg in execution pipe \[id \d+\].",
+            match=r"No taskgroup 'missing_tg' found in execution 'pipe' \[id \d+\]\.",
         ):
-            exec_.get_taskgroup("missing_tg", [1])
+            exec_.get_taskgroup("missing_tg", rank=[1])
+
+    def test_get_taskgroup_success_with_uuid(self, isolated_async_dao, metadata_root):
+        """Covers the uuid selector of the same rank-resolution logic.
+
+        Kept in this class rather than a parallel one: get_taskgroup is a
+        single method whose uuid branch only changes how the group is
+        fetched and labelled, not how the rank is matched.
+        """
+        exec_id, _, tg_uuid, _ = _seed_taskgroup_with_task(
+            isolated_async_dao, metadata_root, rank=[1, 2]
+        )
+        exec_ = _make_execution(metadata_root, id=exec_id)
+        tgr = exec_.get_taskgroup(taskgroup_uuid=tg_uuid, rank=[1, 2])
+
+        assert isinstance(tgr, TaskGroupRank)
+        assert tgr.taskgroup.uuid == tg_uuid
+        assert tgr.rank == [1, 2]
+
+    def test_get_taskgroup_with_uuid_not_found(self, isolated_async_dao, metadata_root):
+        """Covers the uuid-labelled failure when the group itself is missing."""
+        exec_id, _ = _seed_execution_with_task(
+            isolated_async_dao, metadata_root, task_name="step", failed=False
+        )
+        exec_ = _make_execution(metadata_root, id=exec_id)
+        missing = uuid4()
+        with pytest.raises(
+            RankNotFoundException,
+            match=rf"No taskgroup '{missing}' found in execution 'pipe' \[id \d+\]\.",
+        ):
+            exec_.get_taskgroup(taskgroup_uuid=missing, rank=[1])
 
 
 class TestExecutionGetAttrs:
@@ -875,8 +975,23 @@ class TestTaskGroupRanks:
         assert tgr.ranks == [[]]
 
     def test_parse_ranks_not_list(self, metadata_root):
-        """Covers branch where ranks input is not a list (e.g., None)."""
-        assert TaskGroupRanks.parse_ranks(None) is None
+        """Covers branch where ranks input is not a list (e.g., None).
+
+        Reached through the class then through an instance, so both binding
+        modes of the validator descriptor, which the SDK installs,
+        are exercised.
+        """
+        assert TaskGroupRanks._parse_ranks(None) is None
+
+        tgr = TaskGroupRanks(
+            exec_id=1,
+            metadata_root=metadata_root,
+            uuid="123",
+            name="tg",
+            elements=[],
+            ranks=[[1]],
+        )
+        assert tgr._parse_ranks(None) is None
 
     def test_iter(self, metadata_root):
         tgr = TaskGroupRanks(
@@ -1184,3 +1299,94 @@ class TestTaskGroupRank:
         payload = tgr.get_exit_payload()
         assert isinstance(payload, TaskExitPayload)
         assert payload["leaf_task"] == 99
+
+
+class TestTaskGroupRankGetElement:
+    """Cover TaskGroupRank.get_element().
+
+    Split from TestTaskGroupRank because element resolution dispatches on
+    what the DAO returns (a task row vs a nested taskgroup), whereas the
+    rest of that class covers rank parsing and the merged exit views. It
+    is the last method of the last SDK class, hence the last block here.
+    """
+
+    def test_get_element_returns_task(self, isolated_async_dao, metadata_root):
+        """Covers the task branch, with a UUID object as input."""
+        exec_id, task_id, _, tt_uuid = _seed_taskgroup_with_task(
+            isolated_async_dao, metadata_root, task_name="tg_task", rank=[1, 2]
+        )
+        exec_ = _make_execution(metadata_root, id=exec_id)
+        tgr = exec_.get_taskgroups_with_name("tg").get_rank([1, 2])
+
+        element = tgr.get_element(UUID(tt_uuid))
+
+        assert isinstance(element, Task)
+        assert element.id == task_id
+        assert element.rank == [1, 2]
+
+    def test_get_element_returns_nested_taskgroup(
+        self, isolated_async_dao, metadata_root
+    ):
+        """Covers the nested taskgroup branch, with the str auto-cast.
+
+        The outer group is purely nested, so it is built directly from the
+        seeded ids -- same pattern as the nested exit-view tests above.
+        """
+        exec_id, _, outer_tg_uuid, inner_tg_uuid = _seed_nested_taskgroups(
+            isolated_async_dao, metadata_root, rank=[1, 2]
+        )
+        tg = TaskGroup(
+            exec_id=exec_id,
+            metadata_root=metadata_root,
+            uuid=outer_tg_uuid,
+            name="outer_tg",
+            elements=[inner_tg_uuid],
+        )
+        tgr = TaskGroupRank(taskgroup=tg, rank=[1, 2])
+
+        element = tgr.get_element(inner_tg_uuid)
+
+        assert isinstance(element, TaskGroupRank)
+        assert element.taskgroup.uuid == inner_tg_uuid
+        assert element.rank == [1, 2]
+
+    def test_get_element_rejects_non_first_degree_uuid(self, metadata_root):
+        """Covers the membership guard, which fires before any DB round-trip."""
+        tg = TaskGroup(
+            exec_id=1,
+            metadata_root=metadata_root,
+            uuid="123",
+            name="tg",
+            elements=[],
+        )
+        tgr = TaskGroupRank(taskgroup=tg, rank=[1])
+
+        with pytest.raises(ValueError, match="is not a 1st-degree element"):
+            tgr.get_element(uuid4())
+
+    def test_get_element_without_instance_at_rank(
+        self, isolated_async_dao, metadata_root
+    ):
+        """Covers the unresolved-element branch, where the DAO returns None."""
+        exec_id, _, tg_uuid, tt_uuid = _seed_taskgroup_with_task(
+            isolated_async_dao, metadata_root, task_name="tg_task", rank=[1, 2]
+        )
+        with Session(isolated_async_dao) as session:
+            session.query(TaskDbModel).filter_by(exec_id=exec_id).delete()
+            session.commit()
+
+        tg = TaskGroup(
+            exec_id=exec_id,
+            metadata_root=metadata_root,
+            uuid=tg_uuid,
+            name="tg",
+            elements=[tt_uuid],
+        )
+        tgr = TaskGroupRank(taskgroup=tg, rank=[1, 2])
+
+        with pytest.raises(
+            RankNotFoundException,
+            match=rf"No element '{tt_uuid}' found at rank \[1, 2\] "
+            rf"in execution '{exec_id}'\.",
+        ):
+            tgr.get_element(tt_uuid)

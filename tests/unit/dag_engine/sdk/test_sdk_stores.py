@@ -306,6 +306,45 @@ class TestTaskExitContext:
         ctx = TaskExitContext(rows, "/tmp")
         assert repr(ctx) == "TaskExitContext(attrs=['a'])"
 
+    def test_to_dict_all_inline(self, make_row):
+        """Materialize all inline attrs into a plain dict.
+
+        Exercises the eager-materialization path with no disk-ref attrs
+        and no retrain_pipeline_type attr (the env-var context manager's
+        fall-through branch).
+        """
+        rows = [
+            make_row("a", inline_val="v1"),
+            make_row("b", inline_val="v2"),
+        ]
+        ctx = TaskExitContext(rows, "/tmp")
+        assert ctx.to_dict() == {"a": "v1", "b": "v2"}
+
+    def test_to_dict_with_disk_ref_and_retrain_pipeline_type(
+        self, metadata_root, make_row, write_disk_artifact, monkeypatch
+    ):
+        """Materialize attrs including a disk-ref while retrain_pipeline_type
+        is present with a non-None inline value.
+
+        Verifies that the env-var context manager wraps the full
+        materialization: the disk-ref attr is loaded under the temporarily
+        set env var, and the env var is restored (here, removed) on exit.
+        """
+        monkeypatch.delenv("retrain_pipeline_type", raising=False)
+        write_disk_artifact(metadata_root, "path.pkl", "unpickled")
+        rows = [
+            make_row("retrain_pipeline_type", inline_val="test_pipeline"),
+            make_row("a", disk_ref="path.pkl"),
+            make_row("b", inline_val="v2"),
+        ]
+        ctx = TaskExitContext(rows, metadata_root)
+        assert ctx.to_dict() == {
+            "retrain_pipeline_type": "test_pipeline",
+            "a": "unpickled",
+            "b": "v2",
+        }
+        assert "retrain_pipeline_type" not in os.environ
+
     def test_attr_equals(self, make_row):
         r1 = make_row("a", inline_val="v1", sha=None)
         r2 = make_row("a", inline_val="v1", sha=None)
@@ -943,10 +982,14 @@ class TestTaskExitPayloadPickle:
         assert state == {"_rows": rows, "_metadata_root": "/tmp/meta"}
 
     def test_setstate(self, make_row):
-        rows = {"a": make_row(inline_val=1)}
-        payload = TaskExitPayload.__new__(TaskExitPayload)
-        payload.__setstate__({"_rows": rows, "_metadata_root": "/tmp/meta"})
-        assert payload._rows is rows
+        # Construct via __init__ so pydantic private-attr storage is
+        # initialized ; __reduce__ reconstructs via __init__ too, so this
+        # is the only state in which __setstate__ is reachable.
+        initial_rows = {"a": make_row(inline_val=1)}
+        payload = TaskExitPayload(initial_rows, "/tmp/initial")
+        override_rows = {"b": make_row(inline_val=2)}
+        payload.__setstate__({"_rows": override_rows, "_metadata_root": "/tmp/meta"})
+        assert payload._rows is override_rows
         assert payload._metadata_root == "/tmp/meta"
 
     def test_reduce(self, make_row):
