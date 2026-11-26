@@ -28,7 +28,7 @@ So, basically, it handles authentication and renders raw repo html files into yo
 
 <Tip>
 
-If you want to use it for model repositories that are <a target="_blank" href="https://huggingface.co/docs/hub/models-gated">gated</a> or private to you and published via the `retrain-pipelines` librairy, just duplicate it and assigne the `HF_TOKEN`secret with a proper value. Simple as that&nbsp;!
+If you want to use it for model repositories that are <a target="_blank" href="https://huggingface.co/docs/hub/models-gated">gated</a> or private to you and published via the `retrain-pipelines` library, just duplicate it and assigne the `HF_TOKEN`secret with a proper value. Simple as that&nbsp;!
 
 </Tip>
 

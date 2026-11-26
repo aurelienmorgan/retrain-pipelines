@@ -136,7 +136,7 @@ TensorBoard, PyTorch Profiler, Weights and Biases, Hugging Face. <b>retrain-pipe
 
   <details>
   <summary>illustration with <code>WandB</code> in the <code>LightGBM_hp_cv_WandB</code> sample pipeline&nbsp;🔽</summary>
-  In the example of the <code>LightGBM_hp_cv_WandB</code> sample pipeline for instance, you can find information on how to view details on logging performed during the different <code>training_job</code> steps of a given run. Follow the guidance from the below video&nbsp;:<br />
+  In the example of the <code>LightGBM_hp_cv_WandB</code> sample pipeline for instance, you can find information on how to view details on logging performed during the different <code>training_job</code> tasks of a given execution. Follow the guidance from the below video&nbsp;:<br />
 
   [wandb_integration.webm](https://github.com/user-attachments/assets/730bc695-0768-484b-8e6e-2dbf0db08d68)
   </details>
@@ -167,7 +167,7 @@ TensorBoard, PyTorch Profiler, Weights and Biases, Hugging Face. <b>retrain-pipe
   LightGbmHpCvWandbFlow.copy_default_pipeline_card_module(".", exists_ok=True)
   LightGbmHpCvWandbFlow.copy_default_pipeline_card_html_template(".", exists_ok=True)
   ```
-  Once you updated any of them, you can launch a <b>retrain-pipelines</b> run so it uses those :
+  Once you updated any of them, you can launch a <b>retrain-pipelines</b> execution so it uses those :
   ```python
   %retrain_pipelines retraining_pipeline.py start \
     --pipeline_card_artifacts_path "." \
@@ -223,17 +223,17 @@ For instance&nbsp;:
   </li>
   <li>
   <details>
-    <summary><code>plot_run_all_cv_tasks</code>&nbsp;🔽</summary>
-  Specific to <b>retrain-pipelines</b> runs that involve data-parallelism,
+    <summary><code>plot_exec_cv_history</code>&nbsp;🔽</summary>
+  Specific to <b>retrain-pipelines</b> executions that involve data-parallelism,
   this <b>inspector</b> method plots each individual hyperparameter-tuning cross-validation training job, showing details for every data-parallel worker.<br />
   For example, for executions of the <code><a href="https://github.com/aurelienmorgan/retrain-pipelines/tree/master/sample_pipelines/LightGBM_hp_cv_WandB" target="_blank">LightGbmHpCvWandbFlow</a></code> sample pipeline (which employs <b>Dask</b> for data-parallel training), this gives&nbsp;:<br />
 
   ```python
-  from retrain_pipelines.inspectors.hp_cv_inspector import plot_run_all_cv_tasks
+  from retrain_pipelines.inspectors.hp_cv_inspector import plot_exec_cv_history
   
-  plot_run_all_cv_tasks(execution_id=<your_execution_id>)
+  plot_exec_cv_history(execution_id=<your_execution_id>)
   ```
-  with results looking like below for a run with 6 different sets of hp values, 2 cross-validation folds and with 4 Dask data-parallel workers&nbsp;:<br />
+  with results looking like below for an execution with 6 different sets of hp values, 2 cross-validation folds and with 4 Dask data-parallel workers&nbsp;:<br />
   <a href="https://github.com/user-attachments/assets/f3c03b06-a086-4be5-9815-73d1a887179d" target="_blank"><img src="https://github.com/user-attachments/assets/f3c03b06-a086-4be5-9815-73d1a887179d" width=400/></a>
   <hr width=60% />
   </details>

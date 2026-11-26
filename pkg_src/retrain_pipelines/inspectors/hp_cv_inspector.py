@@ -14,18 +14,48 @@ and further analysis
 of logged training history.
 """
 
+import logging
 import math
-from typing import cast
+from dataclasses import dataclass
 
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from ..frameworks import local_metaflow as metaflow
-from ..frameworks.local_metaflow.client.core import DataArtifact  # type: ignore[import-not-found]
+from .utils import get_execution
 
-MF_FLOW_NAME = "LightGbmHpCvWandbFlow"
+logger = logging.getLogger(__name__)
+
+PIPELINE_NAME = "LightGBM_hp_cv_WandB"
+
+
+@dataclass
+class TrainingJobHistory:
+    """Bundle for a single training_job task history.
+
+    Groups together the task-id, the hyperparameter
+    tuning rank, and the per-fold Dask workers validation
+    RMSE history, so callers downstream (plotting helpers)
+    can read every relevant piece from a single object.
+
+    Attributes
+    ----------
+    task_id : int
+        task-id of the "training_job" task.
+    rank : str
+        Rank of the training_job task within the
+        hyperparameter tuning search, as a string.
+        Surfaced in the fold subplot title.
+    fold_workers_history : dict
+        Per-fold Dask workers validation RMSE history.
+        Keys are fold indices, values are dictionaries
+        holding "Validation_rmse" lists.
+    """
+
+    task_id: int
+    rank: str
+    fold_workers_history: dict
 
 
 def _calculate_fold_metrics(fold_history: dict) -> tuple[list, list, list, list]:
@@ -83,9 +113,8 @@ def _plot_fold(
     mean_rmse: list,
     std_rmse: list,
     median_rmse: list,
-    fold_history: dict,
     fold_idx: int,
-    training_job_id: str,
+    training_job_history: TrainingJobHistory,
     legend_handles: list,
     legend_labels: list,
 ):
@@ -105,20 +134,19 @@ def _plot_fold(
         for each epoch.
     median_rmse : list[float]
         List of median RMSE values, one per epoch
-    fold_history : dict
-        A dictionary where keys are Dask worker IDs
-        and values are dictionaries containing
-        "Validation_rmse", a list of RMSE values
-        for each epoch.
     fold_idx : int
         Index of the cross-validation fold being plotted.
-    training_job_id : str
-        Metaflow id for the "training_job" task covered
+    training_job_history : TrainingJobHistory
+        Bundle holding the retraining pipeline "training_job"
+        task-id, its hyper-parameter tuning rank, and its
+        per-fold Dask workers validation RMSE history.
+        The rank is surfaced in the subplot title.
     legend_handles : list[matplotlib.lines.Line2D]
         by-ref param.
     legend_labels : list[str]
         by-ref param.
     """
+    fold_history = training_job_history.fold_workers_history
     for worker_id, results in fold_history.items():
         validation_rmse = results["Validation_rmse"]
         # Gray and translucent lines for workers
@@ -178,7 +206,10 @@ def _plot_fold(
 
     ax.set_xlabel("Epoch")
     ax.set_ylabel("Validation RMSE")
-    ax.set_title(f"Fold {fold_idx + 1} - " + f"training_job {training_job_id}")
+    ax.set_title(
+        f"Fold {fold_idx + 1} - training_job {training_job_history.task_id} "
+        f"(rank {training_job_history.rank})"
+    )
     ax.grid(which="both", linestyle=":", linewidth=0.5, color="blue")
 
     # Add handles and labels for legend
@@ -221,7 +252,7 @@ def _plot_average(
     """
     ax.plot(epochs, avg_mean_rmse, "k--", label="Mean RMSE")
     avg_mean_rmse_arr = np.array(avg_mean_rmse)
-    avg_std_rmse_arr = (np.array(avg_std_rmse),)
+    avg_std_rmse_arr = np.array(avg_std_rmse)  # (np.array(avg_std_rmse),)
     ax.fill_between(
         epochs,
         avg_mean_rmse_arr - avg_std_rmse_arr,
@@ -268,7 +299,7 @@ def _plot_average(
 
 
 def _plot_validation_rmse_analysis(
-    folds_workers_history: list,
+    folds_workers_history: list[TrainingJobHistory],
 ) -> tuple[matplotlib.figure.Figure, matplotlib.axes._axes.Axes]:
     """Generate figure and axes array plotting validation RMSE metrics across folds.
 
@@ -277,12 +308,11 @@ def _plot_validation_rmse_analysis(
 
     Parameters
     ----------
-    folds_workers_history : list[dict]
-        A list where each element is a dictionary representing
-        the history of validation RMSE values
-        for different Dask workers in a cross-validation fold.
-        Each dictionary contains worker IDs as keys
-        and their validation RMSE values as lists.
+    folds_workers_history : list[TrainingJobHistory]
+        A list where each element bundles the
+        retraining pipeline "training_job" task-id,
+        its hyperparameter tuning rank, and its
+        per-fold Dask workers validation RMSE history.
 
     Returns
     -------
@@ -305,7 +335,8 @@ def _plot_validation_rmse_analysis(
     legend_handles: list[matplotlib.artist.Artist] = []
     legend_labels: list[str] = []
 
-    for i, (training_job_id, fold_history) in enumerate(folds_workers_history):
+    for i, training_job_history in enumerate(folds_workers_history):
+        fold_history = training_job_history.fold_workers_history
         epochs, mean_rmse, std_rmse, median_rmse = _calculate_fold_metrics(fold_history)
         all_mean_rmse.append(mean_rmse)
         all_std_rmse.append(std_rmse)
@@ -317,9 +348,8 @@ def _plot_validation_rmse_analysis(
             mean_rmse,
             std_rmse,
             median_rmse,
-            fold_history,
             i,
-            training_job_id,
+            training_job_history,
             legend_handles,
             legend_labels,
         )
@@ -355,7 +385,7 @@ def _plot_validation_rmse_analysis(
     return fig, axes
 
 
-def plot_validation_rmse_analysis(folds_workers_history: list):
+def plot_validation_rmse_analysis(folds_workers_history: list[TrainingJobHistory]):
     """Plot validation RMSE metrics across folds.
 
     Given a history object.
@@ -363,12 +393,10 @@ def plot_validation_rmse_analysis(folds_workers_history: list):
 
     Parameters
     ----------
-    folds_workers_history : list[dict]
-        A list where each element is a dictionary representing
-        the history of validation RMSE values
-        for different Dask workers in a cross-validation fold.
-        Each dictionary contains worker IDs as keys
-        and their validation RMSE values as lists.
+    folds_workers_history : list[TrainingJobHistory]
+        A list where each element bundles the retraining pipeline
+        "training_job" task-id, its hyperparameter tuning rank,
+        and its per-fold Dask workers validation RMSE history.
     """
     fig, axes = _plot_validation_rmse_analysis(folds_workers_history)
 
@@ -377,7 +405,7 @@ def plot_validation_rmse_analysis(folds_workers_history: list):
     plt.show()
 
 
-def plot_run_cv_history(mf_run_id: int = -1, best_cv: bool = False):
+def plot_exec_cv_history(exec_id: int = -1, best_cv: bool = True) -> None:
     """Plot RMSE history for the best or worst set of HP in a pipeline execution.
 
     Plot RMSE history for best/worst performing (depending)
@@ -385,10 +413,9 @@ def plot_run_cv_history(mf_run_id: int = -1, best_cv: bool = False):
 
     Parameters
     ----------
-    mf_run_id : int
-        the id of the Metaflow flow run to consider.
-        If ommitted, the last flow run is considered.
-        throws MetaflowInvalidPathspec or MetaflowNotFound
+    exec_id : int
+        the id of the retrainin-pipeline execution to consider.
+        If ommitted, the last execution is considered.
     best_cv : bool
         whether to consider the best-performing
         set of hyperparameters among all
@@ -396,51 +423,60 @@ def plot_run_cv_history(mf_run_id: int = -1, best_cv: bool = False):
         If False, the less-well performing
         set of hp is considered
     """
-    if -1 == mf_run_id:
-        mf_flow_run = metaflow.Flow(MF_FLOW_NAME).latest_run
-        assert mf_flow_run is not None
-    else:
-        mf_flow_run = metaflow.Run(f"{MF_FLOW_NAME}/{mf_run_id}")
-        if mf_flow_run is None:
-            raise ValueError(f"No runs found for flow {MF_FLOW_NAME}/{mf_run_id}")
+    execution = get_execution(PIPELINE_NAME, exec_id)
+    if PIPELINE_NAME != execution.name:
+        raise ValueError(f"Only available for the {PIPELINE_NAME} retraining pipeline.")
 
     # pipeline task which holds the "hp_perfs_list"
     # consolidated artifact
-    hp_perfs_list_task = [
-        step.task for step in mf_flow_run.steps() if step.id == "best_hp" and step.task is not None
-    ][0]
+    hp_perfs_list_tasks = execution.get_tasks_with_name("best_hp")
+    if len(hp_perfs_list_tasks) == 0:
+        logger.warning(
+            f"Execution of the retraining-pipeline '{execution.name}' "
+            f"with id {execution.id} didn't go through a 'best_hp' task."
+        )
+        return
 
     hp_perfs_df = (
         pd
-        .DataFrame(cast(DataArtifact, hp_perfs_list_task["hp_perfs_list"]).data)
+        .DataFrame(hp_perfs_list_tasks[0].get_exit_context()["hp_perfs_list"])
         .sort_values(by="rmse", ascending=True)
         .reset_index(drop=True)
     )
     cv_task_id = hp_perfs_df.iloc[0 if best_cv else -1, 0]
+    cv_task_rank = hp_perfs_df.iloc[0 if best_cv else -1, 1]
 
-    folds_workers_history: list[tuple[str, dict]] = []
-    for step in mf_flow_run.steps():
-        if step.id == "training_job":
-            for training_job_task in step.tasks():
-                if cv_task_id == cast(DataArtifact, training_job_task["cross_validation_id"]).data:
-                    folds_workers_history.insert(
-                        0,
-                        (
-                            training_job_task.id,
-                            cast(DataArtifact, training_job_task["fold_workers_history"]).data,
-                        ),
-                    )
+    folds_workers_history: list[TrainingJobHistory] = []
+    for training_job_task in execution.get_tasks_with_name("training_job"):
+        if (
+            str(cv_task_rank)
+            == list(training_job_task.get_exit_context()["cross_validation"].keys())[0]
+        ):
+            training_job_task_context = training_job_task.get_exit_context()
+            training_job_task_rank_context = training_job_task_context["training_job"][
+                str(training_job_task.rank)
+            ]
+            folds_workers_history.insert(
+                0,
+                TrainingJobHistory(
+                    task_id=int(training_job_task.id),
+                    rank=str(training_job_task.rank),
+                    fold_workers_history=training_job_task_rank_context["fold_workers_history"],
+                ),
+            )
 
     fig, axes = _plot_validation_rmse_analysis(folds_workers_history)
 
     fig.suptitle(
-        "Validation RMSE Analysis Across Folds " + f"for cv_task {cv_task_id}", fontsize=16, y=0.98
+        f"Validation RMSE Analysis Across Folds for cv_task {cv_task_id} (rank {cv_task_rank})",
+        fontsize=16,
+        y=0.98,
     )  # Adjust y for title
 
     fig.text(
         0.5,
         0.92,
-        cast(DataArtifact, training_job_task["fold_hp_params"]).data,
+        hp_perfs_list_tasks[0].get_exit_context()["cross_validation"][str(cv_task_rank)]["hp"],
         ha="center",
         fontsize=12,
     )
@@ -450,7 +486,7 @@ def plot_run_cv_history(mf_run_id: int = -1, best_cv: bool = False):
     plt.show()
 
 
-def plot_run_all_cv_tasks(mf_run_id: int = -1):
+def plot_exec_all_cv_tasks(exec_id: int = -1) -> None:
     """Generate and plot validation RMSE metrics charts.
 
     For each training_job tasks in a given pipeline run
@@ -460,60 +496,65 @@ def plot_run_all_cv_tasks(mf_run_id: int = -1):
 
     Parameters
     ----------
-    mf_run_id : int
-        the id of the Metaflow flow run to consider.
-        If ommitted, the last flow run is considered.
-        throws MetaflowInvalidPathspec or MetaflowNotFound
+    exec_id : int
+        the id of the retrainin-pipeline execution to consider.
+        If ommitted, the last execution is considered.
     """
-    if -1 == mf_run_id:
-        mf_flow_run = metaflow.Flow(MF_FLOW_NAME).latest_run
-        assert mf_flow_run is not None
-    else:
-        mf_flow_run = metaflow.Run(f"{MF_FLOW_NAME}/{mf_run_id}")
-        if mf_flow_run is None:
-            raise ValueError(f"No runs found for flow {MF_FLOW_NAME}/{mf_run_id}")
+    execution = get_execution(PIPELINE_NAME, exec_id)
+    if PIPELINE_NAME != execution.name:
+        raise ValueError(f"Only available for the {PIPELINE_NAME} retraining pipeline.")
 
     ####################################
     # Collect all validation histories #
     #       for all Dask workers       #
     ####################################
-    hp_perfs_histories_dict: dict[str, list[tuple[str, dict]]] = {}
+    hp_perfs_histories_dict: dict[str, list[TrainingJobHistory]] = {}
+    cross_validation_ranks_dict: dict[str, str] = {}
     hp_dict: dict[str, str] = {}
-    for step in mf_flow_run.steps():
-        if step.id == "training_job":
-            for training_job_task in step.tasks():
-                cross_validation_id = cast(
-                    DataArtifact,
-                    training_job_task["cross_validation_id"],
-                ).data
-                if cross_validation_id not in hp_perfs_histories_dict:
-                    hp_perfs_histories_dict[cross_validation_id] = []
+    for training_job_task in execution.get_tasks_with_name("training_job"):
+        cross_validation = training_job_task.get_exit_context()["cross_validation"]
+        cross_validation_rank = list(cross_validation.keys())[0]
+        cross_validation_dict = list(cross_validation.values())[0]
+        cross_validation_id = cross_validation_dict["task_id"]
 
-                if cross_validation_id not in hp_dict:
-                    hp_dict[cross_validation_id] = cast(
-                        DataArtifact,
-                        training_job_task["fold_hp_params"],
-                    ).data
-                hp_perfs_histories_dict[cross_validation_id].insert(
-                    0,
-                    (
-                        training_job_task.id,
-                        cast(DataArtifact, training_job_task["fold_workers_history"]).data,
-                    ),
-                )
-    print(f"run_id {mf_flow_run.id} ; " + f"{len(hp_perfs_histories_dict)} training_job tasks")
+        if cross_validation_id not in cross_validation_ranks_dict:
+            cross_validation_ranks_dict[cross_validation_id] = str(cross_validation_rank)
+
+        if cross_validation_id not in hp_perfs_histories_dict:
+            hp_perfs_histories_dict[cross_validation_id] = []
+
+        if cross_validation_id not in hp_dict:
+            hp_dict[cross_validation_id] = cross_validation_dict["hp"]
+
+        training_job_task_context = training_job_task.get_exit_context()
+        training_job_task_rank_context = training_job_task_context["training_job"][
+            str(training_job_task.rank)
+        ]
+
+        hp_perfs_histories_dict[cross_validation_id].insert(
+            0,
+            TrainingJobHistory(
+                task_id=int(training_job_task.id),
+                rank=str(training_job_task.rank),
+                fold_workers_history=training_job_task_rank_context["fold_workers_history"],
+            ),
+        )
+
+    print(f"run_id {execution.id} ; " + f"{len(hp_perfs_histories_dict)} training_job tasks")
     ####################################
 
     ####################################
     #          Actual plotting         #
     ####################################
     for cv_task_id in sorted(hp_perfs_histories_dict.keys(), reverse=False):
+        cv_task_rank = cross_validation_ranks_dict[cv_task_id]
         folds_workers_history = hp_perfs_histories_dict[cv_task_id]
         # Generate the plot for the given cv_task_id
         fig, axes = _plot_validation_rmse_analysis(folds_workers_history)
 
         fig.suptitle(
-            "Validation RMSE Analysis Across Folds " + f"for cross_validation {cv_task_id}",
+            "Validation RMSE Analysis Across Folds for cross_validation "
+            + f"{cv_task_id} (rank {cv_task_rank})",
             fontsize=16,
             y=0.98,
         )

@@ -1,27 +1,33 @@
+import logging
 import os
 
 import wandb
 
-from ..frameworks import local_metaflow as metaflow
-from ..frameworks.local_metaflow.client.core import MetaflowObject  # type: ignore[import-not-found]
-from ..frameworks.local_metaflow.exception import MetaflowNotFound  # type: ignore[import-not-found]
+from ..dag_engine.config import Config
+from ..dag_engine.sdk.core import Execution, Task
 from ..utils.wsl_utils import is_windows_path, is_wsl, windows_to_wsl_path
-from .utils import _get_mf_run, _open_explorer
+from .utils import _open_explorer, get_execution
+
+logger = logging.getLogger(__name__)
+if not any(type(h) is logging.StreamHandler for h in logger.handlers):
+    logger.addHandler(logging.StreamHandler())
+# logger.setLevel(logging.INFO)
+
 
 os.environ["REQUESTS_CA_BUNDLE"] = "/etc/ssl/certs/ca-certificates.crt"
 
 
 def _get_execution_source_code(
-    train_model_task: metaflow.client.core.Task,  # type: ignore[name-defined]
+    train_model_task: Task,  # type: ignore[name-defined]
     api: wandb.apis.public.api.Api,
 ) -> list:
-    """Retrieve source code from WandB remote.
+    """Retrieve pipeline execution source code from the WandB server.
 
     Parameters
     ----------
-    train_model_task : metaflow.client.core.Task
-        the "train_model" task of
-        the Metaflow flow run to consider.
+    train_model_task : Task
+        the "train_model" task of the retraining-pipeline
+        execution to consider.
     api : wandb.apis.public.api.Api
         The `Api` instance used
         to retrieve the Files.
@@ -30,7 +36,7 @@ def _get_execution_source_code(
     -------
     list[wandb.apis.public.files.File]
     """
-    # recall that wandb_run_id = mf_task_id
+    # recall that wandb_run_id = task_id
     # and that source code is logged
     # during the 'train_model' pipeline task.
 
@@ -38,12 +44,11 @@ def _get_execution_source_code(
     # retrieve the wandb entity #
     #        for the flow       #
     #############################
-    wandb_project_ui_url = train_model_task["wandb_project_ui_url"].data
-    wandb_project = train_model_task.path_components[0]
-    url_splits = wandb_project_ui_url.split("/")
-    wandb_entity = url_splits[url_splits.index(wandb_project) - 1]
+    train_model_context = train_model_task.get_exit_context()
+    wandb_project_ui_url = train_model_context["wandb_project_ui_url"]
+    wandb_entity, wandb_project = wandb_project_ui_url.rsplit("/", 3)[-3:-1]
 
-    mf_train_model_task_id = train_model_task.id
+    rp_train_model_task_id = train_model_task.id
     #############################
 
     artifact_files = None
@@ -51,12 +56,14 @@ def _get_execution_source_code(
     #   Retrieve the WandB run  #
     #############################
     wandb_run = None
+    api_path = f"{wandb_entity}/{wandb_project}/{rp_train_model_task_id}"
+    # print(api_path)
     try:
-        wandb_run = api.run(f"{wandb_entity}/{wandb_project}/{mf_train_model_task_id}")
+        wandb_run = api.run(api_path)
     except wandb.errors.CommError as cErr:
         if cErr.message.startswith("Could not find run "):
-            print(f"Couldn't find run {mf_train_model_task_id} " + "on WandB.")
-            if "offline" == train_model_task["wandb_run_mode"].data:
+            logger.warning(f"Couldn't find run {rp_train_model_task_id} on WandB.")
+            if "offline" == train_model_context["wandb_run_mode"]:
                 print("Are you sure it's been synched yet ?")
             artifact_files = []
         else:
@@ -66,69 +73,63 @@ def _get_execution_source_code(
     if wandb_run is not None:
         for artifact in wandb_run.logged_artifacts():
             if artifact.name.startswith("source-"):
-                print(f"{artifact.source_version} ; " + f"{artifact.updated_at}")
+                print(f"{artifact.source_version} ; {artifact.updated_at}")
                 artifact_files = artifact.files()
 
     return artifact_files
 
 
 def get_execution_source_code(
-    mf_flow_name: str | None = None,
-    mf_run_id: int = -1,
+    pipeline_name: str | None = None,
+    exec_id: int = -1,
 ) -> list:
     """Retrieve source code from WandB remote.
 
     Parameters
     ----------
-    mf_flow_name : str
-        Name of the Metaflow flowspec.
-        When "mf_run_id" (below) is omitted,
+    pipeline_name : str
+        Name of the retraining-pipeline.
+        When ``exec_id`` (below) is omitted,
         this param here is mandatory.
-    mf_run_id : int
-        the id of the Metaflow flow run
-        to consider.
-        If ommitted, the last flow run
-        is considered.
-        throws MetaflowInvalidPathspec
-        or MetaflowNotFound
+    exec_id : int
+        the id of the pipeline execution to consider.
+        If omitted, the last execution is considered.
 
     Returns
     -------
     list[wandb.apis.public.files.File]
     """
-    mf_flow_run = _get_mf_run(mf_flow_name, mf_run_id)
+    execution = get_execution(pipeline_name, exec_id)
 
-    train_model_tasks_list = [step.task for step in mf_flow_run.steps() if step.id == "train_model"]
-    train_model_task: MetaflowObject
+    train_model_tasks_list = execution.get_tasks_with_name("train_model")
+    train_model_task: Task
     if train_model_tasks_list:
         train_model_task = train_model_tasks_list[0]
     else:
-        assert mf_flow_run.parent is not None
-        raise MetaflowNotFound(
-            f"{mf_flow_run.parent.id} run {mf_flow_run.id}"
-            + " didn't get to the 'train_model' step."
+        raise ValueError(f"{execution.name} [{execution.id}] didn't get to the 'train_model' task.")
+
+    if "disabled" == train_model_task.get_exit_context()["wandb_run_mode"]:
+        raise Exception(
+            "WandB logging was disabled for retaining-pipeline execution "
+            f"{execution.name} [{execution.id}]."
         )
 
-    if "disabled" == train_model_task["wandb_run_mode"].data:
-        raise Exception("WandB logging was disabled " + "for this pipeline run")
-
-    if mf_run_id != train_model_task.data.wandb_filter_run_id:
-        # case "Metaflow flow run was resumed
-        #       from aposterior step"
-        mf_flow_run = _get_mf_run(mf_flow_name, train_model_task.data.wandb_filter_run_id)
-        train_model_task = [step.task for step in mf_flow_run.steps() if step.id == "train_model"][
-            0
-        ]
+    if exec_id != train_model_task.get_exit_context()["wandb_filter_run_id"]:
+        # case "retraining-pipeline execution was resumed
+        #       from a posterior task"
+        execution = Execution.get_by_id(train_model_task.get_exit_context()["wandb_filter_run_id"])
+        train_model_task = execution.get_tasks_with_name("train_model")[0]
 
     artifact_files = None
     try:
-        os.environ["WANDB_DIR"] = train_model_task.metadata_dict.get("ds-root")
+        os.environ["WANDB_DIR"] = Config.get_assets_cache_root()
         # Make sure to have the `WANDB_API_KEY`
         # environement variable set adequately.
         # It can be through a `secret`.
         _ = wandb.login(host="https://api.wandb.ai")
         api = wandb.Api()
 
+        logger.debug(f"execution.id : {execution.id} - {execution.start_timestamp}")
         artifact_files = _get_execution_source_code(train_model_task, api)
 
     finally:
@@ -141,7 +142,7 @@ def get_execution_source_code(
     return artifact_files
 
 
-def explore_source_code(root: str = ".", mf_flow_name: str | None = None, mf_run_id: int = -1):
+def explore_source_code(root: str = ".", pipeline_name: str | None = None, exec_id: int = -1):
     """Download local copy of WandB-saved source code files.
 
     In the local target directory.
@@ -154,41 +155,38 @@ def explore_source_code(root: str = ".", mf_flow_name: str | None = None, mf_run
     ----------
     root : str
         target local directory.
-    mf_flow_name : str
-        Name of the Metaflow flowspec.
-        When "mf_run_id" (below) is omitted,
+    pipeline_name : str
+        Name of the retraining-pipeline.
+        When ``exec_id`` (below) is omitted,
         this param here is mandatory.
-    mf_run_id : int
-        the id of the Metaflow flow run
-        to consider.
-        If ommitted, the last flow run
-        is considered.
-        throws MetaflowInvalidPathspec
-        or MetaflowNotFound
+    exec_id : int
+        the id of the pipeline execution to consider.
+        If omitted, the last execution is considered.
     """
     ##########################
-    #      Metaflow task     #
+    #          task          #
     ##########################
-    mf_flow_run = _get_mf_run(mf_flow_name, mf_run_id)
-    # for cases when either call argument is missing =>
-    assert mf_flow_run.parent is not None
-    mf_flow_name = mf_flow_run.parent.id
-    mf_run_id = int(mf_flow_run.id)
+    execution = get_execution(pipeline_name, exec_id)
 
-    train_model_task: MetaflowObject = [
-        step.task for step in mf_flow_run.steps() if step.id == "train_model"
-    ][0]
+    train_model_tasks_list = execution.get_tasks_with_name("train_model")
+    train_model_task: Task
+    if train_model_tasks_list:
+        train_model_task = train_model_tasks_list[0]
+    else:
+        raise ValueError(f"{execution.name} [{execution.id}] didn't get to the 'train_model' task.")
 
-    if "disabled" == train_model_task["wandb_run_mode"].data:
-        raise Exception("WandB logging was disabled " + "for this pipeline run")
+    if "disabled" == train_model_task.get_exit_context()["wandb_run_mode"]:
+        raise Exception(
+            "WandB logging was disabled for retaining-pipeline execution "
+            f"{execution.name} [{execution.id}]."
+        )
 
-    if mf_run_id != train_model_task.data.wandb_filter_run_id:
+    wandb_filter_run_id = train_model_task.get_exit_context()["wandb_filter_run_id"]
+    if exec_id != wandb_filter_run_id:
         # case "Metaflow flow run was resumed
         #       from aposterior step"
-        mf_flow_run = _get_mf_run(mf_flow_name, train_model_task.data.wandb_filter_run_id)
-        train_model_task = [step.task for step in mf_flow_run.steps() if step.id == "train_model"][
-            0
-        ]
+        execution = Execution.get_by_id(wandb_filter_run_id)
+        train_model_task = execution.get_tasks_with_name("train_model")[0]
     ##########################
 
     ##########################
@@ -197,7 +195,7 @@ def explore_source_code(root: str = ".", mf_flow_name: str | None = None, mf_run
     # handle possible "WSL" case
     if is_wsl() and is_windows_path(root):
         root = windows_to_wsl_path(root)
-    root = os.path.join(root, f"{mf_flow_name}_{train_model_task.data.wandb_filter_run_id}")
+    root = os.path.join(root, f"{execution.name}_{wandb_filter_run_id}")
     print(os.path.realpath(root))
     if not os.path.exists(root):
         os.makedirs(root)
@@ -205,7 +203,7 @@ def explore_source_code(root: str = ".", mf_flow_name: str | None = None, mf_run
 
     artifact_files = None
     try:
-        os.environ["WANDB_DIR"] = train_model_task.metadata_dict.get("ds-root")
+        os.environ["WANDB_DIR"] = Config.get_assets_cache_root()
         # Make sure to have the `WANDB_API_KEY`
         # environement variable set adequately.
         # It can be through a `secret`.
