@@ -1,3 +1,7 @@
+"""
+Unit & Integration tests for retrain_pipelines.dag_engine.web_console.views.server.
+"""
+
 import json
 
 import pytest
@@ -8,8 +12,7 @@ from retrain_pipelines.dag_engine.web_console.views import server
 
 
 @pytest.fixture
-def app(monkeypatch, tmp_path):
-    monkeypatch.setenv("RP_WEB_SERVER_LOGS", str(tmp_path))
+def app(web_server_logs_root):
     fasthtml_app, rt = FastHTML(), None
     fasthtml_app, rt = fasthtml_app, fasthtml_app.route
     server.register(fasthtml_app, rt)
@@ -26,8 +29,7 @@ def test_heartbeat(client):
     assert resp.status_code == 200
 
 
-def test_heartbeat_prefixed(monkeypatch, tmp_path):
-    monkeypatch.setenv("RP_WEB_SERVER_LOGS", str(tmp_path))
+def test_heartbeat_prefixed(web_server_logs_root):
     fasthtml_app = FastHTML()
     server.register(fasthtml_app, fasthtml_app.route, prefix="/sub")
     client = TestClient(fasthtml_app)
@@ -142,8 +144,7 @@ def test_server_dashboard_invalid_filter_values_cookie_falls_back(client):
     assert 'id="regex-filter"' in resp.text
 
 
-def test_server_dashboard_prefixed(monkeypatch, tmp_path):
-    monkeypatch.setenv("RP_WEB_SERVER_LOGS", str(tmp_path))
+def test_server_dashboard_prefixed(web_server_logs_root):
     fasthtml_app = FastHTML()
     server.register(fasthtml_app, fasthtml_app.route, prefix="/sub")
     client = TestClient(fasthtml_app)

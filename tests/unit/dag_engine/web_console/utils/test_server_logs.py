@@ -1,4 +1,7 @@
-# test_server_logs_1.py
+"""
+Unit tests for retrain_pipelines.dag_engine.web_console.utils.server_logs.
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -17,46 +20,42 @@ from botocore.exceptions import ClientError
 
 from retrain_pipelines.dag_engine.web_console.utils import server_logs
 from retrain_pipelines.utils import wsl_utils
+from retrain_pipelines.utils.s3_utils import is_s3_path, parse_s3_uri
 
 
 class TestGetLogConfig:
     """Tests for the get_log_config function (local and S3 branches)."""
 
-    def test_get_log_config(self, monkeypatch):
+    def test_get_log_config(self, web_server_logs_root):
         """Ensure log configuration dictionary is correctly structured."""
-        monkeypatch.setenv("RP_WEB_SERVER_LOGS", "/tmp/logs")
-
         cfg = server_logs.get_log_config()
 
         assert cfg["version"] == 1
         assert cfg["disable_existing_loggers"] is False
 
-        assert cfg["handlers"]["file_default"]["filename"] == "/tmp/logs/server.log"
-        assert cfg["handlers"]["file_access"]["filename"] == "/tmp/logs/access.log"
-
-        assert "uvicorn" in cfg["loggers"]
-        assert "uvicorn.error" in cfg["loggers"]
-        assert "uvicorn.access" in cfg["loggers"]
-
-    def test_get_log_config_s3(self, bucket_name):
-        """
-        When log_root is an S3 URI, the configuration uses S3RotatingLogHandler.
-        """
-        s3_uri = f"s3://{bucket_name}/logs/"
-        with patch.object(
-            server_logs.Config, "get_web_server_logs_root", return_value=s3_uri
-        ):
-            cfg = server_logs.get_log_config()
+        if is_s3_path(web_server_logs_root):
+            bucket, prefix = parse_s3_uri(web_server_logs_root)
             assert (
                 cfg["handlers"]["file_default"]["class"]
                 == "retrain_pipelines.dag_engine.web_console.utils.server_logs.S3RotatingLogHandler"
             )
-            assert cfg["handlers"]["file_default"]["bucket"] == bucket_name
-            assert cfg["handlers"]["file_default"]["key"] == "logs/server.log"
+            assert cfg["handlers"]["file_default"]["bucket"] == bucket
+            assert cfg["handlers"]["file_default"]["key"] == f"{prefix}server.log"
             assert (
                 cfg["handlers"]["file_access"]["class"]
                 == "retrain_pipelines.dag_engine.web_console.utils.server_logs.S3RotatingLogHandler"
             )
+        else:
+            assert cfg["handlers"]["file_default"]["filename"] == os.path.join(
+                web_server_logs_root, "server.log"
+            )
+            assert cfg["handlers"]["file_access"]["filename"] == os.path.join(
+                web_server_logs_root, "access.log"
+            )
+
+        assert "uvicorn" in cfg["loggers"]
+        assert "uvicorn.error" in cfg["loggers"]
+        assert "uvicorn.access" in cfg["loggers"]
 
 
 class TestAccessLogEntry:
@@ -852,7 +851,7 @@ class TestFetchLastNLinesS3:
 class TestReadLastAccessLogs:
     """Tests for the read_last_access_logs function (Local and S3 branches)."""
 
-    def test_read_last_access_logs(self, monkeypatch):
+    def test_read_last_access_logs(self, monkeypatch, tmp_path):
         """Read and parse last access logs successfully."""
         monkeypatch.setattr(server_logs.glob, "glob", lambda *_: ["new.log", "old.log"])
         monkeypatch.setattr(
@@ -868,11 +867,11 @@ class TestReadLastAccessLogs:
         )
         monkeypatch.setattr(server_logs, "strip_ansi_escape_codes", lambda s: s)
 
-        result = server_logs.read_last_access_logs("/tmp", "access.log", 1, None)
+        result = server_logs.read_last_access_logs(str(tmp_path), "access.log", 1, None)
 
         assert len(result) == 1
 
-    def test_read_last_access_logs_skips_bad_lines(self, monkeypatch):
+    def test_read_last_access_logs_skips_bad_lines(self, monkeypatch, tmp_path):
         """Skip malformed log lines during parsing."""
         monkeypatch.setattr(server_logs.glob, "glob", lambda *_: ["access.log"])
         monkeypatch.setattr(server_logs.os.path, "getmtime", lambda *_: 1)
@@ -881,10 +880,12 @@ class TestReadLastAccessLogs:
         )
         monkeypatch.setattr(server_logs, "strip_ansi_escape_codes", lambda s: s)
 
-        result = server_logs.read_last_access_logs("/tmp", "access.log", 10, None)
+        result = server_logs.read_last_access_logs(
+            str(tmp_path), "access.log", 10, None
+        )
         assert result == []
 
-    def test_read_last_access_logs_skips_empty_lines(self, monkeypatch):
+    def test_read_last_access_logs_skips_empty_lines(self, monkeypatch, tmp_path):
         """Skip empty lines during parsing."""
         monkeypatch.setattr(server_logs.glob, "glob", lambda *_: ["access.log"])
         monkeypatch.setattr(server_logs.os.path, "getmtime", lambda *_: 1)
@@ -893,10 +894,12 @@ class TestReadLastAccessLogs:
         )
         monkeypatch.setattr(server_logs, "strip_ansi_escape_codes", lambda s: s)
 
-        result = server_logs.read_last_access_logs("/tmp", "access.log", 10, None)
+        result = server_logs.read_last_access_logs(
+            str(tmp_path), "access.log", 10, None
+        )
         assert result == []
 
-    def test_read_last_access_logs_empty(self, monkeypatch):
+    def test_read_last_access_logs_empty(self, monkeypatch, tmp_path):
         """Return empty list when no lines are read."""
         monkeypatch.setattr(server_logs.glob, "glob", lambda *_: ["access.log"])
         monkeypatch.setattr(server_logs.os.path, "getmtime", lambda *_: 1)
@@ -905,27 +908,31 @@ class TestReadLastAccessLogs:
         )
         monkeypatch.setattr(server_logs, "strip_ansi_escape_codes", lambda s: s)
 
-        result = server_logs.read_last_access_logs("/tmp", "access.log", 10, None)
+        result = server_logs.read_last_access_logs(
+            str(tmp_path), "access.log", 10, None
+        )
         assert result == []
 
-    def test_read_last_access_logs_s3(self, bucket_name):
-        """
-        Integration test for read_last_access_logs reading from S3.
-        """
+    def test_read_last_access_logs_integration(self, web_server_logs_root):
+        """Integration test for read_last_access_logs reading from local or S3."""
         lines = [
             "2025-07-06 15:41:53 [INFO] 127.0.0.1:36042 - 'POST /ui/update HTTP/1.1' 200 OK",
             "2025-07-06 15:41:54 [INFO] ::1:54321 - 'GET /api/data HTTP/1.1' 304 Not Modified",
         ]
-        s3 = boto3.client("s3")
-        bucket = bucket_name
         base = f"access_{datetime.now().timestamp()}.log"
-        key = f"logs/{base}"
         content = "\n".join(lines) + "\n"
-        s3.put_object(Bucket=bucket, Key=key, Body=content.encode())
 
-        result = server_logs.read_last_access_logs(
-            f"s3://{bucket}/logs/", base, 2, None
-        )
+        if is_s3_path(web_server_logs_root):
+            s3 = boto3.client("s3")
+            bucket, prefix = parse_s3_uri(web_server_logs_root)
+            key = f"{prefix}{base}"
+            s3.put_object(Bucket=bucket, Key=key, Body=content.encode())
+        else:
+            os.makedirs(web_server_logs_root, exist_ok=True)
+            with open(os.path.join(web_server_logs_root, base), "w") as f:
+                f.write(content)
+
+        result = server_logs.read_last_access_logs(web_server_logs_root, base, 2, None)
         assert len(result) == 2
         for res in result:
             assert res.startswith("<div")
