@@ -651,7 +651,7 @@ def register(app, rt, prefix=""):
                                 partMap[part.type] = part.value;
                             }});
                             const currentYear = new Date().getUTCFullYear();
-                            const formattedString = 
+                            const formattedString =
                                 `${{partMap.weekday}} ${{partMap.month}} ${{partMap.day}}` +
                                 (parseInt(partMap.year) !== currentYear
                                     ? ` ${{partMap.year}}` : '') +
@@ -1059,7 +1059,7 @@ def register(app, rt, prefix=""):
                     .shiny-gold-text {
                         font-size: 3em; font-weight: bold; min-height: 50.5px;
                         color: #FFD700; /* Base gold color */
-                        text-shadow: 
+                        text-shadow:
                             0 0 5px rgba(255, 215, 0, 0.7),  /* Inner glow */
                             0 0 10px rgba(255, 215, 0, 0.5), /* Outer glow */
                             0 0 15px rgba(255, 215, 0, 0.3); /* Soft outer glow */
@@ -1489,7 +1489,7 @@ def register(app, rt, prefix=""):
                 @keyframes timeline-bar-pulse {
                     0%, 100% {
                         opacity: 1;
-                        box-shadow: 
+                        box-shadow:
                             0 2px 4px rgba(0,0,0,0.2),
                             0 8px 16px rgba(0,0,0,0.1),
                             inset 0 1px 0 rgba(255,255,255,0.4),
@@ -1497,7 +1497,7 @@ def register(app, rt, prefix=""):
                     }
                     50% {
                         opacity: 0.85;
-                        box-shadow: 
+                        box-shadow:
                             0 2px 8px rgba(0,107,102,0.4),
                             0 8px 20px rgba(0,179,163,0.3),
                             inset 0 1px 0 rgba(255,255,255,0.5),

@@ -94,6 +94,7 @@ function initDagCanvas(ctx) {
     const intersectionObserver = new IntersectionObserver((entries) => {
         entries.forEach(entry => {
             if (entry.isIntersecting) {
+                adjustSVGHeight();
                 centerDAG();
             }
         });

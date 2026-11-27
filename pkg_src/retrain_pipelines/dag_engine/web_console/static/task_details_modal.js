@@ -405,7 +405,7 @@ async function showDetailsModal(row, endpoint_prefix="") {
             const scrollTop = scrollableElement.scrollTop;
             const scrollHeight = scrollableElement.scrollHeight;
             const clientHeight = scrollableElement.clientHeight;
-            
+
             const atTop = scrollTop === 0 && delta < 0;
             const atBottom = (scrollHeight - scrollTop - clientHeight) < 1 && delta > 0;
 
@@ -556,7 +556,7 @@ async function showDetailsModal(row, endpoint_prefix="") {
                     tracesContainer.classList.contains("autoscroll")
                 ) {
                     // ta handle the case
-                    // traces-TAB was not showing while autoscroll 
+                    // traces-TAB was not showing while autoscroll
                     // AND received streamed traces
                     tracesContainer.scrollTop = tracesContainer.scrollHeight;
                 }
@@ -670,7 +670,7 @@ async function showDetailsModal(row, endpoint_prefix="") {
     }
     modalContent.addEventListener('keydown', firstShiftTrap);
     modalContent.addEventListener('focusin', (event) => {
-        // if content got focus (if any element got focused), drop 
+        // if content got focus (if any element got focused), drop
         modalContent.removeEventListener('keydown', firstShiftTrap);
     });
     // prevent focus leaving the modal (e.g. on footer click)
@@ -882,8 +882,8 @@ function scrollLogs(direction, max) {
         // While loop with scrollBy callback chaining
         function scrollStep() {
             console.log("scrollStep");
-            const remaining = tracesContainer.scrollHeight - 
-                             tracesContainer.clientHeight - 
+            const remaining = tracesContainer.scrollHeight -
+                             tracesContainer.clientHeight -
                              tracesContainer.scrollTop;
             
             if (remaining > 0) {
@@ -897,8 +897,8 @@ function scrollLogs(direction, max) {
                 // received in-between
                 const THRESHOLD_PX = 4; // small tolerance
                 const check = () => {
-                    const newRemaining = tracesContainer.scrollHeight - 
-                                         tracesContainer.clientHeight - 
+                    const newRemaining = tracesContainer.scrollHeight -
+                                         tracesContainer.clientHeight -
                                          tracesContainer.scrollTop;
                     if (newRemaining > THRESHOLD_PX) {
                         setTimeout(scrollStep, 150); // recursion / looping
@@ -1207,4 +1207,3 @@ function showFullPath(el, path) {
 
     el.focus();
 }
-
