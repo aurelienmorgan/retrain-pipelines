@@ -1,3 +1,7 @@
+"""
+Unit tests for retrain_pipelines.dag_engine.web_console.utils.executions.event.
+"""
+
 import asyncio
 import pytest
 
@@ -86,6 +90,38 @@ def test_notify_server_shutdown_runtime_error():
 
     # Restore and cleanup
     q.put_nowait = original_put
+    loop.close()
+
+
+def test_notify_server_shutdown_call_soon_threadsafe_runtime_error(monkeypatch):
+    """Cover the except RuntimeError branch inside notify_server_shutdown.
+
+    call_soon_threadsafe is the call site whose RuntimeError the
+    except branch swallows. The guard passes (loop non-None,
+    non-closed), so mocking call_soon_threadsafe to raise drives
+    the except branch directly ; the lists are still cleared afterward.
+    """
+    reset_for_restart()
+    loop = asyncio.new_event_loop()
+    events_module._server_loop = loop
+    q = asyncio.Queue()
+    client_info = {"ip": "127.0.0.1", "port": 8080, "url": "/test"}
+    events_module.new_exec_subscribers.append((q, client_info))
+    events_module.exec_end_subscribers.append((q, client_info))
+
+    monkeypatch.setattr(
+        loop,
+        "call_soon_threadsafe",
+        lambda *a, **kw: (_ for _ in ()).throw(
+            RuntimeError("loop closed mid-iteration")
+        ),
+    )
+
+    events_module.notify_server_shutdown()
+
+    assert len(events_module.new_exec_subscribers) == 0
+    assert len(events_module.exec_end_subscribers) == 0
+
     loop.close()
 
 

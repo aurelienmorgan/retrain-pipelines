@@ -60,7 +60,7 @@ _event_loop: asyncio.AbstractEventLoop | None = None
 _sse_server_url: str | None = None
 
 # Accessed exclusively from the Uvicorn event loop thread ; no lock needed.
-_sse_subscribers: list[asyncio.Queue] = []
+_sse_subscribers: list[asyncio.Queue[TraceData | None]] = []
 
 
 # ---------------------------------------------------------------------------
@@ -76,7 +76,10 @@ async def _tasktraces_endpoint(request: Request) -> StreamingResponse:
     async def event_stream() -> AsyncGenerator[str, None]:
         try:
             while True:
-                trace_data: TraceData = await q.get()
+                trace_data: TraceData | None = await q.get()
+                if trace_data is None:
+                    # sentinel received from ``stop()``
+                    break
                 yield f"data: {trace_data.model_dump_json()}\n\n"
         except (asyncio.CancelledError, GeneratorExit):
             pass
@@ -190,14 +193,39 @@ def stop() -> None:
         if _event_loop is not None and not _event_loop.is_closed():
             _event_loop.call_soon_threadsafe(_dispatch_trace, trace_data)
 
-    # 2. Stop the bridge thread
+    # 2. Wait for all scheduled _dispatch_trace calls to execute in the
+    #    event loop AND for event_stream() generators to consume every
+    #    trace from their subscriber asyncio.Queues. Without this,
+    #    should_exit cancels generators that still have undelivered
+    #    traces in their queues, and the WebConsole consumer sees
+    #    "server closed stream" before the last traces arrive.
+    _subscribers_drained = threading.Event()
+
+    def _check_drained():
+        if not _sse_subscribers or all(q.empty() for q in _sse_subscribers):
+            _subscribers_drained.set()
+        elif _event_loop is not None and not _event_loop.is_closed():
+            _event_loop.call_later(0.05, _check_drained)
+
+    if _event_loop is not None and not _event_loop.is_closed() and _sse_subscribers:
+        _event_loop.call_soon_threadsafe(_check_drained)
+        _subscribers_drained.wait(timeout=5.0)
+
+    # 3. Send a sentinel to each subscriber so event_stream() exits
+    #    cleanly, allowing Starlette to flush the StreamingResponse
+    #    normally rather than cancelling the generator mid-stream.
+    if _event_loop is not None and not _event_loop.is_closed():
+        for q in list(_sse_subscribers):
+            _event_loop.call_soon_threadsafe(q.put_nowait, None)
+
+    # 4. Stop the bridge thread
     _stop_bridge.set()
 
-    # 3. Shut down the Uvicorn server gracefully without cancelling tasks
+    # 5. Shut down the Uvicorn server gracefully
     if _server is not None:
         _server.should_exit = True
         if _server_thread is not None:
-            _server_thread.join(timeout=1.0)
+            _server_thread.join(timeout=2.0)
         _server = None
         _server_thread = None
 
@@ -205,10 +233,10 @@ def stop() -> None:
         _bridge_thread.join(timeout=2.0)
         _bridge_thread = None
 
-    # 4. Clear subscriber queues
+    # 6. Clear subscriber queues
     _sse_subscribers.clear()
 
-    # 5. Clean up event loop reference
+    # 7. Clean up event loop reference
     _event_loop = None
 
     _sse_server_url = None
